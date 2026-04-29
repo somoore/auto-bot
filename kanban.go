@@ -26,6 +26,7 @@ type kanbanStatus string
 const (
 	kanbanStatusBacklog    kanbanStatus = "Backlog"
 	kanbanStatusInProgress kanbanStatus = "In Progress"
+	kanbanStatusBlocked    kanbanStatus = "Blocked"
 	kanbanStatusReview     kanbanStatus = "Review"
 	kanbanStatusDone       kanbanStatus = "Done"
 )
@@ -33,6 +34,7 @@ const (
 var kanbanStatuses = []kanbanStatus{
 	kanbanStatusBacklog,
 	kanbanStatusInProgress,
+	kanbanStatusBlocked,
 	kanbanStatusReview,
 	kanbanStatusDone,
 }
@@ -89,22 +91,7 @@ type kanbanBoardApp struct {
 	closeOnce sync.Once
 }
 
-var initialKanbanBoardCards = []kanbanCard{
-	{
-		ID:     "card-001",
-		Status: kanbanStatusBacklog,
-		Title:  "Create voice-controlled ticket",
-		Notes:  "Ask Realtime to create a ticket, move it across columns, and add one or more tags by voice.",
-		Tags:   []string{"voice", "demo"},
-	},
-	{
-		ID:     "card-002",
-		Status: kanbanStatusDone,
-		Title:  "Wire Realtime board tools",
-		Notes:  "Realtime listens for speech, calls Kanban tools, and dispatches board operations to the browser UI.",
-		Tags:   []string{"realtime", "tools"},
-	},
-}
+var initialKanbanBoardCards = []kanbanCard{}
 
 func newKanbanBoardApp() *kanbanBoardApp {
 	return &kanbanBoardApp{
@@ -357,14 +344,23 @@ func (app *kanbanBoardApp) sessionInstructions() string {
 		"Listen to the user and decide whether they want to create a ticket, move a ticket between columns, add tags to a ticket, update a ticket, delete a ticket, or do nothing.",
 		"Use the board card ids exactly as provided when operating on existing tickets.",
 		"Users may say ticket, card, task, issue, or sticky note; treat those as Kanban cards.",
-		"Available columns are Backlog, In Progress, Review, and Done.",
+		"Available columns are Backlog, In Progress, Blocked, Review, and Done.",
+		"This is used during standups and meetings. Treat concrete first-person status updates as implicit board operations; do not wait for the user to say create a ticket.",
+		"If a user says they shipped, fixed, completed, closed, or finished work, move an existing related ticket to Done if one exists; otherwise create a concise Done ticket.",
+		"If a user says they started, began, picked up, or are working on something, move an existing related ticket to In Progress if one exists; otherwise create a concise In Progress ticket.",
+		"If a user says they are blocked, waiting on something, dependent on another team, or that work might slip, move or create the related ticket in Blocked and add blocked, dependency, or risk tags as appropriate.",
+		"Track meeting context across turns. If a follow-up sentence adds dependency, blocker, or schedule-risk context for the most recently discussed related card, update or move that existing ticket instead of creating a duplicate.",
+		"If a transcript includes a speaker label such as Sean:, do not include the label in the title; use it only as context for notes or tags when useful.",
 		"If a user asks to start, work on, pick up, or begin a ticket, move it to In Progress.",
+		"If a user asks to block, mark blocked, or note a dependency for a ticket, move it to Blocked and preserve the blocker details in notes.",
 		"If a user asks to ship, finish, complete, close, or mark done, move it to Done.",
 		"If a user asks to review, QA, inspect, or get eyes on a ticket, move it to Review.",
 		"If a user asks to park, punt, defer, or move something back, move it to Backlog.",
 		"If a user asks to add a tag, call add_tags; do not replace existing tags.",
-		"If the user asks for an operation, call exactly the relevant tool. Prefer tools over text replies.",
-		"If the user is not asking for a board operation, call do_nothing with a short reason.",
+		"If one transcript contains multiple status updates, call one tool for each board operation.",
+		"If the user asks for an operation or gives an implicit status update, call the relevant tool. Prefer tools over text replies.",
+		"If the user is only wrapping up, handing off, giving filler, or saying something like That's it from me, call do_nothing with a short reason.",
+		"If the user is not asking for a board operation and is not giving a concrete status update, call do_nothing with a short reason.",
 		"Do not narrate board operations aloud.",
 		fmt.Sprintf("Current Kanban board JSON: %s", app.boardContextJSON()),
 	}, " ")
@@ -381,24 +377,26 @@ func (app *kanbanBoardApp) boardContextJSON() string {
 
 func (app *kanbanBoardApp) kanbanTools() []map[string]any {
 	statusProperty := map[string]any{
-		"type": "string",
-		"enum": []string{"Backlog", "In Progress", "Review", "Done"},
+		"type":        "string",
+		"description": "Kanban column for the ticket.",
+		"enum":        []string{"Backlog", "In Progress", "Blocked", "Review", "Done"},
 	}
 	tagsProperty := map[string]any{
-		"type":  "array",
-		"items": map[string]any{"type": "string"},
+		"type":        "array",
+		"description": "Short labels that capture people, area, state, or risk. Use blocked/dependency/risk tags for blockers when appropriate.",
+		"items":       map[string]any{"type": "string"},
 	}
 
 	return []map[string]any{
 		{
 			"type":        "function",
 			"name":        "create_ticket",
-			"description": "Create a new Kanban ticket/card.",
+			"description": "Create a new Kanban ticket/card for explicit requests or implicit meeting status updates such as shipped, started, or blocked work.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"title":  map[string]any{"type": "string"},
-					"notes":  map[string]any{"type": "string"},
+					"title":  map[string]any{"type": "string", "description": "Concise title for the work, without speaker prefixes such as Sean:."},
+					"notes":  map[string]any{"type": "string", "description": "Useful context from the utterance, including blocker, dependency, or schedule-risk details."},
 					"tags":   tagsProperty,
 					"status": statusProperty,
 				},
@@ -409,11 +407,11 @@ func (app *kanbanBoardApp) kanbanTools() []map[string]any {
 		{
 			"type":        "function",
 			"name":        "move_ticket",
-			"description": "Move an existing Kanban ticket/card to another column.",
+			"description": "Move an existing Kanban ticket/card to another column, including Blocked when work is waiting on a dependency.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"card_id": map[string]any{"type": "string"},
+					"card_id": map[string]any{"type": "string", "description": "Existing board card id."},
 					"status":  statusProperty,
 				},
 				"required":             []string{"card_id", "status"},
@@ -427,7 +425,7 @@ func (app *kanbanBoardApp) kanbanTools() []map[string]any {
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"card_id": map[string]any{"type": "string"},
+					"card_id": map[string]any{"type": "string", "description": "Existing board card id."},
 					"tags":    tagsProperty,
 				},
 				"required":             []string{"card_id", "tags"},
@@ -437,13 +435,13 @@ func (app *kanbanBoardApp) kanbanTools() []map[string]any {
 		{
 			"type":        "function",
 			"name":        "update_ticket",
-			"description": "Update the title or notes of an existing Kanban ticket/card.",
+			"description": "Update the title or notes of an existing Kanban ticket/card. Use this to merge follow-up standup details, dependency details, or slip-risk context into the existing notes.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"card_id": map[string]any{"type": "string"},
-					"title":   map[string]any{"type": "string"},
-					"notes":   map[string]any{"type": "string"},
+					"card_id": map[string]any{"type": "string", "description": "Existing board card id."},
+					"title":   map[string]any{"type": "string", "description": "Replacement title, when the existing title should be made clearer."},
+					"notes":   map[string]any{"type": "string", "description": "Full replacement notes. Preserve useful existing notes while adding the new context."},
 				},
 				"required":             []string{"card_id"},
 				"additionalProperties": false,
@@ -456,7 +454,7 @@ func (app *kanbanBoardApp) kanbanTools() []map[string]any {
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"card_id": map[string]any{"type": "string"},
+					"card_id": map[string]any{"type": "string", "description": "Existing board card id."},
 				},
 				"required":             []string{"card_id"},
 				"additionalProperties": false,
@@ -465,7 +463,7 @@ func (app *kanbanBoardApp) kanbanTools() []map[string]any {
 		{
 			"type":        "function",
 			"name":        "do_nothing",
-			"description": "Use this when the user is not asking to operate on the Kanban board.",
+			"description": "Use this when the user is not asking to operate on the Kanban board, is only wrapping up, or says a handoff phrase like That's it from me.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

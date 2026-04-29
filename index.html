@@ -96,7 +96,7 @@
 
       .board {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
         gap: 12px;
         align-items: start;
       }
@@ -218,7 +218,7 @@
     </main>
 
     <script>
-      const statuses = ['Backlog', 'In Progress', 'Review', 'Done']
+      const statuses = ['Backlog', 'In Progress', 'Blocked', 'Review', 'Done']
       const boardEl = document.getElementById('board')
       const statusEl = document.getElementById('status')
       const logEl = document.getElementById('log')
