@@ -1,0 +1,921 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/pion/webrtc/v4"
+)
+
+const (
+	realtimeCallsURL          = "https://api.openai.com/v1/realtime/calls"
+	defaultRealtimeModel      = "gpt-realtime"
+	realtimeEventChannelLabel = "oai-events"
+)
+
+type kanbanStatus string
+
+const (
+	kanbanStatusBacklog    kanbanStatus = "Backlog"
+	kanbanStatusInProgress kanbanStatus = "In Progress"
+	kanbanStatusReview     kanbanStatus = "Review"
+	kanbanStatusDone       kanbanStatus = "Done"
+)
+
+var kanbanStatuses = []kanbanStatus{
+	kanbanStatusBacklog,
+	kanbanStatusInProgress,
+	kanbanStatusReview,
+	kanbanStatusDone,
+}
+
+type kanbanCard struct {
+	ID     string       `json:"id"`
+	Status kanbanStatus `json:"status"`
+	Title  string       `json:"title"`
+	Notes  string       `json:"notes"`
+	Tags   []string     `json:"tags"`
+}
+
+type kanbanBoardState struct {
+	Cards     []kanbanCard `json:"cards"`
+	UpdatedAt string       `json:"updatedAt,omitempty"`
+}
+
+type kanbanRealtimeEvent struct {
+	Type       string `json:"type,omitempty"`
+	Transcript string `json:"transcript,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Arguments  string `json:"arguments,omitempty"`
+	CallID     string `json:"call_id,omitempty"`
+	Error      *struct {
+		Code    string `json:"code,omitempty"`
+		Message string `json:"message,omitempty"`
+	} `json:"error,omitempty"`
+	Item     *kanbanRealtimeOutputItem `json:"item,omitempty"`
+	Response *struct {
+		Output []kanbanRealtimeOutputItem `json:"output,omitempty"`
+	} `json:"response,omitempty"`
+}
+
+type kanbanRealtimeOutputItem struct {
+	Type      string `json:"type,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+	CallID    string `json:"call_id,omitempty"`
+}
+
+type kanbanBoardApp struct {
+	mu               sync.Mutex
+	cards            []kanbanCard
+	nextCreatedIndex int
+	updatedAt        time.Time
+	handledCalls     map[string]struct{}
+
+	apiKey    string
+	model     string
+	pc        *webrtc.PeerConnection
+	events    *webrtc.DataChannel
+	signaling bool
+	connected bool
+	closeOnce sync.Once
+}
+
+var initialKanbanBoardCards = []kanbanCard{
+	{
+		ID:     "card-001",
+		Status: kanbanStatusBacklog,
+		Title:  "Create voice-controlled ticket",
+		Notes:  "Ask Realtime to create a ticket, move it across columns, and add one or more tags by voice.",
+		Tags:   []string{"voice", "demo"},
+	},
+	{
+		ID:     "card-002",
+		Status: kanbanStatusDone,
+		Title:  "Wire Realtime board tools",
+		Notes:  "Realtime listens for speech, calls Kanban tools, and dispatches board operations to the browser UI.",
+		Tags:   []string{"realtime", "tools"},
+	},
+}
+
+func newKanbanBoardApp() *kanbanBoardApp {
+	return &kanbanBoardApp{
+		cards:            cloneKanbanCards(initialKanbanBoardCards),
+		nextCreatedIndex: 1,
+		updatedAt:        time.Now().UTC(),
+		handledCalls:     map[string]struct{}{},
+	}
+}
+
+func (app *kanbanBoardApp) JoinConferenceRoom() error {
+	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	if apiKey == "" {
+		return fmt.Errorf("OPENAI_API_KEY is not configured")
+	}
+
+	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		return fmt.Errorf("create Realtime peer connection: %w", err)
+	}
+
+	events, err := peerConnection.CreateDataChannel(realtimeEventChannelLabel, nil)
+	if err != nil {
+		_ = peerConnection.Close()
+		return fmt.Errorf("create Realtime event data channel: %w", err)
+	}
+
+	app.mu.Lock()
+	app.apiKey = apiKey
+	app.model = realtimeModel()
+	app.pc = peerConnection
+	app.events = events
+	app.mu.Unlock()
+
+	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		log.Infof("OpenAI Realtime peer state changed: %s", state.String())
+		broadcastKanbanEvent("status", "OpenAI Realtime: "+state.String())
+	})
+	events.OnOpen(func() {
+		log.Infof("OpenAI Realtime event channel opened")
+		_ = app.SendEvent(app.sessionUpdateEvent())
+		broadcastKanbanEvent("status", "Kanban assistant is listening")
+	})
+	events.OnMessage(func(message webrtc.DataChannelMessage) {
+		app.handleRealtimeEvent(message.Data)
+	})
+
+	listLock.Lock()
+	peerConnections = append(peerConnections, peerConnectionState{
+		peerConnection: peerConnection,
+		acceptTrack:    app.acceptRoomTrack,
+		shouldSignal:   app.shouldSignalRealtimePeer,
+		signal:         app.signalRealtimePeer,
+	})
+	listLock.Unlock()
+
+	signalPeerConnections()
+	return nil
+}
+
+func (app *kanbanBoardApp) Close() error {
+	var closeErr error
+	app.closeOnce.Do(func() {
+		app.mu.Lock()
+		peerConnection := app.pc
+		app.mu.Unlock()
+		if peerConnection != nil {
+			closeErr = peerConnection.Close()
+		}
+	})
+
+	return closeErr
+}
+
+func (app *kanbanBoardApp) acceptRoomTrack(track *webrtc.TrackLocalStaticRTP) bool {
+	if track.Kind() != webrtc.RTPCodecTypeAudio {
+		return false
+	}
+
+	return strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeOpus)
+}
+
+func (app *kanbanBoardApp) shouldSignalRealtimePeer(desiredTrackCount int) bool {
+	if desiredTrackCount == 0 {
+		return false
+	}
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	return !app.connected && !app.signaling
+}
+
+func (app *kanbanBoardApp) signalRealtimePeer(gatherComplete <-chan struct{}) error {
+	app.mu.Lock()
+	if app.connected || app.signaling {
+		app.mu.Unlock()
+		return nil
+	}
+	app.signaling = true
+	apiKey := app.apiKey
+	model := app.model
+	peerConnection := app.pc
+	app.mu.Unlock()
+
+	defer func() {
+		app.mu.Lock()
+		app.signaling = false
+		app.mu.Unlock()
+	}()
+
+	<-gatherComplete
+
+	localDescription := peerConnection.LocalDescription()
+	if localDescription == nil || strings.TrimSpace(localDescription.SDP) == "" {
+		return fmt.Errorf("Realtime peer connection did not produce a local description")
+	}
+
+	answerSDP, err := app.createRealtimeCall(apiKey, model, localDescription.SDP)
+	if err != nil {
+		return err
+	}
+
+	if err := peerConnection.SetRemoteDescription(webrtc.SessionDescription{
+		Type: webrtc.SDPTypeAnswer,
+		SDP:  answerSDP,
+	}); err != nil {
+		return fmt.Errorf("set Realtime remote description: %w", err)
+	}
+
+	app.mu.Lock()
+	app.connected = true
+	app.mu.Unlock()
+
+	return nil
+}
+
+func (app *kanbanBoardApp) createRealtimeCall(apiKey string, model string, offerSDP string) (string, error) {
+	contentType, body, err := buildRealtimeCallRequest(offerSDP, app.sessionConfig(model))
+	if err != nil {
+		return "", err
+	}
+
+	request, err := http.NewRequest(http.MethodPost, realtimeCallsURL, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("create Realtime request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.Header.Set("Content-Type", contentType)
+
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
+	if err != nil {
+		return "", fmt.Errorf("create Realtime session: %w", err)
+	}
+	defer response.Body.Close()
+
+	answerSDP, err := io.ReadAll(response.Body)
+	if err != nil {
+		return "", fmt.Errorf("read Realtime answer: %w", err)
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("Realtime session failed: status=%s body=%s", response.Status, strings.TrimSpace(string(answerSDP)))
+	}
+
+	return string(answerSDP), nil
+}
+
+func buildRealtimeCallRequest(offerSDP string, session map[string]any) (string, []byte, error) {
+	sessionJSON, err := json.Marshal(session)
+	if err != nil {
+		return "", nil, fmt.Errorf("marshal Realtime session: %w", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("sdp", offerSDP); err != nil {
+		return "", nil, fmt.Errorf("write SDP offer: %w", err)
+	}
+	if err := writer.WriteField("session", string(sessionJSON)); err != nil {
+		return "", nil, fmt.Errorf("write session config: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return "", nil, fmt.Errorf("finalize multipart request: %w", err)
+	}
+
+	return writer.FormDataContentType(), body.Bytes(), nil
+}
+
+func (app *kanbanBoardApp) SendEvent(payload any) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal Realtime event: %w", err)
+	}
+
+	app.mu.Lock()
+	events := app.events
+	app.mu.Unlock()
+	if events == nil || events.ReadyState() != webrtc.DataChannelStateOpen {
+		return fmt.Errorf("Realtime event channel is unavailable")
+	}
+
+	return events.SendText(string(raw))
+}
+
+func (app *kanbanBoardApp) sessionConfig(model string) map[string]any {
+	return map[string]any{
+		"type":              "realtime",
+		"model":             model,
+		"output_modalities": []string{"text"},
+		"audio": map[string]any{
+			"input": map[string]any{
+				"transcription": map[string]any{
+					"model":    "gpt-4o-mini-transcribe",
+					"language": "en",
+				},
+				"turn_detection": map[string]any{
+					"type":                "server_vad",
+					"threshold":           0.5,
+					"prefix_padding_ms":   300,
+					"silence_duration_ms": 500,
+					"create_response":     false,
+					"interrupt_response":  false,
+				},
+			},
+		},
+		"instructions": app.sessionInstructions(),
+		"tools":        app.kanbanTools(),
+		"tool_choice":  "required",
+	}
+}
+
+func (app *kanbanBoardApp) sessionUpdateEvent() map[string]any {
+	return map[string]any{
+		"type":    "session.update",
+		"session": app.sessionConfig(app.model),
+	}
+}
+
+func realtimeModel() string {
+	if model := strings.TrimSpace(os.Getenv("OPENAI_REALTIME_MODEL")); model != "" {
+		return model
+	}
+
+	return defaultRealtimeModel
+}
+
+func (app *kanbanBoardApp) sessionInstructions() string {
+	return strings.Join([]string{
+		"You are a voice-operated Kanban board operator.",
+		"Listen to the user and decide whether they want to create a ticket, move a ticket between columns, add tags to a ticket, update a ticket, delete a ticket, or do nothing.",
+		"Use the board card ids exactly as provided when operating on existing tickets.",
+		"Users may say ticket, card, task, issue, or sticky note; treat those as Kanban cards.",
+		"Available columns are Backlog, In Progress, Review, and Done.",
+		"If a user asks to start, work on, pick up, or begin a ticket, move it to In Progress.",
+		"If a user asks to ship, finish, complete, close, or mark done, move it to Done.",
+		"If a user asks to review, QA, inspect, or get eyes on a ticket, move it to Review.",
+		"If a user asks to park, punt, defer, or move something back, move it to Backlog.",
+		"If a user asks to add a tag, call add_tags; do not replace existing tags.",
+		"If the user asks for an operation, call exactly the relevant tool. Prefer tools over text replies.",
+		"If the user is not asking for a board operation, call do_nothing with a short reason.",
+		"Do not narrate board operations aloud.",
+		fmt.Sprintf("Current Kanban board JSON: %s", app.boardContextJSON()),
+	}, " ")
+}
+
+func (app *kanbanBoardApp) boardContextJSON() string {
+	raw, err := json.Marshal(app.snapshotState().Cards)
+	if err != nil {
+		return "[]"
+	}
+
+	return string(raw)
+}
+
+func (app *kanbanBoardApp) kanbanTools() []map[string]any {
+	statusProperty := map[string]any{
+		"type": "string",
+		"enum": []string{"Backlog", "In Progress", "Review", "Done"},
+	}
+	tagsProperty := map[string]any{
+		"type":  "array",
+		"items": map[string]any{"type": "string"},
+	}
+
+	return []map[string]any{
+		{
+			"type":        "function",
+			"name":        "create_ticket",
+			"description": "Create a new Kanban ticket/card.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"title":  map[string]any{"type": "string"},
+					"notes":  map[string]any{"type": "string"},
+					"tags":   tagsProperty,
+					"status": statusProperty,
+				},
+				"required":             []string{"title", "notes", "tags"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "move_ticket",
+			"description": "Move an existing Kanban ticket/card to another column.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"card_id": map[string]any{"type": "string"},
+					"status":  statusProperty,
+				},
+				"required":             []string{"card_id", "status"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "add_tags",
+			"description": "Add one or more tags to an existing Kanban ticket/card without removing existing tags.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"card_id": map[string]any{"type": "string"},
+					"tags":    tagsProperty,
+				},
+				"required":             []string{"card_id", "tags"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "update_ticket",
+			"description": "Update the title or notes of an existing Kanban ticket/card.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"card_id": map[string]any{"type": "string"},
+					"title":   map[string]any{"type": "string"},
+					"notes":   map[string]any{"type": "string"},
+				},
+				"required":             []string{"card_id"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "delete_ticket",
+			"description": "Delete an existing Kanban ticket/card.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"card_id": map[string]any{"type": "string"},
+				},
+				"required":             []string{"card_id"},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "do_nothing",
+			"description": "Use this when the user is not asking to operate on the Kanban board.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reason": map[string]any{"type": "string"},
+				},
+				"required":             []string{"reason"},
+				"additionalProperties": false,
+			},
+		},
+	}
+}
+
+func (app *kanbanBoardApp) handleRealtimeEvent(raw []byte) {
+	var event kanbanRealtimeEvent
+	if err := json.Unmarshal(raw, &event); err != nil {
+		log.Errorf("Failed to parse OpenAI Realtime event: %v", err)
+		return
+	}
+
+	switch event.Type {
+	case "error":
+		if event.Error != nil {
+			log.Errorf("OpenAI Realtime error code=%s message=%s", event.Error.Code, event.Error.Message)
+			broadcastKanbanEvent("status", event.Error.Message)
+		}
+	case "conversation.item.input_audio_transcription.completed":
+		if strings.TrimSpace(event.Transcript) == "" {
+			return
+		}
+		broadcastKanbanEvent("status", "Heard: "+event.Transcript)
+		if err := app.SendEvent(map[string]any{
+			"type": "response.create",
+			"response": map[string]any{
+				"output_modalities": []string{"text"},
+			},
+		}); err != nil {
+			log.Errorf("Failed to request Kanban Realtime response: %v", err)
+		}
+	case "response.output_item.done":
+		if event.Item != nil && event.Item.Type == "function_call" {
+			app.handleToolCall(*event.Item)
+		}
+	case "response.function_call_arguments.done":
+		app.handleToolCall(kanbanRealtimeOutputItem{
+			Type:      "function_call",
+			Name:      event.Name,
+			Arguments: event.Arguments,
+			CallID:    event.CallID,
+		})
+	case "response.done":
+		if event.Response == nil {
+			return
+		}
+		for _, outputItem := range event.Response.Output {
+			if outputItem.Type == "function_call" {
+				app.handleToolCall(outputItem)
+			}
+		}
+	}
+}
+
+func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
+	if strings.TrimSpace(outputItem.CallID) == "" {
+		log.Errorf("Ignoring Kanban tool call %q without call_id", outputItem.Name)
+		return
+	}
+
+	app.mu.Lock()
+	if _, ok := app.handledCalls[outputItem.CallID]; ok {
+		app.mu.Unlock()
+		return
+	}
+	app.handledCalls[outputItem.CallID] = struct{}{}
+	app.mu.Unlock()
+
+	result, changed, err := app.applyToolCall(outputItem)
+	if err != nil {
+		result = map[string]any{
+			"ok":    false,
+			"error": err.Error(),
+		}
+	}
+
+	if err := app.SendEvent(map[string]any{
+		"type": "conversation.item.create",
+		"item": map[string]any{
+			"type":    "function_call_output",
+			"call_id": outputItem.CallID,
+			"output":  mustMarshalJSON(result),
+		},
+	}); err != nil {
+		log.Errorf("Failed to send Kanban function output: %v", err)
+	}
+
+	if !changed {
+		return
+	}
+
+	broadcastKanbanEvent("board", app.snapshotState())
+	if err := app.SendEvent(app.sessionUpdateEvent()); err != nil {
+		log.Errorf("Failed to refresh Kanban Realtime session: %v", err)
+	}
+}
+
+func (app *kanbanBoardApp) applyToolCall(outputItem kanbanRealtimeOutputItem) (map[string]any, bool, error) {
+	args := map[string]any{}
+	if rawArgs := strings.TrimSpace(outputItem.Arguments); rawArgs != "" {
+		if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+			return nil, false, fmt.Errorf("parse %s arguments: %w", outputItem.Name, err)
+		}
+	}
+
+	switch outputItem.Name {
+	case "create_ticket":
+		return app.createTicket(args)
+	case "move_ticket":
+		return app.moveTicket(args)
+	case "add_tags":
+		return app.addTags(args)
+	case "update_ticket":
+		return app.updateTicket(args)
+	case "delete_ticket":
+		return app.deleteTicket(args)
+	case "do_nothing":
+		reason := asString(args["reason"])
+		if reason == "" {
+			reason = "No board update requested."
+		}
+		return map[string]any{
+			"ok":     true,
+			"reason": reason,
+		}, false, nil
+	default:
+		return nil, false, fmt.Errorf("unsupported function %q", outputItem.Name)
+	}
+}
+
+func (app *kanbanBoardApp) createTicket(args map[string]any) (map[string]any, bool, error) {
+	title := asString(args["title"])
+	if title == "" {
+		return nil, false, fmt.Errorf("title is required")
+	}
+
+	notes := asString(args["notes"])
+	tags := uniqueStrings(asStringSlice(args["tags"]))
+	status := kanbanStatusBacklog
+	if rawStatus, ok := args["status"]; ok {
+		parsedStatus, err := parseKanbanStatus(rawStatus)
+		if err != nil {
+			return nil, false, err
+		}
+		status = parsedStatus
+	}
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	card := kanbanCard{
+		ID:     app.createCardIDLocked(),
+		Status: status,
+		Title:  title,
+		Notes:  notes,
+		Tags:   tags,
+	}
+	app.cards = append(app.cards, card)
+	app.touchLocked()
+
+	return map[string]any{
+		"ok":      true,
+		"created": true,
+		"card":    cloneKanbanCard(card),
+	}, true, nil
+}
+
+func (app *kanbanBoardApp) moveTicket(args map[string]any) (map[string]any, bool, error) {
+	cardID := asString(args["card_id"])
+	if cardID == "" {
+		return nil, false, fmt.Errorf("card_id is required")
+	}
+
+	status, err := parseKanbanStatus(args["status"])
+	if err != nil {
+		return nil, false, err
+	}
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	card, ok := app.findCardLocked(cardID)
+	if !ok {
+		return nil, false, fmt.Errorf("unknown card_id: %s", cardID)
+	}
+	card.Status = status
+	app.touchLocked()
+
+	return map[string]any{
+		"ok":      true,
+		"moved":   true,
+		"card_id": cardID,
+		"status":  status,
+	}, true, nil
+}
+
+func (app *kanbanBoardApp) addTags(args map[string]any) (map[string]any, bool, error) {
+	cardID := asString(args["card_id"])
+	if cardID == "" {
+		return nil, false, fmt.Errorf("card_id is required")
+	}
+
+	tags := uniqueStrings(asStringSlice(args["tags"]))
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	card, ok := app.findCardLocked(cardID)
+	if !ok {
+		return nil, false, fmt.Errorf("unknown card_id: %s", cardID)
+	}
+	card.Tags = uniqueStrings(append(card.Tags, tags...))
+	app.touchLocked()
+
+	return map[string]any{
+		"ok":         true,
+		"tags_added": true,
+		"card_id":    cardID,
+		"tags":       append([]string(nil), tags...),
+	}, true, nil
+}
+
+func (app *kanbanBoardApp) updateTicket(args map[string]any) (map[string]any, bool, error) {
+	cardID := asString(args["card_id"])
+	if cardID == "" {
+		return nil, false, fmt.Errorf("card_id is required")
+	}
+
+	title := asString(args["title"])
+	notes := asString(args["notes"])
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	card, ok := app.findCardLocked(cardID)
+	if !ok {
+		return nil, false, fmt.Errorf("unknown card_id: %s", cardID)
+	}
+	if title != "" {
+		card.Title = title
+	}
+	if notes != "" {
+		card.Notes = notes
+	}
+	app.touchLocked()
+
+	return map[string]any{
+		"ok":      true,
+		"updated": true,
+		"card_id": cardID,
+	}, true, nil
+}
+
+func (app *kanbanBoardApp) deleteTicket(args map[string]any) (map[string]any, bool, error) {
+	cardID := asString(args["card_id"])
+	if cardID == "" {
+		return nil, false, fmt.Errorf("card_id is required")
+	}
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	index := -1
+	for candidateIndex, card := range app.cards {
+		if card.ID == cardID {
+			index = candidateIndex
+			break
+		}
+	}
+	if index == -1 {
+		return nil, false, fmt.Errorf("unknown card_id: %s", cardID)
+	}
+	app.cards = append(app.cards[:index], app.cards[index+1:]...)
+	app.touchLocked()
+
+	return map[string]any{
+		"ok":      true,
+		"deleted": true,
+		"card_id": cardID,
+	}, true, nil
+}
+
+func (app *kanbanBoardApp) snapshotState() kanbanBoardState {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	state := kanbanBoardState{
+		Cards: cloneKanbanCards(app.cards),
+	}
+	if !app.updatedAt.IsZero() {
+		state.UpdatedAt = app.updatedAt.UTC().Format(time.RFC3339Nano)
+	}
+
+	return state
+}
+
+func (app *kanbanBoardApp) createCardIDLocked() string {
+	for {
+		cardID := fmt.Sprintf("kanban-card-%03d", app.nextCreatedIndex)
+		app.nextCreatedIndex++
+		if _, exists := app.findCardLocked(cardID); exists {
+			continue
+		}
+		return cardID
+	}
+}
+
+func (app *kanbanBoardApp) findCardLocked(cardID string) (*kanbanCard, bool) {
+	for index := range app.cards {
+		if app.cards[index].ID == cardID {
+			return &app.cards[index], true
+		}
+	}
+
+	return nil, false
+}
+
+func (app *kanbanBoardApp) touchLocked() {
+	app.updatedAt = time.Now().UTC()
+}
+
+func cloneKanbanCards(cards []kanbanCard) []kanbanCard {
+	clonedCards := make([]kanbanCard, 0, len(cards))
+	for _, card := range cards {
+		clonedCards = append(clonedCards, cloneKanbanCard(card))
+	}
+
+	return clonedCards
+}
+
+func cloneKanbanCard(card kanbanCard) kanbanCard {
+	return kanbanCard{
+		ID:     card.ID,
+		Status: card.Status,
+		Title:  card.Title,
+		Notes:  card.Notes,
+		Tags:   append([]string(nil), card.Tags...),
+	}
+}
+
+func asString(value any) string {
+	candidate, ok := value.(string)
+	if !ok {
+		return ""
+	}
+
+	return strings.TrimSpace(candidate)
+}
+
+func asStringSlice(value any) []string {
+	rawValues, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+
+	values := make([]string, 0, len(rawValues))
+	for _, rawValue := range rawValues {
+		if value := asString(rawValue); value != "" {
+			values = append(values, value)
+		}
+	}
+
+	return values
+}
+
+func parseKanbanStatus(value any) (kanbanStatus, error) {
+	status := kanbanStatus(asString(value))
+	for _, candidate := range kanbanStatuses {
+		if candidate == status {
+			return status, nil
+		}
+	}
+
+	return "", fmt.Errorf("unknown Kanban status: %v", value)
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		normalizedValue := strings.TrimSpace(value)
+		if normalizedValue == "" {
+			continue
+		}
+		if _, ok := seen[normalizedValue]; ok {
+			continue
+		}
+		seen[normalizedValue] = struct{}{}
+		result = append(result, normalizedValue)
+	}
+
+	return result
+}
+
+func mustMarshalJSON(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return `{"ok":false,"error":"Could not encode function output."}`
+	}
+
+	return string(raw)
+}
+
+func sendKanbanEvent(websocket *threadSafeWriter, event string, data any) error {
+	raw, err := json.Marshal(map[string]any{
+		"event": event,
+		"data":  data,
+	})
+	if err != nil {
+		return err
+	}
+
+	return websocket.WriteJSON(&websocketMessage{
+		Event: "kanban",
+		Data:  string(raw),
+	})
+}
+
+func broadcastKanbanEvent(event string, data any) {
+	raw, err := json.Marshal(map[string]any{
+		"event": event,
+		"data":  data,
+	})
+	if err != nil {
+		log.Errorf("Failed to encode Kanban event: %v", err)
+		return
+	}
+
+	listLock.RLock()
+	websockets := make([]*threadSafeWriter, 0, len(peerConnections))
+	for _, state := range peerConnections {
+		if state.websocket != nil {
+			websockets = append(websockets, state.websocket)
+		}
+	}
+	listLock.RUnlock()
+
+	for _, websocket := range websockets {
+		if err := websocket.WriteJSON(&websocketMessage{
+			Event: "kanban",
+			Data:  string(raw),
+		}); err != nil {
+			log.Errorf("Failed to send Kanban event: %v", err)
+		}
+	}
+}

@@ -30,6 +30,8 @@ var (
 	trackLocals     map[string]*webrtc.TrackLocalStaticRTP
 
 	log = logging.NewDefaultLoggerFactory().NewLogger("openai-realtime-meeting-assistant")
+
+	kanbanApp *kanbanBoardApp
 )
 
 type websocketMessage struct {
@@ -40,6 +42,25 @@ type websocketMessage struct {
 type peerConnectionState struct {
 	peerConnection *webrtc.PeerConnection
 	websocket      *threadSafeWriter
+	acceptTrack    func(*webrtc.TrackLocalStaticRTP) bool
+	shouldSignal   func(desiredTrackCount int) bool
+	signal         func(gatherComplete <-chan struct{}) error
+}
+
+func (p peerConnectionState) acceptsTrack(track *webrtc.TrackLocalStaticRTP) bool {
+	if p.acceptTrack == nil {
+		return true
+	}
+
+	return p.acceptTrack(track)
+}
+
+func (p peerConnectionState) shouldSignalWithDesiredTrackCount(desiredTrackCount int) bool {
+	if p.shouldSignal == nil {
+		return true
+	}
+
+	return p.shouldSignal(desiredTrackCount)
 }
 
 func main() {
@@ -48,6 +69,11 @@ func main() {
 
 	// Init other state
 	trackLocals = map[string]*webrtc.TrackLocalStaticRTP{}
+	kanbanApp = newKanbanBoardApp()
+	defer kanbanApp.Close()
+	if err := kanbanApp.JoinConferenceRoom(); err != nil {
+		log.Errorf("Kanban Realtime peer disabled: %v", err)
+	}
 
 	// Read index.html from disk into memory, serve whenever anyone requests /
 	indexHTML, err := os.ReadFile("index.html")
@@ -125,26 +151,40 @@ func signalPeerConnections() { // nolint
 				return true // We modified the slice, start from the beginning
 			}
 
+			peer := &peerConnections[i]
+
+			desiredTrackCount := 0
+			for _, trackLocal := range trackLocals {
+				if peer.acceptsTrack(trackLocal) {
+					desiredTrackCount++
+				}
+			}
+			if !peer.shouldSignalWithDesiredTrackCount(desiredTrackCount) {
+				continue
+			}
+
 			// map of sender we already are seanding, so we don't double send
 			existingSenders := map[string]bool{}
 
-			for _, sender := range peerConnections[i].peerConnection.GetSenders() {
+			for _, sender := range peer.peerConnection.GetSenders() {
 				if sender.Track() == nil {
 					continue
 				}
 
-				existingSenders[sender.Track().ID()] = true
+				trackID := sender.Track().ID()
+				existingSenders[trackID] = true
 
 				// If we have a RTPSender that doesn't map to a existing track remove and signal
-				if _, ok := trackLocals[sender.Track().ID()]; !ok {
-					if err := peerConnections[i].peerConnection.RemoveTrack(sender); err != nil {
+				trackLocal, ok := trackLocals[trackID]
+				if !ok || !peer.acceptsTrack(trackLocal) {
+					if err := peer.peerConnection.RemoveTrack(sender); err != nil {
 						return true
 					}
 				}
 			}
 
 			// Don't receive videos we are sending, make sure we don't have loopback
-			for _, receiver := range peerConnections[i].peerConnection.GetReceivers() {
+			for _, receiver := range peer.peerConnection.GetReceivers() {
 				if receiver.Track() == nil {
 					continue
 				}
@@ -153,21 +193,39 @@ func signalPeerConnections() { // nolint
 			}
 
 			// Add all track we aren't sending yet to the PeerConnection
-			for trackID := range trackLocals {
+			for trackID, trackLocal := range trackLocals {
+				if !peer.acceptsTrack(trackLocal) {
+					continue
+				}
+
 				if _, ok := existingSenders[trackID]; !ok {
-					if _, err := peerConnections[i].peerConnection.AddTrack(trackLocals[trackID]); err != nil {
+					if _, err := peer.peerConnection.AddTrack(trackLocal); err != nil {
 						return true
 					}
 				}
 			}
 
-			offer, err := peerConnections[i].peerConnection.CreateOffer(nil)
+			offer, err := peer.peerConnection.CreateOffer(nil)
 			if err != nil {
 				return true
 			}
 
-			if err = peerConnections[i].peerConnection.SetLocalDescription(offer); err != nil {
+			var gatherComplete <-chan struct{}
+			if peer.signal != nil {
+				gatherComplete = webrtc.GatheringCompletePromise(peer.peerConnection)
+			}
+
+			if err = peer.peerConnection.SetLocalDescription(offer); err != nil {
 				return true
+			}
+
+			if peer.signal != nil {
+				if err = peer.signal(gatherComplete); err != nil {
+					log.Errorf("Failed to signal peer: %v", err)
+					return true
+				}
+
+				continue
 			}
 
 			offerString, err := json.Marshal(offer)
@@ -179,7 +237,7 @@ func signalPeerConnections() { // nolint
 
 			log.Infof("Send offer to client: %v", offer)
 
-			if err = peerConnections[i].websocket.WriteJSON(&websocketMessage{
+			if err = peer.websocket.WriteJSON(&websocketMessage{
 				Event: "offer",
 				Data:  string(offerString),
 			}); err != nil {
@@ -266,8 +324,18 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 	// Add our new PeerConnection to global list
 	listLock.Lock()
-	peerConnections = append(peerConnections, peerConnectionState{peerConnection, c})
+	peerConnections = append(peerConnections, peerConnectionState{
+		peerConnection: peerConnection,
+		websocket:      c,
+	})
 	listLock.Unlock()
+
+	if err := sendKanbanEvent(c, "board", kanbanApp.snapshotState()); err != nil {
+		log.Errorf("Failed to send Kanban board state: %v", err)
+	}
+	if err := sendKanbanEvent(c, "status", "Connected to conference room"); err != nil {
+		log.Errorf("Failed to send Kanban status: %v", err)
+	}
 
 	// Trickle ICE. Emit server candidate to client
 	peerConnection.OnICECandidate(func(i *webrtc.ICECandidate) {

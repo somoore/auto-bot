@@ -1,95 +1,433 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Realtime Kanban Meeting Assistant</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f6f8;
+        color: #17191f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      main {
+        width: min(1180px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 28px 0;
+      }
+
+      header,
+      .controls,
+      .media {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      header {
+        justify-content: space-between;
+        margin-bottom: 18px;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 24px;
+        line-height: 1.2;
+      }
+
+      button {
+        border: 1px solid #c9ced8;
+        border-radius: 8px;
+        background: #ffffff;
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 600;
+        padding: 9px 14px;
+      }
+
+      button.primary {
+        background: #1769e0;
+        border-color: #1769e0;
+        color: #ffffff;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      .status,
+      .empty,
+      .log {
+        color: #66707f;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .media {
+        margin-bottom: 18px;
+      }
+
+      video {
+        width: 160px;
+        height: 120px;
+        border-radius: 8px;
+        background: #111418;
+        object-fit: cover;
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        align-items: start;
+      }
+
+      .column,
+      .card {
+        border: 1px solid #dde2eb;
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      .column {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+        padding: 12px;
+      }
+
+      .column header {
+        margin: 0;
+      }
+
+      .column h2 {
+        font-size: 14px;
+        line-height: 1.3;
+      }
+
+      .count {
+        display: inline-grid;
+        place-items: center;
+        min-width: 24px;
+        min-height: 24px;
+        padding: 0 7px;
+        border-radius: 999px;
+        background: #edf1f7;
+        color: #5d6572;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .stack,
+      .card {
+        display: grid;
+        gap: 10px;
+      }
+
+      .card {
+        padding: 11px;
+        background: #fbfcfe;
+      }
+
+      .card strong {
+        font-size: 14px;
+        line-height: 1.3;
+      }
+
+      .card p {
+        margin: 0;
+        color: #66707f;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .tags li {
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #e7f0ff;
+        color: #1459be;
+        font-size: 12px;
+        line-height: 1;
+      }
+
+      .log {
+        margin-top: 16px;
+        min-height: 20px;
+      }
+
+      @media (max-width: 860px) {
+        header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .board {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
   </head>
   <body>
-    <h3> Local Video </h3>
-    <video id="localVideo" width="160" height="120" autoplay muted></video> <br />
+    <main>
+      <header>
+        <div>
+          <h1>Realtime Kanban Meeting Assistant</h1>
+          <p class="status" id="status">Not connected</p>
+        </div>
+        <div class="controls">
+          <button id="join" class="primary" type="button">Join room</button>
+          <button id="leave" type="button" disabled>Leave</button>
+        </div>
+      </header>
 
-    <h3> Remote Video </h3>
-    <div id="remoteVideos"></div> <br />
+      <section class="media" aria-label="Conference media">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <div id="remoteVideos" class="media"></div>
+      </section>
 
-    <h3> Logs </h3>
-    <div id="logs"></div>
+      <section id="board" class="board" aria-label="Kanban board"></section>
+      <p id="log" class="log" aria-live="polite"></p>
+    </main>
 
+    <script>
+      const statuses = ['Backlog', 'In Progress', 'Review', 'Done']
+      const boardEl = document.getElementById('board')
+      const statusEl = document.getElementById('status')
+      const logEl = document.getElementById('log')
+      const joinButton = document.getElementById('join')
+      const leaveButton = document.getElementById('leave')
+      const localVideo = document.getElementById('localVideo')
+      const remoteVideos = document.getElementById('remoteVideos')
 
-  </body>
+      let cards = []
+      let pc
+      let ws
+      let localStream
+      const remoteElements = new Map()
 
-  <script>
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-    .then(stream => {
-      let pc = new RTCPeerConnection()
-      pc.ontrack = function (event) {
+      joinButton.addEventListener('click', joinRoom)
+      leaveButton.addEventListener('click', leaveRoom)
+      window.addEventListener('beforeunload', leaveRoom)
+
+      renderBoard()
+
+      async function joinRoom() {
+        joinButton.disabled = true
+        setStatus('Requesting camera and microphone')
+
+        try {
+          localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+          localVideo.srcObject = localStream
+
+          pc = new RTCPeerConnection()
+          pc.ontrack = addRemoteTrack
+          pc.onicecandidate = event => {
+            if (!event.candidate || ws?.readyState !== WebSocket.OPEN) {
+              return
+            }
+            ws.send(JSON.stringify({ event: 'candidate', data: JSON.stringify(event.candidate) }))
+          }
+          pc.onconnectionstatechange = () => {
+            setStatus(`Conference connection: ${pc.connectionState}`)
+            if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+              leaveRoom()
+            }
+          }
+
+          localStream.getTracks().forEach(track => pc.addTrack(track, localStream))
+
+          const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+          ws = new WebSocket(`${scheme}://${window.location.host}/websocket`)
+          ws.onopen = () => {
+            leaveButton.disabled = false
+            setStatus('Connected')
+          }
+          ws.onmessage = event => handleSignal(JSON.parse(event.data))
+          ws.onclose = () => leaveRoom()
+          ws.onerror = () => setLog('WebSocket error')
+        } catch (error) {
+          setLog(error.message || String(error))
+          leaveRoom()
+        }
+      }
+
+      async function handleSignal(message) {
+        switch (message.event) {
+          case 'offer': {
+            const offer = JSON.parse(message.data)
+            await pc.setRemoteDescription(offer)
+            const answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+            ws.send(JSON.stringify({ event: 'answer', data: JSON.stringify(answer) }))
+            break
+          }
+          case 'candidate': {
+            const candidate = JSON.parse(message.data)
+            await pc.addIceCandidate(candidate)
+            break
+          }
+          case 'kanban':
+            handleKanbanMessage(JSON.parse(message.data))
+            break
+        }
+      }
+
+      function handleKanbanMessage(message) {
+        switch (message.event) {
+          case 'board':
+            cards = Array.isArray(message.data?.cards) ? message.data.cards : []
+            renderBoard()
+            break
+          case 'status':
+            setLog(String(message.data || ''))
+            break
+        }
+      }
+
+      function addRemoteTrack(event) {
         if (event.track.kind === 'audio') {
           return
         }
 
-        let el = document.createElement(event.track.kind)
-        el.srcObject = event.streams[0]
-        el.autoplay = true
-        el.controls = true
-        document.getElementById('remoteVideos').appendChild(el)
-
-        event.track.onmute = function(event) {
-          el.play()
-        }
-
-        event.streams[0].onremovetrack = ({track}) => {
-          if (el.parentNode) {
-            el.parentNode.removeChild(el)
-          }
-        }
-      }
-
-      document.getElementById('localVideo').srcObject = stream
-      stream.getTracks().forEach(track => pc.addTrack(track, stream))
-
-      let ws = new WebSocket("{{.}}")
-      pc.onicecandidate = e => {
-        if (!e.candidate) {
+        const stream = event.streams[0]
+        if (!stream || remoteElements.has(stream.id)) {
           return
         }
 
-        ws.send(JSON.stringify({event: 'candidate', data: JSON.stringify(e.candidate)}))
-      }
+        const video = document.createElement('video')
+        video.autoplay = true
+        video.playsInline = true
+        video.controls = true
+        video.srcObject = stream
+        remoteVideos.appendChild(video)
+        remoteElements.set(stream.id, video)
 
-      ws.onclose = function(evt) {
-        window.alert("Websocket has closed")
-      }
-
-      ws.onmessage = function(evt) {
-        let msg = JSON.parse(evt.data)
-        if (!msg) {
-          return console.log('failed to parse msg')
-        }
-
-        switch (msg.event) {
-          case 'offer':
-            let offer = JSON.parse(msg.data)
-            if (!offer) {
-              return console.log('failed to parse answer')
-            }
-            pc.setRemoteDescription(offer)
-            pc.createAnswer().then(answer => {
-              pc.setLocalDescription(answer)
-              ws.send(JSON.stringify({event: 'answer', data: JSON.stringify(answer)}))
-            })
-            return
-
-          case 'candidate':
-            let candidate = JSON.parse(msg.data)
-            if (!candidate) {
-              return console.log('failed to parse candidate')
-            }
-
-            pc.addIceCandidate(candidate)
+        stream.onremovetrack = () => {
+          video.remove()
+          remoteElements.delete(stream.id)
         }
       }
 
-      ws.onerror = function(evt) {
-        console.log("ERROR: " + evt.data)
+      function renderBoard() {
+        boardEl.replaceChildren(...statuses.map(status => {
+          const columnCards = cards.filter(card => card.status === status)
+          const column = document.createElement('section')
+          column.className = 'column'
+          column.setAttribute('aria-label', `${status} cards`)
+
+          const header = document.createElement('header')
+          const title = document.createElement('h2')
+          title.textContent = status
+          const count = document.createElement('span')
+          count.className = 'count'
+          count.textContent = String(columnCards.length)
+          header.append(title, count)
+
+          const stack = document.createElement('div')
+          stack.className = 'stack'
+          if (columnCards.length === 0) {
+            const empty = document.createElement('div')
+            empty.className = 'empty'
+            empty.textContent = 'Empty'
+            stack.appendChild(empty)
+          } else {
+            stack.append(...columnCards.map(renderCard))
+          }
+
+          column.append(header, stack)
+          return column
+        }))
       }
-    }).catch(window.alert)
-  </script>
+
+      function renderCard(card) {
+        const article = document.createElement('article')
+        article.className = 'card'
+
+        const title = document.createElement('strong')
+        title.textContent = card.title
+        article.appendChild(title)
+
+        if (card.notes) {
+          const notes = document.createElement('p')
+          notes.textContent = card.notes
+          article.appendChild(notes)
+        }
+
+        if (card.tags?.length > 0) {
+          const tags = document.createElement('ul')
+          tags.className = 'tags'
+          tags.setAttribute('aria-label', `${card.title} tags`)
+          tags.append(...card.tags.map(tag => {
+            const item = document.createElement('li')
+            item.textContent = tag
+            return item
+          }))
+          article.appendChild(tags)
+        }
+
+        return article
+      }
+
+      function leaveRoom() {
+        joinButton.disabled = false
+        leaveButton.disabled = true
+
+        if (ws && ws.readyState !== WebSocket.CLOSED) {
+          ws.close()
+        }
+        ws = undefined
+
+        if (pc) {
+          pc.close()
+        }
+        pc = undefined
+
+        if (localStream) {
+          localStream.getTracks().forEach(track => track.stop())
+        }
+        localStream = undefined
+        localVideo.srcObject = null
+
+        remoteElements.forEach(video => video.remove())
+        remoteElements.clear()
+        setStatus('Not connected')
+      }
+
+      function setStatus(message) {
+        statusEl.textContent = message
+      }
+
+      function setLog(message) {
+        logEl.textContent = message
+      }
+    </script>
+  </body>
 </html>
