@@ -17,7 +17,7 @@ import (
 
 const (
 	realtimeCallsURL          = "https://api.openai.com/v1/realtime/calls"
-	defaultRealtimeModel      = "gpt-realtime"
+	defaultRealtimeModel      = "gpt-realtime-2"
 	realtimeEventChannelLabel = "oai-events"
 )
 
