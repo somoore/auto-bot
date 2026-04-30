@@ -290,7 +290,7 @@
       .comment-preview {
         display: grid;
         gap: 12px;
-        width: min(460px, calc(100vw - 48px));
+        width: min(560px, calc(100vw - 48px));
         border: 1px solid #dde2eb;
         border-radius: 8px;
         background: #ffffff;
@@ -326,6 +326,40 @@
         font-size: 15px;
         line-height: 1.5;
         white-space: pre-wrap;
+      }
+
+      .comment-preview-details {
+        display: grid;
+        gap: 8px;
+      }
+
+      .comment-preview-detail {
+        display: grid;
+        gap: 3px;
+      }
+
+      .comment-preview-detail-label {
+        color: #6f7785;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .comment-preview-detail-value {
+        color: #3c4043;
+        font-size: 13px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
+
+      .comment-preview-latest {
+        display: grid;
+        gap: 6px;
+        border-radius: 8px;
+        background: #f1f7ff;
+        padding: 10px;
       }
 
       .card strong {
@@ -835,6 +869,7 @@
 
       function cardSnapshot(card) {
         return {
+          id: card.id || '',
           title: card.title || '',
           status: card.status || '',
           notes: card.notes || '',
@@ -887,24 +922,68 @@
 
         const panel = document.createElement('article')
         panel.className = 'comment-preview'
-        panel.setAttribute('aria-label', `Comment added to ${preview.card.title}`)
+        panel.setAttribute('aria-label', `Card details for ${preview.card.title}`)
 
         const meta = document.createElement('span')
         meta.className = 'comment-preview-meta'
-        meta.textContent = `${preview.card.status || 'Card'} comment`
+        meta.textContent = `${preview.card.status || 'Card'} card`
 
         const title = document.createElement('strong')
         title.className = 'comment-preview-title'
         title.textContent = preview.card.title || 'Untitled card'
 
-        const body = document.createElement('p')
-        body.className = 'comment-preview-body'
-        body.textContent = preview.comment
+        const details = document.createElement('div')
+        details.className = 'comment-preview-details'
 
-        panel.append(meta, title, body)
+        details.appendChild(renderPreviewDetail('Status', preview.card.status || 'Unassigned'))
+        details.appendChild(renderPreviewDetail('Card ID', preview.card.id || 'No card id'))
+        if (preview.card.tags?.length > 0) {
+          const tags = document.createElement('ul')
+          tags.className = 'tags'
+          tags.setAttribute('aria-label', `${preview.card.title} tags`)
+          tags.append(...preview.card.tags.map(tag => {
+            const item = document.createElement('li')
+            const colors = tagColors(tag)
+            item.style.setProperty('--tag-bg', colors.background)
+            item.style.setProperty('--tag-color', colors.color)
+            item.textContent = tag
+            return item
+          }))
+          details.appendChild(renderPreviewDetail('Tags', tags))
+        } else {
+          details.appendChild(renderPreviewDetail('Tags', 'No tags'))
+        }
+        details.appendChild(renderPreviewDetail('Notes', preview.card.notes || 'No notes yet.'))
+
+        const latest = document.createElement('div')
+        latest.className = 'comment-preview-latest'
+        latest.appendChild(renderPreviewDetail('Latest comment', preview.comment))
+
+        panel.append(meta, title, details, latest)
         commentPreviewRegion.replaceChildren(panel)
 
         commentPreviewTimer = window.setTimeout(() => closeCommentPreview(panel), 4200)
+      }
+
+      function renderPreviewDetail(labelText, value) {
+        const detail = document.createElement('div')
+        detail.className = 'comment-preview-detail'
+
+        const label = document.createElement('span')
+        label.className = 'comment-preview-detail-label'
+        label.textContent = labelText
+
+        let valueEl
+        if (value instanceof Node) {
+          valueEl = value
+        } else {
+          valueEl = document.createElement('p')
+          valueEl.className = 'comment-preview-detail-value'
+          valueEl.textContent = String(value)
+        }
+
+        detail.append(label, valueEl)
+        return detail
       }
 
       function closeCommentPreview(panel) {
