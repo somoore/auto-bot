@@ -258,9 +258,10 @@
       .tags li {
         padding: 4px 8px;
         border-radius: 999px;
-        background: #e7f0ff;
-        color: #1459be;
+        background: var(--tag-bg);
+        color: var(--tag-color);
         font-size: 12px;
+        font-weight: 700;
         line-height: 1;
       }
 
@@ -549,6 +550,9 @@
           tags.setAttribute('aria-label', `${card.title} tags`)
           tags.append(...card.tags.map(tag => {
             const item = document.createElement('li')
+            const colors = tagColors(tag)
+            item.style.setProperty('--tag-bg', colors.background)
+            item.style.setProperty('--tag-color', colors.color)
             item.textContent = tag
             return item
           }))
@@ -556,6 +560,19 @@
         }
 
         return article
+      }
+
+      function tagColors(tag) {
+        let hash = 0
+        for (const character of String(tag)) {
+          hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0
+        }
+
+        const hue = Math.abs(hash) % 360
+        return {
+          background: `hsl(${hue} 78% 90%)`,
+          color: `hsl(${hue} 72% 26%)`
+        }
       }
 
       function leaveRoom() {

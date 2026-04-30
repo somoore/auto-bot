@@ -493,7 +493,6 @@ func (app *kanbanBoardApp) handleRealtimeEvent(raw []byte) {
 		if strings.TrimSpace(event.Transcript) == "" {
 			return
 		}
-		broadcastKanbanEvent("status", "Heard: "+event.Transcript)
 		if err := app.SendEvent(map[string]any{
 			"type": "response.create",
 			"response": map[string]any{
