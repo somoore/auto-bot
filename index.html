@@ -6,10 +6,10 @@
     <title>Realtime Kanban Meeting Assistant</title>
     <style>
       :root {
-        color-scheme: light;
+        color-scheme: dark;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #f5f6f8;
-        color: #17191f;
+        background: #202124;
+        color: #e8eaed;
       }
 
       * {
@@ -22,23 +22,38 @@
       }
 
       main {
-        width: min(1180px, calc(100vw - 32px));
-        margin: 0 auto;
-        padding: 28px 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 12px;
+        min-height: 100vh;
+        padding: 12px;
       }
 
-      header,
-      .controls,
-      .media {
+      .topbar,
+      .controls {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
         flex-wrap: wrap;
       }
 
-      header {
-        justify-content: space-between;
-        margin-bottom: 18px;
+      .topbar {
+        border-radius: 8px;
+        background: #3c4043;
+        min-height: 36px;
+        padding: 6px 12px;
+      }
+
+      .presenting-pill {
+        display: inline-grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        background: #5f6368;
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 800;
       }
 
       h1,
@@ -48,57 +63,125 @@
       }
 
       h1 {
-        font-size: 24px;
+        font-size: 13px;
         line-height: 1.2;
       }
 
       button {
-        border: 1px solid #c9ced8;
-        border-radius: 8px;
-        background: #ffffff;
+        border: 0;
+        border-radius: 999px;
+        background: #3c4043;
         color: inherit;
         cursor: pointer;
         font: inherit;
         font-weight: 600;
-        padding: 9px 14px;
+        min-width: 96px;
+        padding: 10px 16px;
       }
 
       button.primary {
-        background: #1769e0;
-        border-color: #1769e0;
+        background: #1a73e8;
+        color: #ffffff;
+      }
+
+      #leave {
+        background: #ea4335;
         color: #ffffff;
       }
 
       button:disabled {
         cursor: not-allowed;
-        opacity: 0.55;
+        opacity: 0.45;
       }
 
       .status,
       .empty,
       .log {
-        color: #66707f;
+        color: #bdc1c6;
         font-size: 13px;
         line-height: 1.45;
       }
 
-      .media {
-        margin-bottom: 18px;
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) clamp(320px, 28vw, 420px);
+        gap: 12px;
+        min-height: 0;
+      }
+
+      .presentation-tile,
+      .video-rail {
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .presentation-tile {
+        display: grid;
+        padding: 14px;
+      }
+
+      .video-rail {
+        overflow: auto;
+        z-index: 1;
       }
 
       video {
-        width: 160px;
-        height: 120px;
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
         border-radius: 8px;
-        background: #111418;
+        background: #202124;
         object-fit: cover;
+      }
+
+      .video-stack {
+        display: grid;
+        grid-template-columns: 1fr;
+        align-content: start;
+        gap: 12px;
+      }
+
+      .video-tile {
+        position: relative;
+        overflow: hidden;
+        border-radius: 10px;
+        background: #111418;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+
+      .video-label {
+        position: absolute;
+        bottom: 8px;
+        left: 8px;
+        max-width: calc(100% - 16px);
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(32, 33, 36, 0.82);
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1;
+        padding: 5px 8px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .board-surface {
+        min-height: 0;
+        max-width: 100%;
+        overflow: auto;
+        border-radius: 8px;
+        background: #f5f6f8;
+        color: #17191f;
+        padding: 16px;
       }
 
       .board {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        grid-template-columns: repeat(5, minmax(170px, 1fr));
         gap: 12px;
         align-items: start;
+        min-width: 920px;
       }
 
       .column,
@@ -116,6 +199,9 @@
       }
 
       .column header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         margin: 0;
       }
 
@@ -179,42 +265,110 @@
       }
 
       .log {
-        margin-top: 16px;
         min-height: 20px;
+        padding: 0 2px;
+      }
+
+      .meeting-bar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+        gap: 12px;
+        min-height: 52px;
+      }
+
+      .controls {
+        justify-content: center;
+      }
+
+      @media (max-width: 1100px) {
+        .workspace {
+          grid-template-columns: minmax(0, 1fr) 320px;
+        }
+
+        .board {
+          grid-template-columns: repeat(5, minmax(160px, 1fr));
+          min-width: 860px;
+        }
       }
 
       @media (max-width: 860px) {
-        header {
+        main {
+          padding: 12px;
+        }
+
+        .topbar {
           align-items: flex-start;
           flex-direction: column;
         }
 
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .video-rail {
+          order: -1;
+          overflow: visible;
+        }
+
+        .video-stack {
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        }
+
+        .meeting-bar {
+          grid-template-columns: 1fr;
+          justify-items: stretch;
+        }
+
+        .controls {
+          order: -1;
+        }
+      }
+
+      @media (max-width: 640px) {
         .board {
           grid-template-columns: 1fr;
+          min-width: 0;
         }
       }
     </style>
   </head>
   <body>
     <main>
-      <header>
+      <header class="topbar">
+        <span class="presenting-pill" aria-hidden="true">K</span>
         <div>
           <h1>Realtime Kanban Meeting Assistant</h1>
           <p class="status" id="status">Not connected</p>
         </div>
+      </header>
+
+      <div class="workspace">
+        <section class="presentation-tile video-tile" aria-label="Presented Kanban board">
+          <div class="board-surface">
+            <section id="board" class="board" aria-label="Kanban board"></section>
+          </div>
+          <span class="video-label">Kanban board</span>
+        </section>
+
+        <aside class="video-rail" aria-label="Conference videos">
+          <div id="videoStack" class="video-stack">
+            <div class="video-tile">
+              <video id="localVideo" autoplay muted playsinline></video>
+              <span class="video-label">You</span>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="meeting-bar">
+        <p id="log" class="log" aria-live="polite">Team meeting</p>
         <div class="controls">
           <button id="join" class="primary" type="button">Join room</button>
           <button id="leave" type="button" disabled>Leave</button>
         </div>
-      </header>
-
-      <section class="media" aria-label="Conference media">
-        <video id="localVideo" autoplay muted playsinline></video>
-        <div id="remoteVideos" class="media"></div>
-      </section>
-
-      <section id="board" class="board" aria-label="Kanban board"></section>
-      <p id="log" class="log" aria-live="polite"></p>
+        <span aria-hidden="true"></span>
+      </footer>
     </main>
 
     <script>
@@ -225,7 +379,7 @@
       const joinButton = document.getElementById('join')
       const leaveButton = document.getElementById('leave')
       const localVideo = document.getElementById('localVideo')
-      const remoteVideos = document.getElementById('remoteVideos')
+      const videoStack = document.getElementById('videoStack')
 
       let cards = []
       let pc
@@ -322,16 +476,24 @@
           return
         }
 
+        const tile = document.createElement('div')
+        tile.className = 'video-tile'
+
         const video = document.createElement('video')
         video.autoplay = true
         video.playsInline = true
-        video.controls = true
         video.srcObject = stream
-        remoteVideos.appendChild(video)
-        remoteElements.set(stream.id, video)
+
+        const label = document.createElement('span')
+        label.className = 'video-label'
+        label.textContent = 'Participant'
+
+        tile.append(video, label)
+        videoStack.appendChild(tile)
+        remoteElements.set(stream.id, tile)
 
         stream.onremovetrack = () => {
-          video.remove()
+          tile.remove()
           remoteElements.delete(stream.id)
         }
       }
@@ -416,7 +578,7 @@
         localStream = undefined
         localVideo.srcObject = null
 
-        remoteElements.forEach(video => video.remove())
+        remoteElements.forEach(tile => tile.remove())
         remoteElements.clear()
         setStatus('Not connected')
       }
