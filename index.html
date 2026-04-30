@@ -178,10 +178,10 @@
 
       .board {
         display: grid;
-        grid-template-columns: repeat(5, minmax(170px, 1fr));
+        grid-template-columns: repeat(4, minmax(170px, 1fr));
         gap: 12px;
         align-items: start;
-        min-width: 920px;
+        min-width: 736px;
       }
 
       .column,
@@ -288,8 +288,8 @@
         }
 
         .board {
-          grid-template-columns: repeat(5, minmax(160px, 1fr));
-          min-width: 860px;
+          grid-template-columns: repeat(4, minmax(160px, 1fr));
+          min-width: 688px;
         }
       }
 
@@ -373,7 +373,7 @@
     </main>
 
     <script>
-      const statuses = ['Backlog', 'In Progress', 'Blocked', 'Review', 'Done']
+      const statuses = ['Backlog', 'In Progress', 'Blocked', 'Done']
       const boardEl = document.getElementById('board')
       const statusEl = document.getElementById('status')
       const logEl = document.getElementById('log')

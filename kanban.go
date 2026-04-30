@@ -27,7 +27,6 @@ const (
 	kanbanStatusBacklog    kanbanStatus = "Backlog"
 	kanbanStatusInProgress kanbanStatus = "In Progress"
 	kanbanStatusBlocked    kanbanStatus = "Blocked"
-	kanbanStatusReview     kanbanStatus = "Review"
 	kanbanStatusDone       kanbanStatus = "Done"
 )
 
@@ -35,7 +34,6 @@ var kanbanStatuses = []kanbanStatus{
 	kanbanStatusBacklog,
 	kanbanStatusInProgress,
 	kanbanStatusBlocked,
-	kanbanStatusReview,
 	kanbanStatusDone,
 }
 
@@ -344,7 +342,7 @@ func (app *kanbanBoardApp) sessionInstructions() string {
 		"Listen to the user and decide whether they want to create a ticket, move a ticket between columns, add tags to a ticket, update a ticket, delete a ticket, or do nothing.",
 		"Use the board card ids exactly as provided when operating on existing tickets.",
 		"Users may say ticket, card, task, issue, or sticky note; treat those as Kanban cards.",
-		"Available columns are Backlog, In Progress, Blocked, Review, and Done.",
+		"Available columns are Backlog, In Progress, Blocked, and Done.",
 		"This is used during standups and meetings. Treat concrete first-person status updates as implicit board operations; do not wait for the user to say create a ticket.",
 		"If a user says they shipped, fixed, completed, closed, or finished work, move an existing related ticket to Done if one exists; otherwise create a concise Done ticket.",
 		"If a user says they started, began, picked up, or are working on something, move an existing related ticket to In Progress if one exists; otherwise create a concise In Progress ticket.",
@@ -354,7 +352,6 @@ func (app *kanbanBoardApp) sessionInstructions() string {
 		"If a user asks to start, work on, pick up, or begin a ticket, move it to In Progress.",
 		"If a user asks to block, mark blocked, or note a dependency for a ticket, move it to Blocked and preserve the blocker details in notes.",
 		"If a user asks to ship, finish, complete, close, or mark done, move it to Done.",
-		"If a user asks to review, QA, inspect, or get eyes on a ticket, move it to Review.",
 		"If a user asks to park, punt, defer, or move something back, move it to Backlog.",
 		"If a user asks to add a tag, call add_tags; do not replace existing tags.",
 		"If one transcript contains multiple status updates, call one tool for each board operation.",
@@ -379,7 +376,7 @@ func (app *kanbanBoardApp) kanbanTools() []map[string]any {
 	statusProperty := map[string]any{
 		"type":        "string",
 		"description": "Kanban column for the ticket.",
-		"enum":        []string{"Backlog", "In Progress", "Blocked", "Review", "Done"},
+		"enum":        []string{"Backlog", "In Progress", "Blocked", "Done"},
 	}
 	tagsProperty := map[string]any{
 		"type":        "array",
