@@ -13,12 +13,16 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media"
 )
 
 const (
 	realtimeCallsURL          = "https://api.openai.com/v1/realtime/calls"
 	defaultRealtimeModel      = "gpt-realtime-2"
 	realtimeEventChannelLabel = "oai-events"
+	realtimeInputTrackID      = "kanban-realtime:mixed-audio"
+	realtimeInputStreamID     = "kanban-realtime-input"
+	realtimeMixedAudioSinkKey = "kanban-realtime"
 )
 
 type kanbanStatus string
@@ -80,13 +84,13 @@ type kanbanBoardApp struct {
 	updatedAt        time.Time
 	handledCalls     map[string]struct{}
 
-	apiKey    string
-	model     string
-	pc        *webrtc.PeerConnection
-	events    *webrtc.DataChannel
-	signaling bool
-	connected bool
-	closeOnce sync.Once
+	model      string
+	pc         *webrtc.PeerConnection
+	events     *webrtc.DataChannel
+	inputTrack *webrtc.TrackLocalStaticSample
+	inputEnc   *opusEncoder
+	connected  bool
+	closeOnce  sync.Once
 }
 
 var initialKanbanBoardCards = []kanbanCard{
@@ -147,17 +151,46 @@ func (app *kanbanBoardApp) JoinConferenceRoom() error {
 		return fmt.Errorf("create Realtime peer connection: %w", err)
 	}
 
+	inputTrack, err := webrtc.NewTrackLocalStaticSample(
+		webrtc.RTPCodecCapability{
+			MimeType:  webrtc.MimeTypeOpus,
+			ClockRate: roomAudioSampleRate,
+			Channels:  roomAudioChannels,
+		},
+		realtimeInputTrackID,
+		realtimeInputStreamID,
+	)
+	if err != nil {
+		_ = peerConnection.Close()
+		return fmt.Errorf("create Realtime mixed audio input track: %w", err)
+	}
+
+	inputEnc, err := newOpusEncoder(roomAudioSampleRate, roomAudioChannels)
+	if err != nil {
+		_ = peerConnection.Close()
+		return fmt.Errorf("create Realtime mixed audio encoder: %w", err)
+	}
+
+	inputSender, err := peerConnection.AddTrack(inputTrack)
+	if err != nil {
+		_ = peerConnection.Close()
+		return fmt.Errorf("attach Realtime mixed audio input track: %w", err)
+	}
+	go drainRTCP(inputSender)
+
 	events, err := peerConnection.CreateDataChannel(realtimeEventChannelLabel, nil)
 	if err != nil {
 		_ = peerConnection.Close()
 		return fmt.Errorf("create Realtime event data channel: %w", err)
 	}
 
+	model := realtimeModel()
 	app.mu.Lock()
-	app.apiKey = apiKey
-	app.model = realtimeModel()
+	app.model = model
 	app.pc = peerConnection
 	app.events = events
+	app.inputTrack = inputTrack
+	app.inputEnc = inputEnc
 	app.mu.Unlock()
 
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
@@ -173,22 +206,28 @@ func (app *kanbanBoardApp) JoinConferenceRoom() error {
 		app.handleRealtimeEvent(message.Data)
 	})
 
-	listLock.Lock()
-	peerConnections = append(peerConnections, peerConnectionState{
-		peerConnection: peerConnection,
-		acceptTrack:    app.acceptRoomTrack,
-		shouldSignal:   app.shouldSignalRealtimePeer,
-		signal:         app.signalRealtimePeer,
-	})
-	listLock.Unlock()
+	go func() {
+		if err := app.connectRealtimePeer(apiKey, model); err != nil {
+			log.Errorf("Failed to connect OpenAI Realtime peer: %v", err)
+			broadcastKanbanEvent("status", "OpenAI Realtime disabled: "+err.Error())
+			_ = peerConnection.Close()
+			return
+		}
+		if roomMixer != nil {
+			roomMixer.setSink(realtimeMixedAudioSinkKey, app)
+		}
+	}()
 
-	signalPeerConnections()
 	return nil
 }
 
 func (app *kanbanBoardApp) Close() error {
 	var closeErr error
 	app.closeOnce.Do(func() {
+		if roomMixer != nil {
+			roomMixer.removeSink(realtimeMixedAudioSinkKey)
+		}
+
 		app.mu.Lock()
 		peerConnection := app.pc
 		app.mu.Unlock()
@@ -200,43 +239,28 @@ func (app *kanbanBoardApp) Close() error {
 	return closeErr
 }
 
-func (app *kanbanBoardApp) acceptRoomTrack(track *webrtc.TrackLocalStaticRTP) bool {
-	if track.Kind() != webrtc.RTPCodecTypeAudio {
-		return false
-	}
-
-	return strings.EqualFold(track.Codec().MimeType, webrtc.MimeTypeOpus)
-}
-
-func (app *kanbanBoardApp) shouldSignalRealtimePeer(desiredTrackCount int) bool {
-	if desiredTrackCount == 0 {
-		return false
-	}
-
+func (app *kanbanBoardApp) connectRealtimePeer(apiKey string, model string) error {
 	app.mu.Lock()
-	defer app.mu.Unlock()
-
-	return !app.connected && !app.signaling
-}
-
-func (app *kanbanBoardApp) signalRealtimePeer(gatherComplete <-chan struct{}) error {
-	app.mu.Lock()
-	if app.connected || app.signaling {
+	if app.connected {
 		app.mu.Unlock()
 		return nil
 	}
-	app.signaling = true
-	apiKey := app.apiKey
-	model := app.model
 	peerConnection := app.pc
 	app.mu.Unlock()
 
-	defer func() {
-		app.mu.Lock()
-		app.signaling = false
-		app.mu.Unlock()
-	}()
+	if peerConnection == nil {
+		return fmt.Errorf("Realtime peer connection is unavailable")
+	}
 
+	offer, err := peerConnection.CreateOffer(nil)
+	if err != nil {
+		return fmt.Errorf("create Realtime offer: %w", err)
+	}
+
+	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
+	if err := peerConnection.SetLocalDescription(offer); err != nil {
+		return fmt.Errorf("set Realtime local description: %w", err)
+	}
 	<-gatherComplete
 
 	localDescription := peerConnection.LocalDescription()
@@ -261,6 +285,51 @@ func (app *kanbanBoardApp) signalRealtimePeer(gatherComplete <-chan struct{}) er
 	app.mu.Unlock()
 
 	return nil
+}
+
+func (app *kanbanBoardApp) WriteMixedPCM(roomPCM []int16) error {
+	if len(roomPCM) == 0 {
+		return nil
+	}
+	if len(roomPCM)%roomAudioMixFrameSize != 0 {
+		return fmt.Errorf("mixed PCM length %d must be a multiple of %d samples", len(roomPCM), roomAudioMixFrameSize)
+	}
+
+	app.mu.Lock()
+	inputTrack := app.inputTrack
+	inputEnc := app.inputEnc
+	app.mu.Unlock()
+
+	if inputTrack == nil || inputEnc == nil {
+		return fmt.Errorf("Realtime mixed audio input is unavailable")
+	}
+
+	for offset := 0; offset < len(roomPCM); offset += roomAudioMixFrameSize {
+		frame := roomPCM[offset : offset+roomAudioMixFrameSize]
+
+		opusFrame, err := inputEnc.Encode(frame)
+		if err != nil {
+			return fmt.Errorf("encode mixed room audio: %w", err)
+		}
+
+		if err := inputTrack.WriteSample(media.Sample{
+			Data:     opusFrame,
+			Duration: roomAudioMixInterval,
+		}); err != nil {
+			return fmt.Errorf("write mixed room audio sample: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func drainRTCP(sender *webrtc.RTPSender) {
+	buffer := make([]byte, 1500)
+	for {
+		if _, _, err := sender.Read(buffer); err != nil {
+			return
+		}
+	}
 }
 
 func (app *kanbanBoardApp) createRealtimeCall(apiKey string, model string, offerSDP string) (string, error) {

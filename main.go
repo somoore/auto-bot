@@ -12,7 +12,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/logging"
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -32,6 +31,7 @@ var (
 	log = logging.NewDefaultLoggerFactory().NewLogger("openai-realtime-meeting-assistant")
 
 	kanbanApp *kanbanBoardApp
+	roomMixer *audioMixer
 )
 
 type websocketMessage struct {
@@ -69,6 +69,8 @@ func main() {
 
 	// Init other state
 	trackLocals = map[string]*webrtc.TrackLocalStaticRTP{}
+	roomMixer = newAudioMixer()
+	defer roomMixer.close()
 	kanbanApp = newKanbanBoardApp()
 	defer kanbanApp.Close()
 	if err := kanbanApp.JoinConferenceRoom(); err != nil {
@@ -388,29 +390,39 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		log.Infof("Got remote track: Kind=%s, ID=%s, PayloadType=%d", t.Kind(), t.ID(), t.PayloadType())
 
-		// Create a track to fan out our incoming video to all peers
+		// Create a track to fan out our incoming media to all browser peers.
 		trackLocal := addTrack(t)
 		defer removeTrack(trackLocal)
 
-		buf := make([]byte, 1500)
-		rtpPkt := &rtp.Packet{}
+		audioDecoder, audioChannels, err := newRoomAudioDecoder(t)
+		if err != nil {
+			log.Errorf("Failed to create audio decoder for track=%s: %v", t.ID(), err)
+		}
+		audioTrackKey := roomAudioTrackKey(t)
+		if audioDecoder != nil {
+			defer roomMixer.removeTrack(audioTrackKey)
+		}
+		audioDecodeBuffer := make([]int16, roomAudioDecodeBufferSize(audioChannels))
 
 		for {
-			i, _, err := t.Read(buf)
+			packet, _, err := t.ReadRTP()
 			if err != nil {
 				return
 			}
 
-			if err = rtpPkt.Unmarshal(buf[:i]); err != nil {
-				log.Errorf("Failed to unmarshal incoming RTP packet: %v", err)
-
-				return
+			if audioDecoder != nil {
+				pcm, decodeErr := decodeOpusToRoomPCM(audioDecoder, audioDecodeBuffer, audioChannels, packet.Payload)
+				if decodeErr != nil {
+					log.Errorf("Failed to decode room audio for track=%s: %v", t.ID(), decodeErr)
+				} else {
+					roomMixer.submit(audioTrackKey, pcm)
+				}
 			}
 
-			rtpPkt.Extension = false
-			rtpPkt.Extensions = nil
+			packet.Extension = false
+			packet.Extensions = nil
 
-			if err = trackLocal.WriteRTP(rtpPkt); err != nil {
+			if err = trackLocal.WriteRTP(packet); err != nil {
 				return
 			}
 		}
