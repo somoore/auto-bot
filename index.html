@@ -277,6 +277,57 @@
         animation: toast-in 180ms ease-out;
       }
 
+      .comment-preview-region {
+        position: fixed;
+        inset: 0;
+        z-index: 1050;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        pointer-events: none;
+      }
+
+      .comment-preview {
+        display: grid;
+        gap: 12px;
+        width: min(460px, calc(100vw - 48px));
+        border: 1px solid #dde2eb;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+        color: #17191f;
+        padding: 18px;
+        transform-origin: 50% 60%;
+        animation: comment-preview-open 260ms cubic-bezier(0.2, 0.9, 0.2, 1.15);
+      }
+
+      .comment-preview.closing {
+        animation: comment-preview-close 220ms ease-in forwards;
+      }
+
+      .comment-preview-meta {
+        justify-self: start;
+        border-radius: 999px;
+        background: #e8f0fe;
+        color: #174ea6;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1;
+        padding: 6px 9px;
+      }
+
+      .comment-preview-title {
+        font-size: 18px;
+        line-height: 1.25;
+      }
+
+      .comment-preview-body {
+        color: #3c4043;
+        font-size: 15px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+
       .card strong {
         font-size: 14px;
         line-height: 1.3;
@@ -387,6 +438,35 @@
         }
       }
 
+      @keyframes comment-preview-open {
+        0% {
+          opacity: 0;
+          transform: translate3d(0, 22px, 0) scale(0.9) rotate(-1.5deg);
+        }
+
+        72% {
+          opacity: 1;
+          transform: translate3d(0, -4px, 0) scale(1.025) rotate(0.5deg);
+        }
+
+        100% {
+          opacity: 1;
+          transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+        }
+      }
+
+      @keyframes comment-preview-close {
+        0% {
+          opacity: 1;
+          transform: translate3d(0, 0, 0) scale(1);
+        }
+
+        100% {
+          opacity: 0;
+          transform: translate3d(0, -18px, 0) scale(0.96) rotate(1deg);
+        }
+      }
+
       @media (max-width: 1100px) {
         .workspace {
           grid-template-columns: minmax(0, 1fr) 320px;
@@ -477,6 +557,7 @@
       </footer>
     </main>
     <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <div id="commentPreviewRegion" class="comment-preview-region" aria-live="polite" aria-atomic="true"></div>
 
     <script>
       const statuses = ['Backlog', 'In Progress', 'Blocked', 'Done']
@@ -488,12 +569,14 @@
       const localVideo = document.getElementById('localVideo')
       const videoStack = document.getElementById('videoStack')
       const toastRegion = document.getElementById('toastRegion')
+      const commentPreviewRegion = document.getElementById('commentPreviewRegion')
 
       let cards = []
       let pc
       let ws
       let localStream
       let hasBoardSnapshot = false
+      let commentPreviewTimer
       const remoteElements = new Map()
       const cardSnapshots = new Map()
 
@@ -572,6 +655,7 @@
               const changes = cardChanges(cards)
               renderBoard(changes)
               changes.messages.forEach(showToast)
+              changes.commentPreviews.forEach(showCommentPreview)
             }
             break
           case 'status':
@@ -612,7 +696,7 @@
         }
       }
 
-      function renderBoard(changes = { moved: new Set(), completed: new Set(), messages: [] }) {
+      function renderBoard(changes = { moved: new Set(), completed: new Set(), messages: [], commentPreviews: [] }) {
         boardEl.replaceChildren(...statuses.map(status => {
           const columnCards = cards.filter(card => card.status === status)
           const column = document.createElement('section')
@@ -686,6 +770,7 @@
         const moved = new Set()
         const completed = new Set()
         const messages = []
+        const commentPreviews = []
         const nextIds = new Set()
         const shouldToast = hasBoardSnapshot
 
@@ -708,17 +793,27 @@
             if (shouldToast) {
               messages.push(`Moved "${card.title}" to ${card.status}`)
             }
-          } else if (previousCard.title !== card.title) {
+          }
+
+          if (previousCard.title !== card.title) {
             if (shouldToast) {
               messages.push(`Renamed "${previousCard.title}" to "${card.title}"`)
             }
-          } else if (!sameTags(previousCard.tags, card.tags || [])) {
+          }
+
+          if (!sameTags(previousCard.tags, card.tags || [])) {
             if (shouldToast) {
               messages.push(`Updated tags on "${card.title}"`)
             }
-          } else if (previousCard.notes !== (card.notes || '')) {
+          }
+
+          if (previousCard.notes !== (card.notes || '')) {
             if (shouldToast) {
-              messages.push(`Updated "${card.title}"`)
+              const comment = addedComment(previousCard.notes, card.notes || '')
+              messages.push(comment ? `Added comment to "${card.title}"` : `Updated "${card.title}"`)
+              if (comment) {
+                commentPreviews.push({ card: cardSnapshot(card), comment })
+              }
             }
           }
 
@@ -735,7 +830,7 @@
         }
         hasBoardSnapshot = true
 
-        return { moved, completed, messages }
+        return { moved, completed, messages, commentPreviews }
       }
 
       function cardSnapshot(card) {
@@ -755,6 +850,18 @@
         return left.every((tag, index) => tag === right[index])
       }
 
+      function addedComment(previousNotes, nextNotes) {
+        const previous = String(previousNotes || '').trim()
+        const next = String(nextNotes || '').trim()
+        if (!next || next === previous) {
+          return ''
+        }
+        if (previous && next.startsWith(previous)) {
+          return next.slice(previous.length).replace(/^[\s:;,.|-]+/, '').trim() || next
+        }
+        return next
+      }
+
       function showToast(message) {
         if (!message) {
           return
@@ -769,6 +876,44 @@
           toastRegion.firstElementChild.remove()
         }
         window.setTimeout(() => toast.remove(), 4200)
+      }
+
+      function showCommentPreview(preview) {
+        if (!preview?.comment) {
+          return
+        }
+
+        window.clearTimeout(commentPreviewTimer)
+
+        const panel = document.createElement('article')
+        panel.className = 'comment-preview'
+        panel.setAttribute('aria-label', `Comment added to ${preview.card.title}`)
+
+        const meta = document.createElement('span')
+        meta.className = 'comment-preview-meta'
+        meta.textContent = `${preview.card.status || 'Card'} comment`
+
+        const title = document.createElement('strong')
+        title.className = 'comment-preview-title'
+        title.textContent = preview.card.title || 'Untitled card'
+
+        const body = document.createElement('p')
+        body.className = 'comment-preview-body'
+        body.textContent = preview.comment
+
+        panel.append(meta, title, body)
+        commentPreviewRegion.replaceChildren(panel)
+
+        commentPreviewTimer = window.setTimeout(() => closeCommentPreview(panel), 4200)
+      }
+
+      function closeCommentPreview(panel) {
+        if (!panel || panel.parentElement !== commentPreviewRegion) {
+          return
+        }
+
+        panel.classList.add('closing')
+        panel.addEventListener('animationend', () => panel.remove(), { once: true })
       }
 
       function fireConfetti(anchor) {
