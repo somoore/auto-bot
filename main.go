@@ -105,6 +105,15 @@ func main() {
 	}
 }
 
+func newPeerConnection() (*webrtc.PeerConnection, error) {
+	settingEngine := webrtc.SettingEngine{}
+	if nat1To1IP := os.Getenv("PION_NAT1TO1_IP"); nat1To1IP != "" {
+		settingEngine.SetNAT1To1IPs([]string{nat1To1IP}, webrtc.ICECandidateTypeHost)
+	}
+
+	return webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine)).NewPeerConnection(webrtc.Configuration{})
+}
+
 // Add to list of tracks and fire renegotation for all PeerConnections.
 func addTrack(t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP { // nolint
 	listLock.Lock()
@@ -301,7 +310,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	defer c.Close() //nolint
 
 	// Create new PeerConnection
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	peerConnection, err := newPeerConnection()
 	if err != nil {
 		log.Errorf("Failed to creates a PeerConnection: %v", err)
 

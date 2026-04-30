@@ -108,7 +108,7 @@ func (app *kanbanBoardApp) JoinConferenceRoom() error {
 		return fmt.Errorf("OPENAI_API_KEY is not configured")
 	}
 
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	peerConnection, err := newPeerConnection()
 	if err != nil {
 		return fmt.Errorf("create Realtime peer connection: %w", err)
 	}
