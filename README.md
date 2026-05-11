@@ -11,6 +11,9 @@ It is implemented as a Go application using Pion WebRTC, Gorilla WebSocket, Opus
 
 ![screenshot](./public/screenshot.png)
 
+> [!IMPORTANT]
+> This demo does not include built-in authentication or access control. While the server is running, anyone who can reach the app URL can join and access the meeting room.
+
 ## How to use
 
 ### Running the application
