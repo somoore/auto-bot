@@ -815,12 +815,34 @@
       }
 
       function addRemoteTrack(event) {
-        if (event.track.kind === 'audio') {
+        const stream = event.streams[0]
+        if (!stream) {
           return
         }
 
-        const stream = event.streams[0]
-        if (!stream || remoteElements.has(stream.id)) {
+        if (event.track.kind === 'audio') {
+          // Attach a hidden audio sink so the assistant's voice and other
+          // participants are audible. Re-using the same key as the video
+          // tile is fine — getElementById is unique and we just need one
+          // element per stream.
+          const key = `audio:${stream.id}`
+          if (remoteElements.has(key)) {
+            return
+          }
+          const audio = document.createElement('audio')
+          audio.autoplay = true
+          audio.srcObject = stream
+          audio.style.display = 'none'
+          document.body.appendChild(audio)
+          remoteElements.set(key, audio)
+          stream.onremovetrack = () => {
+            audio.remove()
+            remoteElements.delete(key)
+          }
+          return
+        }
+
+        if (remoteElements.has(stream.id)) {
           return
         }
 

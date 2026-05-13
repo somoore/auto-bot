@@ -172,12 +172,34 @@ func (app *kanbanBoardApp) JoinConferenceRoom() error {
 		return fmt.Errorf("create Realtime mixed audio encoder: %w", err)
 	}
 
-	inputSender, err := peerConnection.AddTrack(inputTrack)
+	// Use a sendrecv transceiver so OpenAI can both receive our mixed room
+	// audio and send the assistant's voice back on the same m-line, which
+	// we then fan out to browser participants via the global trackLocals
+	// fanout used for participant audio.
+	inputTransceiver, err := peerConnection.AddTransceiverFromTrack(inputTrack, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionSendrecv,
+	})
 	if err != nil {
 		_ = peerConnection.Close()
 		return fmt.Errorf("attach Realtime mixed audio input track: %w", err)
 	}
-	go drainRTCP(inputSender)
+	go drainRTCP(inputTransceiver.Sender())
+	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		log.Infof("Got OpenAI Realtime track: Kind=%s, ID=%s, PayloadType=%d", t.Kind(), t.ID(), t.PayloadType())
+		trackLocal := addTrack(t)
+		defer removeTrack(trackLocal)
+		for {
+			packet, _, err := t.ReadRTP()
+			if err != nil {
+				return
+			}
+			packet.Extension = false
+			packet.Extensions = nil
+			if err := trackLocal.WriteRTP(packet); err != nil {
+				return
+			}
+		}
+	})
 
 	events, err := peerConnection.CreateDataChannel(realtimeEventChannelLabel, nil)
 	if err != nil {
@@ -404,7 +426,7 @@ func (app *kanbanBoardApp) sessionConfig(model string) map[string]any {
 	session := map[string]any{
 		"type":              "realtime",
 		"model":             model,
-		"output_modalities": []string{"text"},
+		"output_modalities": []string{"audio"},
 		"audio": map[string]any{
 			"input": map[string]any{
 				"noise_reduction": map[string]any{
@@ -426,7 +448,7 @@ func (app *kanbanBoardApp) sessionConfig(model string) map[string]any {
 		},
 		"instructions": app.sessionInstructions(),
 		"tools":        app.kanbanTools(),
-		"tool_choice":  "required",
+		"tool_choice":  "auto",
 	}
 
 	if usesAdvancedCommandProfile(model) {
@@ -480,7 +502,8 @@ func (app *kanbanBoardApp) sessionInstructions() string {
 		"If the user asks for an operation or gives an implicit status update, call the relevant tool. Prefer tools over text replies.",
 		"If the user is only wrapping up, handing off, giving filler, or saying something like That's it from me, call do_nothing with a short reason.",
 		"If the user is not asking for a board operation and is not giving a concrete status update, call do_nothing with a short reason.",
-		"Do not narrate board operations aloud.",
+		"After every board operation tool call, briefly speak a one-sentence confirmation of what you did, e.g. \"Moved ICE restart handling to In Progress.\"",
+		"When calling do_nothing, stay silent unless the user asked a direct question.",
 		fmt.Sprintf("Current Kanban board JSON: %s", app.boardContextJSON()),
 	}, " ")
 }

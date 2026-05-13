@@ -116,6 +116,24 @@ func newPeerConnection() (*webrtc.PeerConnection, error) {
 	return webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine)).NewPeerConnection(webrtc.Configuration{})
 }
 
+// newBrowserPeerConnection is for the conference-room peer that the user's
+// browser connects to. When CONFERENCE_LOOPBACK_ONLY=1, the ICE agent only
+// binds to the loopback interface. This works around macOS Local Network
+// privacy blocking LAN→LAN UDP when client and server are the same machine.
+// Do not use this for the OpenAI Realtime peer — it needs public network.
+func newBrowserPeerConnection() (*webrtc.PeerConnection, error) {
+	settingEngine := webrtc.SettingEngine{}
+	if nat1To1IP := os.Getenv("PION_NAT1TO1_IP"); nat1To1IP != "" {
+		settingEngine.SetNAT1To1IPs([]string{nat1To1IP}, webrtc.ICECandidateTypeHost)
+	}
+	if os.Getenv("CONFERENCE_LOOPBACK_ONLY") == "1" {
+		settingEngine.SetInterfaceFilter(func(name string) bool { return name == "lo0" })
+		settingEngine.SetIncludeLoopbackCandidate(true)
+	}
+
+	return webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine)).NewPeerConnection(webrtc.Configuration{})
+}
+
 // Add to list of tracks and fire renegotation for all PeerConnections.
 func addTrack(t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP { // nolint
 	listLock.Lock()
@@ -312,7 +330,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	defer c.Close() //nolint
 
 	// Create new PeerConnection
-	peerConnection, err := newPeerConnection()
+	peerConnection, err := newBrowserPeerConnection()
 	if err != nil {
 		log.Errorf("Failed to creates a PeerConnection: %v", err)
 
