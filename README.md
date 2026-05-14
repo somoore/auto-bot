@@ -6,7 +6,7 @@
 ![OpenAI API](https://img.shields.io/badge/Powered_by-OpenAI_API-orange)
 ![AWS Nova Sonic](https://img.shields.io/badge/Powered_by-AWS_Nova_Sonic-yellow)
 
-A voice-operated Kanban board where standup happens by voice. The AI scrum master agent listens to the meeting, tracks speakers, and updates the board in real time — creating, moving, opening, and closing tickets hands-free. Two voice provider paths are supported:
+A voice-operated Kanban board where standup happens by voice. The AI scrum master agent listens to the meeting, tracks speakers, and updates the board in real time — creating, moving, opening, and closing tickets hands-free. Multiple participants join with webcam and microphone, see and hear each other, and all interact with the same AI agent. Two voice provider paths are supported:
 
 - **OpenAI Realtime 2** — Pion WebRTC SFU, browser connects via raw WebRTC
 - **AWS Nova Sonic 2** — LiveKit SFU, browser connects via livekit-client SDK, Bedrock bidirectional streaming
@@ -87,6 +87,31 @@ The scrum master agent understands natural language commands:
 
 The agent also responds to implicit status updates during standup — if someone says "I finished X", it moves the matching card to Done automatically.
 
+## Multi-Party Video & Layout Modes
+
+The Nova Sonic frontend (LiveKit) supports multi-party video conferencing. All participants see each other's webcam feeds, hear each other, and interact with the shared AI agent. Active speakers are highlighted in real time.
+
+### Layout Modes
+
+Switch between four Google Meet-style layouts using the toolbar buttons:
+
+| Layout | Description |
+| --- | --- |
+| **Filmstrip** | Horizontal video strip above the board (default) |
+| **Sidebar** | Narrow video column on the right, board dominant on the left |
+| **Grid** | All participants in a tiled grid above the board |
+| **Spotlight** | Active speaker large, board and transcription to the right |
+
+All panels between video, board, and transcription are **resizable** — drag the handles between them to adjust sizes. Panel sizes and layout preference are persisted to localStorage.
+
+### Controls
+
+- **Mic toggle** — mute/unmute microphone
+- **Camera toggle** — enable/disable webcam
+- **Leave room** — disconnect from the meeting
+
+The app is fully responsive: desktop, tablet, and mobile. On smaller screens, layouts collapse to stacked views, resize handles are hidden, and controls remain accessible without scrolling. The transcription panel auto-scrolls in place within a fixed viewport — the page itself never scrolls.
+
 ## Environment Variables
 
 | Variable | Default | Provider | Purpose |
@@ -139,7 +164,7 @@ cmd/
     opus_decoder.go     CGo Opus decoder
 web/
   index.html            OpenAI frontend (Pion WebRTC)
-  index_livekit.html    Nova Sonic frontend (LiveKit SDK + transcription + card detail)
+  index_livekit.html    Nova Sonic frontend (LiveKit SDK, multi-party video, layout modes, transcription)
 scripts/
   dc-up.sh              Resolve AWS credentials and start Docker Compose
 public/
