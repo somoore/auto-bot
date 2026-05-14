@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="$PATH:$(go env GOPATH)/bin"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+FAIL=0
+
+step() { printf "\n${YELLOW}▶ %s${NC}\n" "$1"; }
+pass() { printf "${GREEN}  ✓ %s${NC}\n" "$1"; }
+fail() { printf "${RED}  ✗ %s${NC}\n" "$1"; FAIL=1; }
+
+# ── Go module hygiene ──
+
+step "Checking go mod tidy (no stale dependencies)"
+cp go.mod go.mod.bak
+cp go.sum go.sum.bak
+go mod tidy 2>/dev/null
+if ! diff -q go.mod go.mod.bak >/dev/null 2>&1 || ! diff -q go.sum go.sum.bak >/dev/null 2>&1; then
+  fail "go.mod or go.sum changed after 'go mod tidy' — commit the updated files"
+  mv go.mod.bak go.mod
+  mv go.sum.bak go.sum
+else
+  pass "go.mod and go.sum are tidy"
+  rm -f go.mod.bak go.sum.bak
+fi
+
+step "Verifying go.sum checksums"
+if go mod verify >/dev/null 2>&1; then
+  pass "All module checksums verified"
+else
+  fail "go mod verify failed — module checksums do not match"
+fi
+
+# ── Go code quality ──
+
+step "Running go vet"
+if go vet ./... 2>&1; then
+  pass "go vet passed"
+else
+  fail "go vet found issues"
+fi
+
+step "Checking for unused imports (goimports)"
+if command -v goimports >/dev/null 2>&1; then
+  BAD_IMPORTS=$(goimports -l ./cmd/ 2>/dev/null || true)
+  if [ -z "$BAD_IMPORTS" ]; then
+    pass "No unused imports"
+  else
+    fail "Unused or mis-ordered imports in:"
+    echo "$BAD_IMPORTS" | while read -r f; do printf "    %s\n" "$f"; done
+  fi
+else
+  printf "${YELLOW}  ⚠ goimports not installed — skipping import check (go install golang.org/x/tools/cmd/goimports@latest)${NC}\n"
+fi
+
+# ── Vulnerability scan ──
+
+step "Scanning for known vulnerabilities (govulncheck)"
+if command -v govulncheck >/dev/null 2>&1; then
+  if govulncheck ./... 2>&1; then
+    pass "No known vulnerabilities"
+  else
+    fail "govulncheck found vulnerabilities"
+  fi
+else
+  printf "${YELLOW}  ⚠ govulncheck not installed — skipping (go install golang.org/x/vuln/cmd/govulncheck@latest)${NC}\n"
+fi
+
+# ── Docker image digest pinning ──
+
+step "Checking Docker image pinning (sha256 digests)"
+DOCKER_FAIL=0
+
+for f in Dockerfile docker-compose.yml; do
+  if [ ! -f "$f" ]; then continue; fi
+
+  if grep -qiE '^\s*(FROM|image:)\s+' "$f"; then
+    UNPINNED=$(grep -iE '^\s*(FROM|image:)\s+' "$f" | grep -v '@sha256:' | grep -v '^\s*#' || true)
+    if [ -n "$UNPINNED" ]; then
+      fail "Unpinned image(s) in $f:"
+      echo "$UNPINNED" | while read -r line; do printf "    %s\n" "$line"; done
+      DOCKER_FAIL=1
+    fi
+  fi
+done
+
+if [ "$DOCKER_FAIL" -eq 0 ]; then
+  pass "All Docker images pinned to sha256 digests"
+fi
+
+# ── CDN SRI (Subresource Integrity) ──
+
+step "Checking CDN scripts for SRI integrity attributes"
+SRI_FAIL=0
+
+for f in web/*.html; do
+  if [ ! -f "$f" ]; then continue; fi
+
+  # Collapse multi-line <script> tags onto single lines, then check for external src without integrity
+  COLLAPSED=$(perl -0777 -pe 's/<script\b([^>]*?)>/join(" ", split(\/\n\s*\/, "<script$1>"))/gei' "$f")
+  MISSING=$(echo "$COLLAPSED" | grep -n '<script[^>]*src="https\?://[^"]*"' | grep -v 'integrity=' || true)
+
+  if [ -n "$MISSING" ]; then
+    echo "$MISSING" | while IFS= read -r line; do
+      fail "Missing SRI integrity attribute in $f: $(echo "$line" | sed 's/^[[:space:]]*//')"
+    done
+    SRI_FAIL=1
+  fi
+done
+
+if [ "$SRI_FAIL" -eq 0 ]; then
+  pass "All external scripts have SRI integrity attributes"
+fi
+
+# ── Secrets detection (basic) ──
+
+step "Scanning staged files for potential secrets"
+SECRETS_PATTERN='(AKIA[0-9A-Z]{16}|sk-[a-zA-Z0-9]{20,}|-----BEGIN (RSA |EC )?PRIVATE KEY-----|password\s*=\s*["\x27][^\s]{8,})'
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || true)
+
+if [ -n "$STAGED" ]; then
+  FOUND=$(echo "$STAGED" | xargs grep -lEn "$SECRETS_PATTERN" 2>/dev/null || true)
+  if [ -n "$FOUND" ]; then
+    fail "Potential secrets detected in staged files:"
+    echo "$FOUND" | while read -r f; do printf "    %s\n" "$f"; done
+  else
+    pass "No obvious secrets in staged files"
+  fi
+else
+  pass "No staged files to scan"
+fi
+
+# ── Result ──
+
+echo ""
+if [ "$FAIL" -ne 0 ]; then
+  printf "${RED}✗ Pre-commit checks FAILED — fix issues above before committing${NC}\n"
+  exit 1
+else
+  printf "${GREEN}✓ All pre-commit checks passed${NC}\n"
+  exit 0
+fi

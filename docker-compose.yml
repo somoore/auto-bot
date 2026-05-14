@@ -1,6 +1,6 @@
 services:
   livekit:
-    image: livekit/livekit-server:latest
+    image: livekit/livekit-server@sha256:100b9a870616d02f5e3795b34e0b593b5054a26f8131a94fd3fa322ed3154b16
     command: --dev --bind 0.0.0.0 --node-ip 127.0.0.1
     ports:
       - "7880:7880"

@@ -1,0 +1,52 @@
+---
+description: Supply chain security strategy — dependency pinning, checksums, and hardening rules
+alwaysApply: true
+---
+
+# Supply Chain Security
+
+Every dependency entering this project MUST be pinned to an exact, reproducible version with integrity verification.
+
+## Go Modules
+
+- All versions in `go.mod` MUST be exact (no `>=`, no `latest`). Go enforces this by design.
+- `go.sum` MUST be committed and MUST pass `go mod verify` before every commit.
+- Run `go mod tidy` before committing to prune unused dependencies.
+- NEVER run `GONOSUMCHECK=*` or `GONOSUMDB=*` — all modules must be verified against the Go checksum database.
+- When adding a dependency, verify it is actively maintained and has no known CVEs: `govulncheck ./...`
+
+## Docker Images
+
+- All `FROM` lines in `Dockerfile` MUST include a `@sha256:` digest after the tag.
+- All `image:` lines in `docker-compose.yml` MUST use `@sha256:` digests, never `:latest`.
+- To update an image: pull the new tag, extract the digest with `docker inspect --format='{{index .RepoDigests 0}}'`, and replace the digest in the file.
+
+## CDN / External Scripts
+
+- Every `<script src>` or `<link href>` loading from a CDN MUST include:
+  1. An exact version in the URL (e.g., `@2.19.0`)
+  2. An `integrity="sha384-..."` attribute (SRI)
+  3. `crossorigin="anonymous"`
+- Generate SRI: `curl -s <URL> | openssl dgst -sha384 -binary | openssl base64 -A`
+- NEVER use unversioned CDN paths that resolve to `latest`.
+
+## Pre-Commit Enforcement
+
+A git pre-commit hook at `scripts/pre-commit` runs automatically. It checks:
+1. `go mod tidy` — no stale deps
+2. `go mod verify` — checksum integrity
+3. `go vet ./...` — code correctness
+4. Unused imports (via `goimports -l`)
+5. Docker digest presence in `Dockerfile` and `docker-compose.yml`
+6. SRI attributes on all external `<script>` tags
+
+If any check fails, the commit is blocked. NEVER bypass with `--no-verify` unless explicitly discussed.
+
+## Adding New Dependencies
+
+1. Check the package on pkg.go.dev for maintenance status
+2. `go get <pkg>@<exact-version>`
+3. `go mod tidy`
+4. `go mod verify`
+5. `govulncheck ./...` (if installed)
+6. Commit `go.mod` and `go.sum` together
