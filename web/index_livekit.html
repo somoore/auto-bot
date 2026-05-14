@@ -724,6 +724,7 @@
     </style>
   </head>
   <body>
+    <script>window.__APP_TOKEN__="{{.Token}}";</script>
     <main data-layout="filmstrip">
       <header class="topbar">
         <span class="topbar-pill" aria-hidden="true">K</span>
@@ -1047,11 +1048,11 @@
         localIdentity = prompt('Enter your name:', 'User') || 'User'
 
         try {
-          const tokenResp = await fetch(`/livekit-token?identity=${encodeURIComponent(localIdentity)}`)
+          const tokenResp = await fetch(`/livekit-token?identity=${encodeURIComponent(localIdentity)}&token=${encodeURIComponent(window.__APP_TOKEN__ || '')}`)
           if (!tokenResp.ok) throw new Error(`Token request failed: ${tokenResp.status}`)
           const tokenData = await tokenResp.json()
           const token = tokenData.token || tokenData
-          const livekitURL = `ws://${window.location.hostname}:7880`
+          const livekitURL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:7880`
 
           room = new LivekitClient.Room({
             adaptiveStream: true, dynacast: true,
@@ -1153,7 +1154,7 @@
           const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
           ws = new WebSocket(`${scheme}://${window.location.host}/websocket`)
           ws.onopen = () => setStatus(`Connected as ${localIdentity}`)
-          ws.onmessage = e => handleSignal(JSON.parse(e.data))
+          ws.onmessage = e => { try { handleSignal(JSON.parse(e.data)) } catch(err) { console.warn('Invalid WS message', err) } }
           ws.onclose = () => leaveRoom()
           ws.onerror = () => setLog('WebSocket error')
         } catch (error) {
@@ -1229,7 +1230,7 @@
 
       /* ── Signaling / Kanban ── */
 
-      function handleSignal(msg) { if (msg.event === 'kanban') handleKanbanMessage(JSON.parse(msg.data)) }
+      function handleSignal(msg) { try { if (msg.event === 'kanban') handleKanbanMessage(JSON.parse(msg.data)) } catch(e) { console.warn('Invalid signal message', e) } }
 
       function handleKanbanMessage(msg) {
         switch (msg.event) {
@@ -1254,7 +1255,12 @@
         speaker.classList.add(role === 'assistant' ? 'assistant-speaker' : 'user-speaker')
         const now = new Date()
         const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        speaker.innerHTML = `${data.speaker || (role === 'assistant' ? 'Assistant' : 'User')}<span class="timestamp">${timeStr}</span>`
+        const nameSpan = document.createElement('span')
+        nameSpan.textContent = data.speaker || (role === 'assistant' ? 'Assistant' : 'User')
+        const timeSpan = document.createElement('span')
+        timeSpan.className = 'timestamp'
+        timeSpan.textContent = timeStr
+        speaker.append(nameSpan, timeSpan)
         const text = document.createElement('div'); text.className = 'text'; text.textContent = data.text || ''
         entry.append(speaker, text)
         transcriptionScroll.appendChild(entry)

@@ -20,7 +20,8 @@ services:
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
       - AWS_REGION=us-east-1
       - LIVEKIT_URL=ws://livekit:7880
-      - LIVEKIT_API_KEY=devkey
-      - LIVEKIT_API_SECRET=secret
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
       - NOVA_SONIC_MODEL=amazon.nova-sonic-v1:0
       - NOVA_SONIC_VOICE=matthew
+      - APP_API_TOKEN=${APP_API_TOKEN:-}

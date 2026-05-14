@@ -80,8 +80,11 @@ func (app *novaSonicApp) JoinConferenceRoom() error {
 	app.modelID = getEnvDefault("NOVA_SONIC_MODEL", "amazon.nova-sonic-v1:0")
 
 	livekitURL := getEnvDefault("LIVEKIT_URL", "ws://localhost:7880")
-	apiKey := getEnvDefault("LIVEKIT_API_KEY", "devkey")
-	apiSecret := getEnvDefault("LIVEKIT_API_SECRET", "secret")
+	apiKey := os.Getenv("LIVEKIT_API_KEY")
+	apiSecret := os.Getenv("LIVEKIT_API_SECRET")
+	if apiKey == "" || apiSecret == "" {
+		return fmt.Errorf("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set")
+	}
 
 	dec, err := newOpusDecoder(roomAudioSampleRate, roomAudioChannels)
 	if err != nil {
@@ -456,13 +459,13 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 
 	switch out.Role {
 	case "USER":
-		log.Errorf("Nova Sonic ASR: %s", out.Content)
+		log.Infof("Nova Sonic ASR: [user transcript received]")
 		broadcastKanbanEvent("transcription", map[string]any{
 			"role": "user",
 			"text": out.Content,
 		})
 	case "ASSISTANT":
-		log.Errorf("Nova Sonic assistant: %s", out.Content)
+		log.Infof("Nova Sonic assistant: [assistant response]")
 		broadcastKanbanEvent("transcription", map[string]any{
 			"role": "assistant",
 			"text": out.Content,
@@ -485,13 +488,17 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 		return
 	}
 
-	log.Errorf("Nova Sonic tool call: %s(%s)", tu.ToolName, tu.Content)
+	log.Infof("Nova Sonic tool call: %s (id=%s)", tu.ToolName, tu.ToolUseID)
+
+	if tu.ToolUseID != "" && app.board.MarkCallHandled(tu.ToolUseID) {
+		return
+	}
 
 	result, changed, err := app.board.ApplyToolCall(tu.ToolName, tu.Content)
 	if err != nil {
 		result = map[string]any{
 			"ok":    false,
-			"error": err.Error(),
+			"error": "tool call failed",
 		}
 	}
 
@@ -634,15 +641,18 @@ func (app *novaSonicApp) Close() {
 // --- LiveKit token generation ---
 
 func generateLivekitToken(identity string) (string, error) {
-	apiKey := getEnvDefault("LIVEKIT_API_KEY", "devkey")
-	apiSecret := getEnvDefault("LIVEKIT_API_SECRET", "secret")
+	apiKey := os.Getenv("LIVEKIT_API_KEY")
+	apiSecret := os.Getenv("LIVEKIT_API_SECRET")
+	if apiKey == "" || apiSecret == "" {
+		return "", fmt.Errorf("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set")
+	}
 
 	at := auth.NewAccessToken(apiKey, apiSecret)
 	grant := &auth.VideoGrant{
 		RoomJoin: true,
 		Room:     "kanban-meeting",
 	}
-	at.AddGrant(grant).SetIdentity(identity).SetValidFor(24 * time.Hour)
+	at.AddGrant(grant).SetIdentity(identity).SetValidFor(15 * time.Minute)
 	return at.ToJWT()
 }
 

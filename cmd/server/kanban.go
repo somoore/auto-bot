@@ -469,7 +469,7 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 	if err != nil {
 		result = map[string]any{
 			"ok":    false,
-			"error": err.Error(),
+			"error": "tool call failed",
 		}
 	}
 

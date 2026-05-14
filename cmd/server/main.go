@@ -1,10 +1,14 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"text/template"
@@ -16,15 +20,23 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+const (
+	maxWSReadBytes = 64 * 1024 // 64KB per WebSocket message
+	maxWSClients   = 100
+	wsWriteWait    = 10 * time.Second
+	wsPongWait     = 60 * time.Second
+	wsPingInterval = (wsPongWait * 9) / 10
+)
+
 // nolint
 var (
-	addr     = flag.String("addr", ":3000", "http service address")
-	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
+	addr           = flag.String("addr", ":3000", "http service address")
+	allowedOrigins = flag.String("allowed-origins", "", "comma-separated allowed WebSocket origins (empty = same-origin only)")
+	apiToken       = ""
+
+	upgrader      = websocket.Upgrader{}
 	indexTemplate = &template.Template{}
 
-	// lock for peerConnections and trackLocals
 	listLock        sync.RWMutex
 	peerConnections []peerConnectionState
 	trackLocals     map[string]*webrtc.TrackLocalStaticRTP
@@ -37,6 +49,8 @@ var (
 	roomMixer     *audioMixer
 	voiceProvider string
 )
+
+var validIdentityRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type websocketMessage struct {
 	Event string `json:"event"`
@@ -74,6 +88,18 @@ func main() {
 	if voiceProvider == "" {
 		voiceProvider = "openai"
 	}
+
+	apiToken = strings.TrimSpace(os.Getenv("APP_API_TOKEN"))
+	if apiToken == "" {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			panic(err)
+		}
+		apiToken = hex.EncodeToString(b)
+		log.Infof("Generated ephemeral APP_API_TOKEN=%s (set APP_API_TOKEN env to use a fixed token)", apiToken)
+	}
+
+	upgrader.CheckOrigin = makeOriginChecker(*allowedOrigins)
 
 	sharedBoard = newKanbanBoard()
 
@@ -126,16 +152,30 @@ func main() {
 	}
 	indexTemplate = template.Must(template.New("").Parse(string(indexHTML)))
 
-	http.HandleFunc("/websocket", websocketHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/websocket", websocketHandler)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if err = indexTemplate.Execute(w, "ws://"+r.Host+"/websocket"); err != nil {
+	baseURL := strings.TrimSpace(os.Getenv("APP_BASE_URL"))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		setSecurityHeaders(w)
+		wsURL := baseURL
+		if wsURL == "" {
+			scheme := "ws"
+			if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+				scheme = "wss"
+			}
+			wsURL = scheme + "://" + r.Host + "/websocket"
+		}
+		if err = indexTemplate.Execute(w, map[string]string{
+			"WS":    wsURL,
+			"Token": apiToken,
+		}); err != nil {
 			log.Errorf("Failed to parse index template: %v", err)
 		}
 	})
 
 	if voiceProvider == "nova-sonic" {
-		http.HandleFunc("/livekit-token", livekitTokenHandler)
+		mux.HandleFunc("/livekit-token", livekitTokenHandler)
 	}
 
 	if voiceProvider == "openai" {
@@ -146,21 +186,43 @@ func main() {
 		}()
 	}
 
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 16,
+	}
+
 	log.Infof("Starting server on %s with VOICE_PROVIDER=%s", *addr, voiceProvider)
-	if err = http.ListenAndServe(*addr, nil); err != nil { //nolint: gosec
+	if err = srv.ListenAndServe(); err != nil {
 		log.Errorf("Failed to start http server: %v", err)
 	}
 }
 
 func livekitTokenHandler(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+
+	if !checkAPIToken(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	identity := r.URL.Query().Get("identity")
 	if identity == "" {
 		identity = "participant"
 	}
+	if !validIdentityRe.MatchString(identity) {
+		http.Error(w, "invalid identity: must be 1-64 alphanumeric/dash/underscore characters", http.StatusBadRequest)
+		return
+	}
 
 	token, err := generateLivekitToken(identity)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Errorf("Failed to generate LiveKit token: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -312,7 +374,7 @@ func signalPeerConnections() { // nolint
 				return true
 			}
 
-			log.Infof("Send offer to client: %v", offer)
+			log.Infof("Send offer to client (redacted)")
 
 			if err = peer.websocket.WriteJSON(&websocketMessage{
 				Event: "offer",
@@ -363,15 +425,19 @@ func dispatchKeyFrame() {
 func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	unsafeConn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Errorf("Failed to upgrade HTTP to Websocket: ", err)
+		log.Errorf("Failed to upgrade HTTP to Websocket: %v", err)
 		return
 	}
+	unsafeConn.SetReadLimit(maxWSReadBytes)
 
 	c := &threadSafeWriter{unsafeConn, sync.Mutex{}} // nolint
 
 	defer c.Close() //nolint
 
-	registerWSClient(c)
+	if !registerWSClient(c) {
+		log.Warnf("Rejecting WebSocket: max clients (%d) reached", maxWSClients)
+		return
+	}
 	defer unregisterWSClient(c)
 
 	if err := sendKanbanEvent(c, "board", sharedBoard.SnapshotState()); err != nil {
@@ -446,7 +512,7 @@ func websocketHandlerOpenAI(c *threadSafeWriter) {
 			return
 		}
 
-		log.Infof("Send candidate to client: %s", candidateString)
+		log.Infof("Send candidate to client (redacted)")
 
 		if writeErr := c.WriteJSON(&websocketMessage{
 			Event: "candidate",
@@ -524,7 +590,7 @@ func websocketHandlerOpenAI(c *threadSafeWriter) {
 			return
 		}
 
-		log.Infof("Got message: %s", raw)
+		log.Infof("Got message: event=%s", message.Event)
 
 		if err := json.Unmarshal(raw, &message); err != nil {
 			log.Errorf("Failed to unmarshal json to message: %v", err)
@@ -539,7 +605,7 @@ func websocketHandlerOpenAI(c *threadSafeWriter) {
 				return
 			}
 
-			log.Infof("Got candidate: %v", candidate)
+			log.Infof("Got candidate (redacted)")
 
 			if err := peerConnection.AddICECandidate(candidate); err != nil {
 				log.Errorf("Failed to add ICE candidate: %v", err)
@@ -552,7 +618,7 @@ func websocketHandlerOpenAI(c *threadSafeWriter) {
 				return
 			}
 
-			log.Infof("Got answer: %v", answer)
+			log.Infof("Got answer (redacted)")
 
 			if err := peerConnection.SetRemoteDescription(answer); err != nil {
 				log.Errorf("Failed to set remote description: %v", err)
@@ -575,4 +641,52 @@ func (t *threadSafeWriter) WriteJSON(v any) error {
 	defer t.Unlock()
 
 	return t.Conn.WriteJSON(v)
+}
+
+// --- Security helpers ---
+
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; media-src 'self' blob:; frame-ancestors 'none'")
+}
+
+func checkAPIToken(r *http.Request) bool {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		token = r.Header.Get("Authorization")
+		token = strings.TrimPrefix(token, "Bearer ")
+	}
+	return token == apiToken
+}
+
+func makeOriginChecker(allowed string) func(r *http.Request) bool {
+	if allowed == "" {
+		return func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			u, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+			return u.Host == r.Host
+		}
+	}
+	allowSet := map[string]bool{}
+	for _, o := range strings.Split(allowed, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			allowSet[o] = true
+		}
+	}
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		return allowSet[origin]
+	}
 }

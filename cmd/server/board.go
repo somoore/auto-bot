@@ -92,6 +92,8 @@ func newKanbanBoard() *kanbanBoard {
 	}
 }
 
+const maxHandledCalls = 1000
+
 // MarkCallHandled returns true if the callID was already handled (duplicate).
 func (board *kanbanBoard) MarkCallHandled(callID string) bool {
 	board.mu.Lock()
@@ -99,6 +101,10 @@ func (board *kanbanBoard) MarkCallHandled(callID string) bool {
 
 	if _, ok := board.handledCalls[callID]; ok {
 		return true
+	}
+	if len(board.handledCalls) >= maxHandledCalls {
+		// Evict oldest entries (simple: clear all when limit hit)
+		board.handledCalls = map[string]struct{}{}
 	}
 	board.handledCalls[callID] = struct{}{}
 	return false
@@ -138,25 +144,27 @@ func (board *kanbanBoard) ApplyToolCall(toolName string, rawArgs string) (map[st
 			return nil, false, fmt.Errorf("card_id is required")
 		}
 		board.mu.Lock()
-		var found *kanbanCard
+		var clone kanbanCard
+		var found bool
 		for i := range board.cards {
 			if board.cards[i].ID == cardID {
-				found = &board.cards[i]
+				clone = cloneKanbanCard(board.cards[i])
+				found = true
 				break
 			}
 		}
 		board.mu.Unlock()
-		if found == nil {
+		if !found {
 			return map[string]any{"ok": false, "error": "card not found"}, false, nil
 		}
 		broadcastKanbanEvent("highlight", map[string]any{"card_id": cardID})
 		return map[string]any{
 			"ok":      true,
-			"card_id": found.ID,
-			"title":   found.Title,
-			"status":  found.Status,
-			"notes":   found.Notes,
-			"tags":    found.Tags,
+			"card_id": clone.ID,
+			"title":   clone.Title,
+			"status":  clone.Status,
+			"notes":   clone.Notes,
+			"tags":    clone.Tags,
 		}, false, nil
 	case "close_detail":
 		broadcastKanbanEvent("close_detail", nil)
@@ -352,9 +360,23 @@ func (board *kanbanBoard) createTicket(args map[string]any) (map[string]any, boo
 	if title == "" {
 		return nil, false, fmt.Errorf("title is required")
 	}
+	if len(title) > 200 {
+		title = title[:200]
+	}
 
 	notes := asString(args["notes"])
+	if len(notes) > 2000 {
+		notes = notes[:2000]
+	}
 	tags := uniqueStrings(asStringSlice(args["tags"]))
+	if len(tags) > 20 {
+		tags = tags[:20]
+	}
+	for i, t := range tags {
+		if len(t) > 50 {
+			tags[i] = t[:50]
+		}
+	}
 	status := kanbanStatusBacklog
 	if rawStatus, ok := args["status"]; ok {
 		parsedStatus, err := parseKanbanStatus(rawStatus)
@@ -531,10 +553,14 @@ var (
 	wsClients     []*threadSafeWriter
 )
 
-func registerWSClient(c *threadSafeWriter) {
+func registerWSClient(c *threadSafeWriter) bool {
 	wsClientsLock.Lock()
+	defer wsClientsLock.Unlock()
+	if len(wsClients) >= maxWSClients {
+		return false
+	}
 	wsClients = append(wsClients, c)
-	wsClientsLock.Unlock()
+	return true
 }
 
 func unregisterWSClient(c *threadSafeWriter) {
