@@ -5,6 +5,7 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -30,8 +31,11 @@ var (
 
 	log = logging.NewDefaultLoggerFactory().NewLogger("openai-realtime-meeting-assistant")
 
-	kanbanApp *kanbanBoardApp
-	roomMixer *audioMixer
+	sharedBoard   *kanbanBoard
+	kanbanApp     *kanbanBoardApp
+	novaSonic     *novaSonicApp
+	roomMixer     *audioMixer
+	voiceProvider string
 )
 
 type websocketMessage struct {
@@ -64,47 +68,104 @@ func (p peerConnectionState) shouldSignalWithDesiredTrackCount(desiredTrackCount
 }
 
 func main() {
-	// Parse the flags passed to program
 	flag.Parse()
 
-	// Init other state
-	trackLocals = map[string]*webrtc.TrackLocalStaticRTP{}
-	roomMixer = newAudioMixer()
-	defer roomMixer.close()
-	kanbanApp = newKanbanBoardApp()
-	defer kanbanApp.Close()
-	if err := kanbanApp.JoinConferenceRoom(); err != nil {
-		log.Errorf("Kanban Realtime peer disabled: %v", err)
+	voiceProvider = strings.TrimSpace(os.Getenv("VOICE_PROVIDER"))
+	if voiceProvider == "" {
+		voiceProvider = "openai"
 	}
 
-	// Read index.html from disk into memory, serve whenever anyone requests /
-	indexHTML, err := os.ReadFile("index.html")
+	sharedBoard = newKanbanBoard()
+
+	switch voiceProvider {
+	case "openai":
+		trackLocals = map[string]*webrtc.TrackLocalStaticRTP{}
+		roomMixer = newAudioMixer()
+		defer roomMixer.close()
+		kanbanApp = newKanbanBoardApp(sharedBoard)
+		defer kanbanApp.Close()
+		if err := kanbanApp.JoinConferenceRoom(); err != nil {
+			log.Errorf("Kanban Realtime peer disabled: %v", err)
+		}
+
+	case "nova-sonic":
+		novaSonic = newNovaSonicApp(sharedBoard)
+		go func() {
+			for attempt := 1; attempt <= 15; attempt++ {
+				if err := novaSonic.JoinConferenceRoom(); err != nil {
+					log.Errorf("Nova Sonic connect attempt %d/15: %v", attempt, err)
+					time.Sleep(2 * time.Second)
+					continue
+				}
+				return
+			}
+			log.Errorf("Nova Sonic agent disabled: could not connect after 15 attempts")
+		}()
+		defer novaSonic.Close()
+
+	default:
+		log.Errorf("Unknown VOICE_PROVIDER=%q, defaulting to openai", voiceProvider)
+		voiceProvider = "openai"
+		trackLocals = map[string]*webrtc.TrackLocalStaticRTP{}
+		roomMixer = newAudioMixer()
+		defer roomMixer.close()
+		kanbanApp = newKanbanBoardApp(sharedBoard)
+		defer kanbanApp.Close()
+		if err := kanbanApp.JoinConferenceRoom(); err != nil {
+			log.Errorf("Kanban Realtime peer disabled: %v", err)
+		}
+	}
+
+	indexHTMLFile := "web/index.html"
+	if voiceProvider == "nova-sonic" {
+		indexHTMLFile = "web/index_livekit.html"
+	}
+	indexHTML, err := os.ReadFile(indexHTMLFile)
 	if err != nil {
 		panic(err)
 	}
 	indexTemplate = template.Must(template.New("").Parse(string(indexHTML)))
 
-	// websocket handler
 	http.HandleFunc("/websocket", websocketHandler)
 
-	// index.html handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if err = indexTemplate.Execute(w, "ws://"+r.Host+"/websocket"); err != nil {
 			log.Errorf("Failed to parse index template: %v", err)
 		}
 	})
 
-	// request a keyframe every 3 seconds
-	go func() {
-		for range time.NewTicker(time.Second * 3).C {
-			dispatchKeyFrame()
-		}
-	}()
+	if voiceProvider == "nova-sonic" {
+		http.HandleFunc("/livekit-token", livekitTokenHandler)
+	}
 
-	// start HTTP server
+	if voiceProvider == "openai" {
+		go func() {
+			for range time.NewTicker(time.Second * 3).C {
+				dispatchKeyFrame()
+			}
+		}()
+	}
+
+	log.Infof("Starting server on %s with VOICE_PROVIDER=%s", *addr, voiceProvider)
 	if err = http.ListenAndServe(*addr, nil); err != nil { //nolint: gosec
 		log.Errorf("Failed to start http server: %v", err)
 	}
+}
+
+func livekitTokenHandler(w http.ResponseWriter, r *http.Request) {
+	identity := r.URL.Query().Get("identity")
+	if identity == "" {
+		identity = "participant"
+	}
+
+	token, err := generateLivekitToken(identity)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
 func newPeerConnection() (*webrtc.PeerConnection, error) {
@@ -116,11 +177,6 @@ func newPeerConnection() (*webrtc.PeerConnection, error) {
 	return webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine)).NewPeerConnection(webrtc.Configuration{})
 }
 
-// newBrowserPeerConnection is for the conference-room peer that the user's
-// browser connects to. When CONFERENCE_LOOPBACK_ONLY=1, the ICE agent only
-// binds to the loopback interface. This works around macOS Local Network
-// privacy blocking LAN→LAN UDP when client and server are the same machine.
-// Do not use this for the OpenAI Realtime peer — it needs public network.
 func newBrowserPeerConnection() (*webrtc.PeerConnection, error) {
 	settingEngine := webrtc.SettingEngine{}
 	if nat1To1IP := os.Getenv("PION_NAT1TO1_IP"); nat1To1IP != "" {
@@ -134,7 +190,6 @@ func newBrowserPeerConnection() (*webrtc.PeerConnection, error) {
 	return webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine)).NewPeerConnection(webrtc.Configuration{})
 }
 
-// Add to list of tracks and fire renegotation for all PeerConnections.
 func addTrack(t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP { // nolint
 	listLock.Lock()
 	defer func() {
@@ -142,7 +197,6 @@ func addTrack(t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP { // nolint
 		signalPeerConnections()
 	}()
 
-	// Create a new TrackLocal with the same codec as our incoming
 	trackLocal, err := webrtc.NewTrackLocalStaticRTP(t.Codec().RTPCodecCapability, t.ID(), t.StreamID())
 	if err != nil {
 		panic(err)
@@ -153,7 +207,6 @@ func addTrack(t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP { // nolint
 	return trackLocal
 }
 
-// Remove from list of tracks and fire renegotation for all PeerConnections.
 func removeTrack(t *webrtc.TrackLocalStaticRTP) {
 	listLock.Lock()
 	defer func() {
@@ -164,7 +217,6 @@ func removeTrack(t *webrtc.TrackLocalStaticRTP) {
 	delete(trackLocals, t.ID())
 }
 
-// signalPeerConnections updates each PeerConnection so that it is getting all the expected media tracks.
 func signalPeerConnections() { // nolint
 	listLock.Lock()
 	defer func() {
@@ -177,7 +229,7 @@ func signalPeerConnections() { // nolint
 			if peerConnections[i].peerConnection.ConnectionState() == webrtc.PeerConnectionStateClosed {
 				peerConnections = append(peerConnections[:i], peerConnections[i+1:]...)
 
-				return true // We modified the slice, start from the beginning
+				return true
 			}
 
 			peer := &peerConnections[i]
@@ -192,7 +244,6 @@ func signalPeerConnections() { // nolint
 				continue
 			}
 
-			// map of sender we already are seanding, so we don't double send
 			existingSenders := map[string]bool{}
 
 			for _, sender := range peer.peerConnection.GetSenders() {
@@ -203,7 +254,6 @@ func signalPeerConnections() { // nolint
 				trackID := sender.Track().ID()
 				existingSenders[trackID] = true
 
-				// If we have a RTPSender that doesn't map to a existing track remove and signal
 				trackLocal, ok := trackLocals[trackID]
 				if !ok || !peer.acceptsTrack(trackLocal) {
 					if err := peer.peerConnection.RemoveTrack(sender); err != nil {
@@ -212,7 +262,6 @@ func signalPeerConnections() { // nolint
 				}
 			}
 
-			// Don't receive videos we are sending, make sure we don't have loopback
 			for _, receiver := range peer.peerConnection.GetReceivers() {
 				if receiver.Track() == nil {
 					continue
@@ -221,7 +270,6 @@ func signalPeerConnections() { // nolint
 				existingSenders[receiver.Track().ID()] = true
 			}
 
-			// Add all track we aren't sending yet to the PeerConnection
 			for trackID, trackLocal := range trackLocals {
 				if !peer.acceptsTrack(trackLocal) {
 					continue
@@ -279,7 +327,6 @@ func signalPeerConnections() { // nolint
 
 	for syncAttempt := 0; ; syncAttempt++ {
 		if syncAttempt == 25 {
-			// Release the lock and attempt a sync in 3 seconds. We might be blocking a RemoveTrack or AddTrack
 			go func() {
 				time.Sleep(time.Second * 3)
 				signalPeerConnections()
@@ -294,7 +341,6 @@ func signalPeerConnections() { // nolint
 	}
 }
 
-// dispatchKeyFrame sends a keyframe to all PeerConnections, used everytime a new user joins the call.
 func dispatchKeyFrame() {
 	listLock.Lock()
 	defer listLock.Unlock()
@@ -314,44 +360,75 @@ func dispatchKeyFrame() {
 	}
 }
 
-// Handle incoming websockets.
 func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
-	// Upgrade HTTP request to Websocket
 	unsafeConn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Errorf("Failed to upgrade HTTP to Websocket: ", err)
-
 		return
 	}
 
 	c := &threadSafeWriter{unsafeConn, sync.Mutex{}} // nolint
 
-	// When this frame returns close the Websocket
 	defer c.Close() //nolint
 
-	// Create new PeerConnection
-	peerConnection, err := newBrowserPeerConnection()
-	if err != nil {
-		log.Errorf("Failed to creates a PeerConnection: %v", err)
+	registerWSClient(c)
+	defer unregisterWSClient(c)
 
+	if err := sendKanbanEvent(c, "board", sharedBoard.SnapshotState()); err != nil {
+		log.Errorf("Failed to send Kanban board state: %v", err)
+	}
+	if err := sendKanbanEvent(c, "status", "Connected to conference room"); err != nil {
+		log.Errorf("Failed to send Kanban status: %v", err)
+	}
+
+	if voiceProvider == "nova-sonic" {
+		websocketHandlerNovaSonic(c)
 		return
 	}
 
-	// When this frame returns close the PeerConnection
+	websocketHandlerOpenAI(c)
+}
+
+func websocketHandlerNovaSonic(c *threadSafeWriter) {
+	message := &websocketMessage{}
+	for {
+		_, raw, err := c.ReadMessage()
+		if err != nil {
+			return
+		}
+
+		if err := json.Unmarshal(raw, &message); err != nil {
+			log.Errorf("Failed to unmarshal json to message: %v", err)
+			return
+		}
+
+		switch message.Event {
+		case "confirm_board":
+			broadcastKanbanEvent("status", "Board confirmed by team")
+		default:
+			log.Infof("Nova Sonic WS: ignoring event %q", message.Event)
+		}
+	}
+}
+
+func websocketHandlerOpenAI(c *threadSafeWriter) {
+	peerConnection, err := newBrowserPeerConnection()
+	if err != nil {
+		log.Errorf("Failed to creates a PeerConnection: %v", err)
+		return
+	}
+
 	defer peerConnection.Close() //nolint
 
-	// Accept one audio and one video track incoming
 	for _, typ := range []webrtc.RTPCodecType{webrtc.RTPCodecTypeVideo, webrtc.RTPCodecTypeAudio} {
 		if _, err := peerConnection.AddTransceiverFromKind(typ, webrtc.RTPTransceiverInit{
 			Direction: webrtc.RTPTransceiverDirectionRecvonly,
 		}); err != nil {
 			log.Errorf("Failed to add transceiver: %v", err)
-
 			return
 		}
 	}
 
-	// Add our new PeerConnection to global list
 	listLock.Lock()
 	peerConnections = append(peerConnections, peerConnectionState{
 		peerConnection: peerConnection,
@@ -359,24 +436,13 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	})
 	listLock.Unlock()
 
-	if err := sendKanbanEvent(c, "board", kanbanApp.snapshotState()); err != nil {
-		log.Errorf("Failed to send Kanban board state: %v", err)
-	}
-	if err := sendKanbanEvent(c, "status", "Connected to conference room"); err != nil {
-		log.Errorf("Failed to send Kanban status: %v", err)
-	}
-
-	// Trickle ICE. Emit server candidate to client
 	peerConnection.OnICECandidate(func(i *webrtc.ICECandidate) {
 		if i == nil {
 			return
 		}
-		// If you are serializing a candidate make sure to use ToJSON
-		// Using Marshal will result in errors around `sdpMid`
 		candidateString, err := json.Marshal(i.ToJSON())
 		if err != nil {
 			log.Errorf("Failed to marshal candidate to json: %v", err)
-
 			return
 		}
 
@@ -390,7 +456,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		}
 	})
 
-	// If PeerConnection is closed remove it from global list
 	peerConnection.OnConnectionStateChange(func(p webrtc.PeerConnectionState) {
 		log.Infof("Connection state change: %s", p)
 
@@ -408,7 +473,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		log.Infof("Got remote track: Kind=%s, ID=%s, PayloadType=%d", t.Kind(), t.ID(), t.PayloadType())
 
-		// Create a track to fan out our incoming media to all browser peers.
 		trackLocal := addTrack(t)
 		defer removeTrack(trackLocal)
 
@@ -450,7 +514,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		log.Infof("ICE connection state changed: %s", is)
 	})
 
-	// Signal for the new PeerConnection
 	signalPeerConnections()
 
 	message := &websocketMessage{}
@@ -458,7 +521,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		_, raw, err := c.ReadMessage()
 		if err != nil {
 			log.Errorf("Failed to read message: %v", err)
-
 			return
 		}
 
@@ -466,7 +528,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 		if err := json.Unmarshal(raw, &message); err != nil {
 			log.Errorf("Failed to unmarshal json to message: %v", err)
-
 			return
 		}
 
@@ -475,7 +536,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 			candidate := webrtc.ICECandidateInit{}
 			if err := json.Unmarshal([]byte(message.Data), &candidate); err != nil {
 				log.Errorf("Failed to unmarshal json to candidate: %v", err)
-
 				return
 			}
 
@@ -483,14 +543,12 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 			if err := peerConnection.AddICECandidate(candidate); err != nil {
 				log.Errorf("Failed to add ICE candidate: %v", err)
-
 				return
 			}
 		case "answer":
 			answer := webrtc.SessionDescription{}
 			if err := json.Unmarshal([]byte(message.Data), &answer); err != nil {
 				log.Errorf("Failed to unmarshal json to answer: %v", err)
-
 				return
 			}
 
@@ -498,7 +556,6 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 			if err := peerConnection.SetRemoteDescription(answer); err != nil {
 				log.Errorf("Failed to set remote description: %v", err)
-
 				return
 			}
 		default:

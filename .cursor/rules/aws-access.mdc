@@ -1,0 +1,14 @@
+---
+description: AWS access and authentication for this project
+alwaysApply: true
+---
+
+# AWS Access
+
+To authenticate with AWS, run the following in terminal:
+
+```bash
+assume test_AccountA/AdministratorAccess
+```
+
+ALWAYS use the `us-east-1` region for all AWS operations (CLI commands, SDK config, environment variables, etc.).

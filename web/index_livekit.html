@@ -1,0 +1,1449 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Realtime Kanban Meeting Assistant (LiveKit)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #202124;
+        color: #e8eaed;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      main {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 12px;
+        min-height: 100vh;
+        padding: 12px;
+      }
+
+      .topbar,
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .topbar {
+        border-radius: 8px;
+        background: #3c4043;
+        min-height: 36px;
+        padding: 6px 12px;
+      }
+
+      .presenting-pill {
+        display: inline-grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        background: #5f6368;
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 13px;
+        line-height: 1.2;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        background: #3c4043;
+        color: inherit;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 600;
+        min-width: 96px;
+        padding: 10px 16px;
+      }
+
+      button.primary {
+        background: #1a73e8;
+        color: #ffffff;
+      }
+
+      #leave {
+        background: #ea4335;
+        color: #ffffff;
+      }
+
+      #confirmBoard {
+        background: #34a853;
+        color: #ffffff;
+      }
+
+      #confirmBoard.confirmed {
+        background: #1e8e3e;
+        opacity: 0.7;
+        cursor: default;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .status,
+      .empty,
+      .log {
+        color: #bdc1c6;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) clamp(320px, 28vw, 420px);
+        gap: 12px;
+        min-height: 0;
+      }
+
+      .presentation-tile,
+      .transcription-panel {
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .presentation-tile {
+        display: grid;
+        padding: 14px;
+      }
+
+      .transcription-panel {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border-radius: 10px;
+        background: #111418;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+
+      .transcription-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 13px;
+        font-weight: 700;
+        color: #bdc1c6;
+      }
+
+      .transcription-header .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #5f6368;
+      }
+
+      .transcription-header .dot.live {
+        background: #34a853;
+        animation: pulse-dot 1.5s ease-in-out infinite;
+      }
+
+      @keyframes pulse-dot {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+
+      .transcription-scroll {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px 14px;
+      }
+
+      .transcript-entry {
+        margin-bottom: 12px;
+        line-height: 1.5;
+      }
+
+      .transcript-entry .speaker {
+        font-weight: 700;
+        font-size: 12px;
+        margin-bottom: 2px;
+      }
+
+      .transcript-entry .speaker.user-speaker {
+        color: #8ab4f8;
+      }
+
+      .transcript-entry .speaker.assistant-speaker {
+        color: #81c995;
+      }
+
+      .transcript-entry .text {
+        font-size: 13px;
+        color: #e8eaed;
+        white-space: pre-wrap;
+      }
+
+      .transcript-entry .timestamp {
+        font-size: 11px;
+        color: #5f6368;
+        margin-left: 8px;
+        font-weight: 400;
+      }
+
+      .video-tile {
+        position: relative;
+        overflow: hidden;
+        border-radius: 10px;
+        background: #111418;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+
+      .video-label {
+        position: absolute;
+        bottom: 8px;
+        left: 8px;
+        max-width: calc(100% - 16px);
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(32, 33, 36, 0.82);
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1;
+        padding: 5px 8px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .board-surface {
+        min-height: 0;
+        max-width: 100%;
+        overflow: auto;
+        border-radius: 8px;
+        background: #f5f6f8;
+        color: #17191f;
+        padding: 16px;
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(170px, 1fr));
+        gap: 12px;
+        align-items: start;
+        min-width: 736px;
+      }
+
+      .column,
+      .card {
+        border: 1px solid #dde2eb;
+        border-radius: 8px;
+        background: #ffffff;
+        transition: box-shadow 0.3s ease, border-color 0.3s ease;
+      }
+
+      .card.highlighted {
+        border-color: #4285f4;
+        box-shadow: 0 0 0 2px #4285f4, 0 4px 16px rgba(66, 133, 244, 0.3);
+        animation: pulse-highlight 1s ease-in-out 3;
+      }
+
+      @keyframes pulse-highlight {
+        0%, 100% { box-shadow: 0 0 0 2px #4285f4, 0 4px 16px rgba(66, 133, 244, 0.3); }
+        50% { box-shadow: 0 0 0 4px #4285f4, 0 4px 24px rgba(66, 133, 244, 0.5); }
+      }
+
+      .column {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+        padding: 12px;
+      }
+
+      .column header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 0;
+      }
+
+      .column h2 {
+        font-size: 14px;
+        line-height: 1.3;
+      }
+
+      .count {
+        display: inline-grid;
+        place-items: center;
+        min-width: 24px;
+        min-height: 24px;
+        padding: 0 7px;
+        border-radius: 999px;
+        background: #edf1f7;
+        color: #5d6572;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .stack,
+      .card {
+        display: grid;
+        gap: 10px;
+      }
+
+      .card {
+        padding: 11px;
+        background: #fbfcfe;
+        cursor: pointer;
+      }
+
+      .card:focus-visible {
+        outline: 3px solid rgba(26, 115, 232, 0.35);
+        outline-offset: 2px;
+      }
+
+      .card-heading {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 8px;
+      }
+
+      .card-heading strong {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .owner-avatar {
+        display: inline-grid;
+        place-items: center;
+        overflow: hidden;
+        width: 28px;
+        height: 28px;
+        border: 2px solid #ffffff;
+        border-radius: 999px;
+        background: #f6f8fa;
+        box-shadow: 0 0 0 1px rgba(27, 31, 36, 0.16);
+      }
+
+      .owner-avatar svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .owner-avatar.large {
+        width: 42px;
+        height: 42px;
+        border-width: 3px;
+      }
+
+      .card.moved {
+        animation: card-move-wiggle 1100ms ease-in-out;
+        border-color: #1a73e8;
+        box-shadow: 0 10px 24px rgba(26, 115, 232, 0.22);
+        transform-origin: 50% 50%;
+        will-change: transform;
+      }
+
+      .confetti-piece {
+        position: fixed;
+        z-index: 1000;
+        width: 8px;
+        height: 12px;
+        border-radius: 2px;
+        background: var(--confetti-color);
+        pointer-events: none;
+        animation: confetti-pop 1000ms ease-out forwards;
+      }
+
+      .toast-region {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        z-index: 1100;
+        display: grid;
+        gap: 10px;
+        width: min(360px, calc(100vw - 36px));
+        pointer-events: none;
+      }
+
+      .toast {
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 12px;
+        background: #303134;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.36);
+        color: #ffffff;
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1.35;
+        padding: 12px 14px;
+        animation: toast-in 180ms ease-out;
+      }
+
+      .comment-preview-region {
+        position: fixed;
+        inset: 0;
+        z-index: 1050;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        pointer-events: none;
+      }
+
+      .comment-preview {
+        display: grid;
+        gap: 12px;
+        width: min(560px, calc(100vw - 48px));
+        border: 1px solid #dde2eb;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+        color: #17191f;
+        padding: 18px;
+        transform-origin: 50% 60%;
+        animation: comment-preview-open 260ms cubic-bezier(0.2, 0.9, 0.2, 1.15);
+      }
+
+      .comment-preview.closing {
+        animation: comment-preview-close 220ms ease-in forwards;
+      }
+
+      .comment-preview-meta {
+        justify-self: start;
+        border-radius: 999px;
+        background: #e8f0fe;
+        color: #174ea6;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1;
+        padding: 6px 9px;
+      }
+
+      .comment-preview-title {
+        font-size: 18px;
+        line-height: 1.25;
+      }
+
+      .comment-preview-body {
+        color: #3c4043;
+        font-size: 15px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+
+      .comment-preview-details {
+        display: grid;
+        gap: 8px;
+      }
+
+      .comment-preview-detail {
+        display: grid;
+        gap: 3px;
+      }
+
+      .comment-preview-detail-label {
+        color: #6f7785;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .comment-preview-detail-value {
+        color: #3c4043;
+        font-size: 13px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
+
+      .comment-preview-latest {
+        display: grid;
+        gap: 6px;
+        border-radius: 8px;
+        background: #f1f7ff;
+        padding: 10px;
+      }
+
+      .card-detail-region {
+        position: fixed;
+        inset: 0;
+        z-index: 1200;
+        display: none;
+        place-items: center;
+        padding: 24px;
+        background: rgba(32, 33, 36, 0.54);
+      }
+
+      .card-detail-region.visible {
+        display: grid;
+      }
+
+      .card-detail {
+        display: grid;
+        gap: 14px;
+        width: min(620px, calc(100vw - 48px));
+        max-height: calc(100vh - 48px);
+        overflow: auto;
+        border: 1px solid #dde2eb;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+        color: #17191f;
+        padding: 18px;
+      }
+
+      .card-detail-header {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 12px;
+      }
+
+      .card-detail-title {
+        display: grid;
+        gap: 5px;
+        min-width: 0;
+      }
+
+      .card-detail-title strong {
+        font-size: 20px;
+        line-height: 1.25;
+      }
+
+      .card-detail-owner {
+        color: #5d6572;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .card-detail-close {
+        min-width: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #66707f;
+        font-size: 24px;
+        line-height: 1;
+        padding: 2px 6px;
+      }
+
+      .card strong {
+        font-size: 14px;
+        line-height: 1.3;
+      }
+
+      .card p {
+        margin: 0;
+        color: #66707f;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .tags li {
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: var(--tag-bg);
+        color: var(--tag-color);
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .log {
+        min-height: 20px;
+        padding: 0 2px;
+      }
+
+      .meeting-bar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+        align-items: center;
+        gap: 12px;
+        min-height: 52px;
+      }
+
+      .controls {
+        justify-content: center;
+      }
+
+      @keyframes card-move-wiggle {
+        0% {
+          transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+        }
+
+        12% {
+          transform: translate3d(-10px, -12px, 0) rotate(-4deg) scale(1.05);
+        }
+
+        24% {
+          transform: translate3d(9px, 4px, 0) rotate(4deg) scale(1.03);
+        }
+
+        36% {
+          transform: translate3d(-7px, -7px, 0) rotate(-3deg) scale(1.04);
+        }
+
+        48% {
+          transform: translate3d(6px, 2px, 0) rotate(3deg) scale(1.02);
+        }
+
+        62% {
+          transform: translate3d(-4px, -4px, 0) rotate(-2deg) scale(1.025);
+        }
+
+        78% {
+          transform: translate3d(3px, 1px, 0) rotate(1.2deg) scale(1.01);
+        }
+
+        100% {
+          transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+        }
+      }
+
+      @keyframes confetti-pop {
+        0% {
+          opacity: 1;
+          transform: translate3d(-50%, -50%, 0) scale(1) rotate(0deg);
+        }
+
+        70% {
+          opacity: 1;
+        }
+
+        100% {
+          opacity: 0;
+          transform: translate3d(calc(-50% + var(--dx)), calc(-50% + var(--dy)), 0) scale(0.75) rotate(var(--rotation));
+        }
+      }
+
+      @keyframes toast-in {
+        0% {
+          opacity: 0;
+          transform: translate3d(0, 8px, 0) scale(0.98);
+        }
+
+        100% {
+          opacity: 1;
+          transform: translate3d(0, 0, 0) scale(1);
+        }
+      }
+
+      @keyframes comment-preview-open {
+        0% {
+          opacity: 0;
+          transform: translate3d(0, 22px, 0) scale(0.9) rotate(-1.5deg);
+        }
+
+        72% {
+          opacity: 1;
+          transform: translate3d(0, -4px, 0) scale(1.025) rotate(0.5deg);
+        }
+
+        100% {
+          opacity: 1;
+          transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+        }
+      }
+
+      @keyframes comment-preview-close {
+        0% {
+          opacity: 1;
+          transform: translate3d(0, 0, 0) scale(1);
+        }
+
+        100% {
+          opacity: 0;
+          transform: translate3d(0, -18px, 0) scale(0.96) rotate(1deg);
+        }
+      }
+
+      @media (max-width: 1100px) {
+        .workspace {
+          grid-template-columns: minmax(0, 1fr) 320px;
+        }
+
+        .board {
+          grid-template-columns: repeat(4, minmax(160px, 1fr));
+          min-width: 688px;
+        }
+      }
+
+      @media (max-width: 860px) {
+        main {
+          padding: 12px;
+        }
+
+        .topbar {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .transcription-panel {
+          order: -1;
+          max-height: 200px;
+        }
+
+        .meeting-bar {
+          grid-template-columns: 1fr;
+          justify-items: stretch;
+        }
+
+        .controls {
+          order: -1;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .board {
+          grid-template-columns: 1fr;
+          min-width: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="topbar">
+        <span class="presenting-pill" aria-hidden="true">K</span>
+        <div>
+          <h1>Realtime Kanban Meeting Assistant (LiveKit / Nova Sonic)</h1>
+          <p class="status" id="status">Not connected</p>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <section class="presentation-tile video-tile" aria-label="Presented Kanban board">
+          <div class="board-surface">
+            <section id="board" class="board" aria-label="Kanban board"></section>
+          </div>
+          <span class="video-label">Kanban board</span>
+        </section>
+
+        <aside class="transcription-panel" aria-label="Live transcription">
+          <div class="transcription-header">
+            <span id="liveDot" class="dot"></span>
+            <span>Transcription</span>
+          </div>
+          <div id="transcriptionScroll" class="transcription-scroll"></div>
+        </aside>
+      </div>
+
+      <footer class="meeting-bar">
+        <p id="log" class="log" aria-live="polite">Team meeting</p>
+        <div class="controls">
+          <button id="join" class="primary" type="button">Join room</button>
+          <button id="leave" type="button" disabled>Leave</button>
+          <button id="confirmBoard" type="button" disabled>Confirm Board</button>
+        </div>
+        <span aria-hidden="true"></span>
+      </footer>
+    </main>
+    <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <div id="commentPreviewRegion" class="comment-preview-region" aria-live="polite" aria-atomic="true"></div>
+    <div id="cardDetailRegion" class="card-detail-region"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <script>
+      const statuses = ['Backlog', 'In Progress', 'Blocked', 'Done']
+      const boardEl = document.getElementById('board')
+      const statusEl = document.getElementById('status')
+      const logEl = document.getElementById('log')
+      const joinButton = document.getElementById('join')
+      const leaveButton = document.getElementById('leave')
+      const confirmBoardButton = document.getElementById('confirmBoard')
+      const transcriptionScroll = document.getElementById('transcriptionScroll')
+      const liveDot = document.getElementById('liveDot')
+      const toastRegion = document.getElementById('toastRegion')
+      const commentPreviewRegion = document.getElementById('commentPreviewRegion')
+      const cardDetailRegion = document.getElementById('cardDetailRegion')
+
+      let cards = []
+      let room
+      let ws
+      let hasBoardSnapshot = false
+      let commentPreviewTimer
+      const cardSnapshots = new Map()
+
+      joinButton.addEventListener('click', joinRoom)
+      leaveButton.addEventListener('click', leaveRoom)
+      confirmBoardButton.addEventListener('click', confirmBoard)
+      window.addEventListener('beforeunload', leaveRoom)
+      window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          closeCardDetail()
+        }
+      })
+      cardDetailRegion.addEventListener('click', event => {
+        if (event.target === cardDetailRegion) {
+          closeCardDetail()
+        }
+      })
+
+      renderBoard()
+
+      async function joinRoom() {
+        joinButton.disabled = true
+        setStatus('Connecting...')
+
+        const identity = prompt('Enter your name:', 'User') || 'User'
+
+        try {
+          const tokenResp = await fetch(`/livekit-token?identity=${encodeURIComponent(identity)}`)
+          if (!tokenResp.ok) {
+            throw new Error(`Token request failed: ${tokenResp.status}`)
+          }
+          const tokenData = await tokenResp.json()
+          const token = tokenData.token || tokenData
+
+          const livekitURL = `ws://${window.location.hostname}:7880`
+
+          room = new LivekitClient.Room({
+            adaptiveStream: true,
+            dynacast: true,
+          })
+
+          room.on(LivekitClient.RoomEvent.Connected, () => {
+            setStatus('Connected to LiveKit room')
+            leaveButton.disabled = false
+            confirmBoardButton.disabled = false
+            liveDot.classList.add('live')
+          })
+
+          room.on(LivekitClient.RoomEvent.Disconnected, () => {
+            leaveRoom()
+          })
+
+          room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+            if (track.kind === LivekitClient.Track.Kind.Audio) {
+              const el = track.attach()
+              el.style.display = 'none'
+              document.body.appendChild(el)
+            }
+          })
+
+          room.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
+            track.detach().forEach(el => el.remove())
+          })
+
+          await room.connect(livekitURL, token)
+          await room.localParticipant.setMicrophoneEnabled(true)
+
+          const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+          ws = new WebSocket(`${scheme}://${window.location.host}/websocket`)
+          ws.onopen = () => setStatus('Connected')
+          ws.onmessage = event => handleSignal(JSON.parse(event.data))
+          ws.onclose = () => leaveRoom()
+          ws.onerror = () => setLog('WebSocket error')
+        } catch (error) {
+          setLog(error.message || String(error))
+          leaveRoom()
+        }
+      }
+
+      function handleSignal(message) {
+        switch (message.event) {
+          case 'kanban':
+            handleKanbanMessage(JSON.parse(message.data))
+            break
+        }
+      }
+
+      function handleKanbanMessage(message) {
+        switch (message.event) {
+          case 'board':
+            cards = Array.isArray(message.data?.cards) ? message.data.cards : []
+            {
+              const changes = cardChanges(cards)
+              renderBoard(changes)
+              changes.messages.forEach(showToast)
+              changes.commentPreviews.forEach(showCommentPreview)
+            }
+            break
+          case 'status':
+            setLog(String(message.data || ''))
+            break
+          case 'transcription':
+            addTranscriptEntry(message.data)
+            break
+          case 'highlight':
+            highlightCard(message.data?.card_id)
+            break
+          case 'close_detail':
+            closeCardDetail()
+            break
+        }
+      }
+
+      function highlightCard(cardId) {
+        if (!cardId) return
+        const card = cards.find(c => c.id === cardId)
+        if (card) showCardDetail(card)
+      }
+
+      function addTranscriptEntry(data) {
+        if (!data) return
+
+        const entry = document.createElement('div')
+        entry.className = 'transcript-entry'
+
+        const speaker = document.createElement('div')
+        speaker.className = 'speaker'
+
+        const role = (data.role || '').toLowerCase()
+        const speakerName = data.speaker || (role === 'assistant' ? 'Assistant' : 'User')
+        speaker.classList.add(role === 'assistant' ? 'assistant-speaker' : 'user-speaker')
+
+        const now = new Date()
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        speaker.innerHTML = `${speakerName}<span class="timestamp">${timeStr}</span>`
+
+        const text = document.createElement('div')
+        text.className = 'text'
+        text.textContent = data.text || ''
+
+        entry.append(speaker, text)
+        transcriptionScroll.appendChild(entry)
+        transcriptionScroll.scrollTop = transcriptionScroll.scrollHeight
+      }
+
+      function confirmBoard() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return
+
+        ws.send(JSON.stringify({ event: 'confirm_board', data: '' }))
+        confirmBoardButton.classList.add('confirmed')
+        confirmBoardButton.textContent = 'Confirmed'
+        setTimeout(() => {
+          confirmBoardButton.classList.remove('confirmed')
+          confirmBoardButton.textContent = 'Confirm Board'
+        }, 3000)
+      }
+
+      function renderBoard(changes = { moved: new Set(), completed: new Set(), messages: [], commentPreviews: [] }) {
+        boardEl.replaceChildren(...statuses.map(status => {
+          const columnCards = cards.filter(card => card.status === status)
+          const column = document.createElement('section')
+          column.className = 'column'
+          column.setAttribute('aria-label', `${status} cards`)
+
+          const header = document.createElement('header')
+          const title = document.createElement('h2')
+          title.textContent = status
+          const count = document.createElement('span')
+          count.className = 'count'
+          count.textContent = String(columnCards.length)
+          header.append(title, count)
+
+          const stack = document.createElement('div')
+          stack.className = 'stack'
+          if (columnCards.length === 0) {
+            const empty = document.createElement('div')
+            empty.className = 'empty'
+            empty.textContent = 'Empty'
+            stack.appendChild(empty)
+          } else {
+            stack.append(...columnCards.map(card => renderCard(
+              card,
+              changes.moved.has(card.id),
+              changes.completed.has(card.id)
+            )))
+          }
+
+          column.append(header, stack)
+          return column
+        }))
+      }
+
+      function renderCard(card, moved = false, completed = false) {
+        const article = document.createElement('article')
+        article.className = 'card'
+        article.tabIndex = 0
+        article.setAttribute('data-card-id', card.id)
+        article.setAttribute('role', 'button')
+        article.setAttribute('aria-label', `Open card details for ${card.title || 'untitled card'}`)
+        article.addEventListener('click', () => showCardDetail(card))
+        article.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            showCardDetail(card)
+          }
+        })
+        if (moved) {
+          window.requestAnimationFrame(() => {
+            article.classList.add('moved')
+            window.setTimeout(() => article.classList.remove('moved'), 1200)
+          })
+        }
+        if (completed) {
+          window.requestAnimationFrame(() => fireConfetti(article))
+        }
+
+        const heading = document.createElement('div')
+        heading.className = 'card-heading'
+
+        const title = document.createElement('strong')
+        title.textContent = card.title
+        heading.append(title, renderOwnerAvatar(card))
+        article.appendChild(heading)
+
+        if (card.tags?.length > 0) {
+          const tags = document.createElement('ul')
+          tags.className = 'tags'
+          tags.setAttribute('aria-label', `${card.title} tags`)
+          tags.append(...card.tags.map(tag => {
+            const item = document.createElement('li')
+            const colors = tagColors(tag)
+            item.style.setProperty('--tag-bg', colors.background)
+            item.style.setProperty('--tag-color', colors.color)
+            item.textContent = tag
+            return item
+          }))
+          article.appendChild(tags)
+        }
+
+        return article
+      }
+
+      function renderOwnerAvatar(card, options = {}) {
+        const owner = cardOwner(card)
+        const avatar = document.createElement('span')
+        avatar.className = `owner-avatar${options.large ? ' large' : ''}`
+        avatar.title = `Owner: ${owner.name}`
+        avatar.setAttribute('aria-label', `Owner: ${owner.name}`)
+        avatar.appendChild(renderIdenticon(owner.name))
+        return avatar
+      }
+
+      function cardOwner(card) {
+        const owners = [
+          'Avery Chen',
+          'Blake Stone',
+          'Casey Morgan',
+          'Dana Patel',
+          'Emery Brooks',
+          'Finley Rao',
+          'Harper Kim',
+          'Jordan Lee'
+        ]
+        const seed = String(card?.id || card?.title || 'kanban-card')
+        const hash = hashString(seed)
+        return {
+          name: owners[hash % owners.length]
+        }
+      }
+
+      function renderIdenticon(seed) {
+        const svgNS = 'http://www.w3.org/2000/svg'
+        const svg = document.createElementNS(svgNS, 'svg')
+        svg.setAttribute('viewBox', '0 0 5 5')
+        svg.setAttribute('aria-hidden', 'true')
+
+        const background = document.createElementNS(svgNS, 'rect')
+        background.setAttribute('width', '5')
+        background.setAttribute('height', '5')
+        background.setAttribute('fill', '#f6f8fa')
+        svg.appendChild(background)
+
+        const patternHash = hashString(`${seed}:pattern`)
+        const color = `hsl(${hashString(`${seed}:color`) % 360} 54% 44%)`
+        let filled = 0
+
+        for (let y = 0; y < 5; y++) {
+          for (let x = 0; x < 3; x++) {
+            const bitIndex = y * 3 + x
+            if (((patternHash >>> bitIndex) & 1) === 0) {
+              continue
+            }
+
+            appendIdenticonCell(svg, x, y, color)
+            filled++
+            if (x !== 2) {
+              appendIdenticonCell(svg, 4 - x, y, color)
+            }
+          }
+        }
+
+        if (filled === 0) {
+          appendIdenticonCell(svg, 2, 2, color)
+        }
+
+        return svg
+      }
+
+      function appendIdenticonCell(svg, x, y, color) {
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+        rect.setAttribute('x', String(x))
+        rect.setAttribute('y', String(y))
+        rect.setAttribute('width', '1')
+        rect.setAttribute('height', '1')
+        rect.setAttribute('fill', color)
+        svg.appendChild(rect)
+      }
+
+      function hashString(value) {
+        let hash = 2166136261
+        const text = String(value || '')
+        for (let index = 0; index < text.length; index++) {
+          hash ^= text.charCodeAt(index)
+          hash = Math.imul(hash, 16777619)
+        }
+        return hash >>> 0
+      }
+
+      function showCardDetail(card) {
+        if (!card) {
+          return
+        }
+
+        const owner = cardOwner(card)
+        const panel = document.createElement('article')
+        panel.className = 'card-detail'
+        panel.setAttribute('role', 'dialog')
+        panel.setAttribute('aria-modal', 'true')
+        panel.setAttribute('aria-label', `Card details for ${card.title || 'untitled card'}`)
+
+        const header = document.createElement('header')
+        header.className = 'card-detail-header'
+
+        const titleGroup = document.createElement('div')
+        titleGroup.className = 'card-detail-title'
+        const title = document.createElement('strong')
+        title.textContent = card.title || 'Untitled card'
+        const ownerText = document.createElement('span')
+        ownerText.className = 'card-detail-owner'
+        ownerText.textContent = `Owner: ${owner.name}`
+        titleGroup.append(title, ownerText)
+
+        const closeButton = document.createElement('button')
+        closeButton.className = 'card-detail-close'
+        closeButton.type = 'button'
+        closeButton.setAttribute('aria-label', 'Close card details')
+        closeButton.textContent = 'x'
+        closeButton.addEventListener('click', closeCardDetail)
+
+        header.append(renderOwnerAvatar(card, { large: true }), titleGroup, closeButton)
+
+        const details = document.createElement('div')
+        details.className = 'comment-preview-details'
+        details.appendChild(renderPreviewDetail('Status', card.status || 'Unassigned'))
+        details.appendChild(renderPreviewDetail('Card ID', card.id || 'No card id'))
+        details.appendChild(renderPreviewDetail('Owner', owner.name))
+        details.appendChild(renderPreviewDetail('Tags', card.tags?.length > 0 ? renderTagList(card) : 'No tags'))
+        details.appendChild(renderPreviewDetail('Notes', card.notes || 'No notes yet.'))
+
+        panel.append(header, details)
+        cardDetailRegion.replaceChildren(panel)
+        cardDetailRegion.classList.add('visible')
+        closeButton.focus()
+      }
+
+      function closeCardDetail() {
+        cardDetailRegion.classList.remove('visible')
+        cardDetailRegion.replaceChildren()
+      }
+
+      function renderTagList(card) {
+        const tags = document.createElement('ul')
+        tags.className = 'tags'
+        tags.setAttribute('aria-label', `${card.title || 'Card'} tags`)
+        tags.append(...(card.tags || []).map(tag => {
+          const item = document.createElement('li')
+          const colors = tagColors(tag)
+          item.style.setProperty('--tag-bg', colors.background)
+          item.style.setProperty('--tag-color', colors.color)
+          item.textContent = tag
+          return item
+        }))
+        return tags
+      }
+
+      function cardChanges(nextCards) {
+        const moved = new Set()
+        const completed = new Set()
+        const messages = []
+        const commentPreviews = []
+        const nextIds = new Set()
+        const shouldToast = hasBoardSnapshot
+
+        for (const card of nextCards) {
+          nextIds.add(card.id)
+          const previousCard = cardSnapshots.get(card.id)
+          if (!previousCard) {
+            if (shouldToast) {
+              messages.push(`Created "${card.title}" in ${card.status}`)
+            }
+            cardSnapshots.set(card.id, cardSnapshot(card))
+            continue
+          }
+
+          if (previousCard.status !== card.status) {
+            moved.add(card.id)
+            if (card.status === 'Done') {
+              completed.add(card.id)
+            }
+            if (shouldToast) {
+              messages.push(`Moved "${card.title}" to ${card.status}`)
+            }
+          }
+
+          if (previousCard.title !== card.title) {
+            if (shouldToast) {
+              messages.push(`Renamed "${previousCard.title}" to "${card.title}"`)
+            }
+          }
+
+          if (!sameTags(previousCard.tags, card.tags || [])) {
+            if (shouldToast) {
+              messages.push(`Updated tags on "${card.title}"`)
+            }
+          }
+
+          if (previousCard.notes !== (card.notes || '')) {
+            if (shouldToast) {
+              const comment = addedComment(previousCard.notes, card.notes || '')
+              messages.push(comment ? `Added comment to "${card.title}"` : `Updated "${card.title}"`)
+              if (comment) {
+                commentPreviews.push({ card: cardSnapshot(card), comment })
+              }
+            }
+          }
+
+          cardSnapshots.set(card.id, cardSnapshot(card))
+        }
+
+        for (const [cardId, previousCard] of cardSnapshots.entries()) {
+          if (!nextIds.has(cardId)) {
+            if (shouldToast) {
+              messages.push(`Deleted "${previousCard.title}"`)
+            }
+            cardSnapshots.delete(cardId)
+          }
+        }
+        hasBoardSnapshot = true
+
+        return { moved, completed, messages, commentPreviews }
+      }
+
+      function cardSnapshot(card) {
+        return {
+          id: card.id || '',
+          title: card.title || '',
+          status: card.status || '',
+          notes: card.notes || '',
+          tags: Array.isArray(card.tags) ? [...card.tags] : []
+        }
+      }
+
+      function sameTags(left, right) {
+        if (left.length !== right.length) {
+          return false
+        }
+
+        return left.every((tag, index) => tag === right[index])
+      }
+
+      function addedComment(previousNotes, nextNotes) {
+        const previous = String(previousNotes || '').trim()
+        const next = String(nextNotes || '').trim()
+        if (!next || next === previous) {
+          return ''
+        }
+        if (previous && next.startsWith(previous)) {
+          return next.slice(previous.length).replace(/^[\s:;,.|-]+/, '').trim() || next
+        }
+        return next
+      }
+
+      function showToast(message) {
+        if (!message) {
+          return
+        }
+
+        const toast = document.createElement('div')
+        toast.className = 'toast'
+        toast.textContent = message
+        toastRegion.appendChild(toast)
+
+        while (toastRegion.children.length > 4) {
+          toastRegion.firstElementChild.remove()
+        }
+        window.setTimeout(() => toast.remove(), 4200)
+      }
+
+      function showCommentPreview(preview) {
+        if (!preview?.comment) {
+          return
+        }
+
+        window.clearTimeout(commentPreviewTimer)
+
+        const panel = document.createElement('article')
+        panel.className = 'comment-preview'
+        panel.setAttribute('aria-label', `Card details for ${preview.card.title}`)
+
+        const meta = document.createElement('span')
+        meta.className = 'comment-preview-meta'
+        meta.textContent = `${preview.card.status || 'Card'} card`
+
+        const title = document.createElement('strong')
+        title.className = 'comment-preview-title'
+        title.textContent = preview.card.title || 'Untitled card'
+
+        const details = document.createElement('div')
+        details.className = 'comment-preview-details'
+
+        details.appendChild(renderPreviewDetail('Status', preview.card.status || 'Unassigned'))
+        details.appendChild(renderPreviewDetail('Card ID', preview.card.id || 'No card id'))
+        details.appendChild(renderPreviewDetail('Owner', cardOwner(preview.card).name))
+        if (preview.card.tags?.length > 0) {
+          details.appendChild(renderPreviewDetail('Tags', renderTagList(preview.card)))
+        } else {
+          details.appendChild(renderPreviewDetail('Tags', 'No tags'))
+        }
+        details.appendChild(renderPreviewDetail('Notes', preview.card.notes || 'No notes yet.'))
+
+        const latest = document.createElement('div')
+        latest.className = 'comment-preview-latest'
+        latest.appendChild(renderPreviewDetail('Latest comment', preview.comment))
+
+        const previewHeader = document.createElement('div')
+        previewHeader.className = 'card-detail-header'
+        const previewTitle = document.createElement('div')
+        previewTitle.className = 'card-detail-title'
+        const ownerText = document.createElement('span')
+        ownerText.className = 'card-detail-owner'
+        ownerText.textContent = `Owner: ${cardOwner(preview.card).name}`
+        previewTitle.append(title, ownerText)
+        previewHeader.append(renderOwnerAvatar(preview.card, { large: true }), previewTitle)
+
+        panel.append(meta, previewHeader, details, latest)
+        commentPreviewRegion.replaceChildren(panel)
+
+        commentPreviewTimer = window.setTimeout(() => closeCommentPreview(panel), 4200)
+      }
+
+      function renderPreviewDetail(labelText, value) {
+        const detail = document.createElement('div')
+        detail.className = 'comment-preview-detail'
+
+        const label = document.createElement('span')
+        label.className = 'comment-preview-detail-label'
+        label.textContent = labelText
+
+        let valueEl
+        if (value instanceof Node) {
+          valueEl = value
+        } else {
+          valueEl = document.createElement('p')
+          valueEl.className = 'comment-preview-detail-value'
+          valueEl.textContent = String(value)
+        }
+
+        detail.append(label, valueEl)
+        return detail
+      }
+
+      function closeCommentPreview(panel) {
+        if (!panel || panel.parentElement !== commentPreviewRegion) {
+          return
+        }
+
+        panel.classList.add('closing')
+        panel.addEventListener('animationend', () => panel.remove(), { once: true })
+      }
+
+      function fireConfetti(anchor) {
+        const rect = anchor.getBoundingClientRect()
+        const originX = rect.left + rect.width / 2
+        const originY = rect.top + Math.min(rect.height / 2, 48)
+        const colors = ['#1a73e8', '#34a853', '#fbbc04', '#ea4335', '#a142f4', '#00acc1']
+
+        for (let index = 0; index < 24; index++) {
+          const piece = document.createElement('span')
+          const angle = (Math.PI * 2 * index) / 24
+          const distance = 46 + Math.random() * 58
+          const drift = (Math.random() - 0.5) * 42
+
+          piece.className = 'confetti-piece'
+          piece.style.left = `${originX}px`
+          piece.style.top = `${originY}px`
+          piece.style.setProperty('--dx', `${Math.cos(angle) * distance + drift}px`)
+          piece.style.setProperty('--dy', `${Math.sin(angle) * distance + 42 + Math.random() * 28}px`)
+          piece.style.setProperty('--rotation', `${Math.random() * 720 - 360}deg`)
+          piece.style.setProperty('--confetti-color', colors[index % colors.length])
+
+          document.body.appendChild(piece)
+          window.setTimeout(() => piece.remove(), 1050)
+        }
+      }
+
+      function tagColors(tag) {
+        let hash = 0
+        for (const character of String(tag)) {
+          hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0
+        }
+
+        const hue = Math.abs(hash) % 360
+        return {
+          background: `hsl(${hue} 78% 90%)`,
+          color: `hsl(${hue} 72% 26%)`
+        }
+      }
+
+      function leaveRoom() {
+        joinButton.disabled = false
+        leaveButton.disabled = true
+        confirmBoardButton.disabled = true
+        liveDot.classList.remove('live')
+
+        if (ws && ws.readyState !== WebSocket.CLOSED) {
+          ws.close()
+        }
+        ws = undefined
+
+        if (room) {
+          room.disconnect()
+        }
+        room = undefined
+
+        setStatus('Not connected')
+      }
+
+      function setStatus(message) {
+        statusEl.textContent = message
+      }
+
+      function setLog(message) {
+        logEl.textContent = message
+      }
+    </script>
+  </body>
+</html>
