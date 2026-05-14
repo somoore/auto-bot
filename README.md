@@ -80,6 +80,7 @@ The scrum master agent understands natural language commands:
 | "I'm blocked on the DTLS cleanup" | Moves matching ticket to Blocked |
 | "Create a ticket for WebSocket auth" | Creates a new ticket |
 | "Open the HEVC packetizer task" | Opens the card detail modal |
+| "Open the auth task" (no match) | Agent asks if you'd like to create it |
 | "Close it" / "Thanks" | Closes the card detail modal |
 | "Move the buffer task to backlog" | Moves ticket to specified column |
 | "Add a tag 'urgent' to card-003" | Adds tags without replacing existing ones |
@@ -117,6 +118,8 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | Variable | Default | Provider | Purpose |
 | --- | --- | --- | --- |
 | `VOICE_PROVIDER` | `openai` | Both | `openai` or `nova-sonic` |
+| `APP_API_TOKEN` | _(auto-generated)_ | Both | Auth token for `/livekit-token` endpoint; auto-generated per session if unset |
+| `APP_BASE_URL` | _(auto-detect)_ | Both | Override WebSocket base URL (e.g., `wss://example.com/websocket`) |
 | `OPENAI_API_KEY` | _(required)_ | OpenAI | Auth for the OpenAI Realtime API |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-2` | OpenAI | Realtime model to use |
 | `CONFERENCE_LOOPBACK_ONLY` | _unset_ | OpenAI | When `1`, restrict browser ICE to loopback (macOS same-machine) |
@@ -129,8 +132,8 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `NOVA_SONIC_MODEL` | `amazon.nova-sonic-v1:0` | Nova Sonic | Bedrock model ID |
 | `NOVA_SONIC_VOICE` | `matthew` | Nova Sonic | TTS voice ID |
 | `LIVEKIT_URL` | `ws://localhost:7880` | Nova Sonic | LiveKit server WebSocket URL |
-| `LIVEKIT_API_KEY` | `devkey` | Nova Sonic | LiveKit API key |
-| `LIVEKIT_API_SECRET` | `secret` | Nova Sonic | LiveKit API secret |
+| `LIVEKIT_API_KEY` | _(required)_ | Nova Sonic | LiveKit API key (no default — must be set) |
+| `LIVEKIT_API_SECRET` | _(required)_ | Nova Sonic | LiveKit API secret (no default — must be set) |
 
 See [.env.example](.env.example) for a copyable template.
 
@@ -200,6 +203,26 @@ plan.md                 Project roadmap
 ## macOS Local Network Permission
 
 When running the OpenAI path on the same Mac as the browser, set `CONFERENCE_LOOPBACK_ONLY=1`. This restricts the browser-facing Pion ICE agent to the loopback interface, avoiding macOS Local Network privacy blocks on LAN UDP. The OpenAI Realtime peer still uses public network for STUN.
+
+## Security
+
+This application includes several hardening measures:
+
+- **Authentication**: The `/livekit-token` endpoint requires an `APP_API_TOKEN` (auto-generated per session if unset). The token is injected into the page at render time.
+- **WebSocket origin validation**: Same-origin by default; configurable via `--allowed-origins` flag.
+- **HTTP security headers**: CSP, X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy.
+- **HTTP server timeouts**: Read, write, idle, and header timeouts are all set to prevent slowloris attacks.
+- **WebSocket limits**: 64KB max message size, 100 max concurrent connections.
+- **Input validation**: Identity parameters validated to `[a-zA-Z0-9_-]{1,64}`. Card titles, notes, and tags have size caps.
+- **Non-root container**: Docker image runs as `appuser`, not root.
+- **Supply chain**: All Docker images pinned to `@sha256:` digests, CDN scripts use SRI, Go modules verified via `go.sum`.
+- **Pre-commit hook**: Runs `go vet`, `goimports`, `govulncheck`, Docker digest checks, SRI checks, and secrets scanning before every commit.
+- **No sensitive logging**: SDP, ICE candidates, transcripts, and tool arguments are redacted from logs.
+
+See [scan.md](scan.md) for the full security audit and remediation details.
+
+> [!IMPORTANT]
+> While hardened, this is a demo application. For production deployment, add TLS termination, a real identity provider, and secrets management (e.g., AWS Secrets Manager).
 
 ## License
 

@@ -217,7 +217,7 @@ func (board *kanbanBoard) SessionInstructions() string {
 		"If a user asks to ship, finish, complete, close, or mark done, move it to Done.",
 		"If a user asks to park, punt, defer, or move something back, move it to Backlog.",
 		"If a user asks to add a tag, call add_tags; do not replace existing tags.",
-		"If a user asks to open, show, view, display, pull up, or look at a ticket, you MUST call show_ticket — this opens the detail modal on their screen. Do NOT just describe the card in speech; the user needs to see it visually. After calling show_ticket, say a brief confirmation like 'Opening the ticket.' IMPORTANT: 'open' means show/display a ticket, NOT complete or finish it.",
+		"If a user asks to open, show, view, display, pull up, or look at a ticket, you MUST call show_ticket — this opens the detail modal on their screen. Do NOT just describe the card in speech; the user needs to see it visually. After calling show_ticket, say a brief confirmation like 'Opening the ticket.' IMPORTANT: 'open' means show/display a ticket, NOT complete or finish it. If the user says 'open' and no matching ticket exists on the board, do NOT create one automatically — instead, verbally tell the user that no matching ticket was found and ask if they would like to create a new one.",
 		"If one transcript contains multiple status updates, call one tool for each board operation.",
 		"If the user asks for an operation or gives an implicit status update, call the relevant tool. Prefer tools over text replies.",
 		"If the user is only wrapping up, handing off, giving filler, or saying something like That's it from me, call do_nothing with a short reason.",
