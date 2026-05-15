@@ -222,6 +222,8 @@
       .card:focus-visible { outline: 3px solid rgba(26, 115, 232, 0.35); outline-offset: 2px; }
       .card-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; }
       .card-heading strong { min-width: 0; overflow-wrap: anywhere; }
+      .card-meta { display: flex; flex-wrap: wrap; gap: 6px; color: #66707f; font-size: 12px; font-weight: 700; line-height: 1.2; }
+      .card-meta span { border-radius: 999px; background: #edf1f7; padding: 4px 7px; }
 
       .owner-avatar {
         display: inline-grid; place-items: center; overflow: hidden;
@@ -724,7 +726,7 @@
     </style>
   </head>
   <body>
-    <script>window.__APP_TOKEN__="{{.Token}}";</script>
+    <script>window.__WS_URL__="{{.WS}}";</script>
     <main data-layout="filmstrip">
       <header class="topbar">
         <span class="topbar-pill" aria-hidden="true">K</span>
@@ -824,6 +826,7 @@
       let cards = []
       let room
       let ws
+      let authSession
       let hasBoardSnapshot = false
       let commentPreviewTimer
       let micEnabled = true
@@ -1044,15 +1047,22 @@
 
       async function joinRoom() {
         joinButton.disabled = true
-        setStatus('Connecting...')
+        setStatus('Authenticating')
         localIdentity = prompt('Enter your name:', 'User') || 'User'
 
         try {
-          const tokenResp = await fetch(`/livekit-token?identity=${encodeURIComponent(localIdentity)}&token=${encodeURIComponent(window.__APP_TOKEN__ || '')}`)
+          authSession = await ensureAuthenticated(localIdentity)
+          localIdentity = authSession.participant_identity || cleanIdentity(localIdentity)
+          setStatus('Connecting...')
+          const tokenURL = new URL('/livekit-token', window.location.origin)
+          tokenURL.searchParams.set('identity', localIdentity)
+          tokenURL.searchParams.set('room_id', authSession.room_id)
+          tokenURL.searchParams.set('board_id', authSession.board_id)
+          const tokenResp = await fetch(tokenURL.toString(), { credentials: 'same-origin' })
           if (!tokenResp.ok) throw new Error(`Token request failed: ${tokenResp.status}`)
           const tokenData = await tokenResp.json()
           const token = tokenData.token || tokenData
-          const livekitURL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:7880`
+          const livekitURL = tokenData.livekit_url || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:7880`
 
           room = new LivekitClient.Room({
             adaptiveStream: true, dynacast: true,
@@ -1152,7 +1162,10 @@
           attachLocalVideoIfAvailable()
 
           const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
-          ws = new WebSocket(`${scheme}://${window.location.host}/websocket`)
+          const wsURL = new URL(window.__WS_URL__ || `${scheme}://${window.location.host}/websocket`)
+          wsURL.searchParams.set('room_id', authSession.room_id)
+          wsURL.searchParams.set('board_id', authSession.board_id)
+          ws = new WebSocket(wsURL.toString())
           ws.onopen = () => setStatus(`Connected as ${localIdentity}`)
           ws.onmessage = e => { try { handleSignal(JSON.parse(e.data)) } catch(err) { console.warn('Invalid WS message', err) } }
           ws.onclose = () => leaveRoom()
@@ -1161,6 +1174,27 @@
           setLog(error.message || String(error))
           leaveRoom()
         }
+      }
+
+      async function ensureAuthenticated(preferredIdentity) {
+        const current = await fetch('/auth/session', { credentials: 'same-origin' })
+        if (current.ok) return current.json()
+
+        const token = prompt('Enter app access token:')
+        if (!token) throw new Error('Access token is required')
+        const response = await fetch('/auth/session', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, identity: cleanIdentity(preferredIdentity) }),
+        })
+        if (!response.ok) throw new Error(`Authentication failed: ${response.status}`)
+        return response.json()
+      }
+
+      function cleanIdentity(value) {
+        const cleaned = String(value || 'User').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
+        return cleaned || 'User'
       }
 
       function addRemoteParticipantTile(participant) {
@@ -1301,6 +1335,7 @@
         const heading = document.createElement('div'); heading.className = 'card-heading'
         const title = document.createElement('strong'); title.textContent = card.title
         heading.append(title, renderOwnerAvatar(card)); article.appendChild(heading)
+        const meta = renderCardMeta(card); if (meta) article.appendChild(meta)
         if (card.tags?.length > 0) {
           const tags = document.createElement('ul'); tags.className = 'tags'
           tags.append(...card.tags.map(tag => { const li = document.createElement('li'); const c = tagColors(tag); li.style.setProperty('--tag-bg', c.background); li.style.setProperty('--tag-color', c.color); li.textContent = tag; return li }))
@@ -1323,8 +1358,12 @@
         details.appendChild(renderPreviewDetail('Status', card.status || 'Unassigned'))
         details.appendChild(renderPreviewDetail('Card ID', card.id || 'No card id'))
         details.appendChild(renderPreviewDetail('Owner', owner.name))
+        details.appendChild(renderPreviewDetail('Priority', card.priority || 'No priority set'))
+        details.appendChild(renderPreviewDetail('ETA', card.dueDate || 'No ETA set'))
+        details.appendChild(renderPreviewDetail('Blocked reason', card.blockedReason || 'No blocker recorded'))
         details.appendChild(renderPreviewDetail('Tags', card.tags?.length > 0 ? renderTagList(card) : 'No tags'))
         details.appendChild(renderPreviewDetail('Notes', card.notes || 'No notes yet.'))
+        details.appendChild(renderPreviewDetail('Latest comment', latestCommentBody(card) || 'No comments yet.'))
         panel.append(header, details)
         cardDetailRegion.replaceChildren(panel); cardDetailRegion.classList.add('visible'); cb.focus()
       }
@@ -1340,8 +1379,21 @@
       }
 
       function cardOwner(card) {
+        if (card?.assignee?.displayName || card?.assignee?.emailAddress || card?.assignee?.accountId) return { name: card.assignee.displayName || card.assignee.emailAddress || card.assignee.accountId }
         const owners = ['Avery Chen','Blake Stone','Casey Morgan','Dana Patel','Emery Brooks','Finley Rao','Harper Kim','Jordan Lee']
         return { name: owners[hashString(String(card?.id || card?.title || 'kanban-card')) % owners.length] }
+      }
+
+      function renderCardMeta(card) {
+        const values = []
+        if (card.priority) values.push(`Priority ${card.priority}`)
+        if (card.dueDate) values.push(`ETA ${card.dueDate}`)
+        if (card.blockedReason) values.push('Blocked')
+        if ((card.comments || []).length > 0) values.push(`${card.comments.length} comment${card.comments.length === 1 ? '' : 's'}`)
+        if (values.length === 0) return null
+        const meta = document.createElement('div'); meta.className = 'card-meta'
+        meta.append(...values.map(value => { const span = document.createElement('span'); span.textContent = value; return span }))
+        return meta
       }
 
       function renderIdenticon(seed) {
@@ -1381,13 +1433,20 @@
           if (prev.title !== c.title && shouldToast) messages.push(`Renamed "${prev.title}" to "${c.title}"`)
           if (!sameTags(prev.tags, c.tags || []) && shouldToast) messages.push(`Updated tags on "${c.title}"`)
           if (prev.notes !== (c.notes || '') && shouldToast) { const cm = addedComment(prev.notes, c.notes || ''); messages.push(cm ? `Added comment to "${c.title}"` : `Updated "${c.title}"`); if (cm) commentPreviews.push({ card: cardSnapshot(c), comment: cm }) }
+          if (prev.assigneeKey !== assigneeKey(c) && shouldToast) messages.push(c.assignee ? `Assigned "${c.title}" to ${cardOwner(c).name}` : `Unassigned "${c.title}"`)
+          if (prev.dueDate !== (c.dueDate || '') && shouldToast) messages.push(c.dueDate ? `Set ETA on "${c.title}" to ${c.dueDate}` : `Cleared ETA on "${c.title}"`)
+          if (prev.priority !== (c.priority || '') && shouldToast) messages.push(c.priority ? `Set "${c.title}" priority to ${c.priority}` : `Cleared priority on "${c.title}"`)
+          const latestComment = latestCommentBody(c)
+          if (prev.latestComment !== latestComment && latestComment && shouldToast) { messages.push(`Added comment to "${c.title}"`); commentPreviews.push({ card: cardSnapshot(c), comment: latestComment }) }
           cardSnapshots.set(c.id, cardSnapshot(c))
         }
         for (const [id, prev] of cardSnapshots.entries()) { if (!nextIds.has(id)) { if (shouldToast) messages.push(`Deleted "${prev.title}"`); cardSnapshots.delete(id) } }
         hasBoardSnapshot = true; return { moved, completed, messages, commentPreviews }
       }
 
-      function cardSnapshot(c) { return { id: c.id || '', title: c.title || '', status: c.status || '', notes: c.notes || '', tags: Array.isArray(c.tags) ? [...c.tags] : [] } }
+      function cardSnapshot(c) { return { id: c.id || '', title: c.title || '', status: c.status || '', notes: c.notes || '', tags: Array.isArray(c.tags) ? [...c.tags] : [], assignee: c.assignee ? { ...c.assignee } : null, assigneeKey: assigneeKey(c), dueDate: c.dueDate || '', priority: c.priority || '', blockedReason: c.blockedReason || '', latestComment: latestCommentBody(c) } }
+      function assigneeKey(c) { return c?.assignee?.accountId || c?.assignee?.displayName || c?.assignee?.emailAddress || '' }
+      function latestCommentBody(c) { const comments = Array.isArray(c?.comments) ? c.comments : []; return comments.length > 0 ? String(comments[comments.length - 1]?.body || '').trim() : '' }
       function sameTags(a, b) { return a.length === b.length && a.every((t, i) => t === b[i]) }
       function addedComment(p, n) { const a = String(p||'').trim(), b = String(n||'').trim(); if (!b || b === a) return ''; if (a && b.startsWith(a)) return b.slice(a.length).replace(/^[\s:;,.|-]+/,'').trim() || b; return b }
 

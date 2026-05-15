@@ -1,0 +1,20 @@
+---
+description: AWS Terraform/Terragrunt conventions for this project
+alwaysApply: true
+---
+
+# AWS Terraform / Terragrunt
+
+- AWS region is always `us-east-1`.
+- Use Terragrunt for live infrastructure under `infra/live/**`.
+- Keep Terraform modules under `infra/modules/**` provider-agnostic; do not add provider or backend blocks inside modules.
+- Root `infra/terragrunt.hcl` is responsible for generating:
+  - the AWS provider block
+  - the Terraform required provider pin
+  - the S3 backend config
+- The AWS provider must be pinned exactly. Current pin: `hashicorp/aws = 6.45.0`.
+- Terraform state must use S3 remote state with DynamoDB locking.
+- Never commit `.tfstate`, `.tfvars`, generated backend/provider files, or `.terraform` directories.
+- Secrets must live in AWS Secrets Manager for AWS runs. Do not put secret values in Terraform variables or committed Terragrunt inputs.
+- Prefer adding reusable infrastructure to `infra/modules/auto-bot` and only environment-specific inputs to `infra/env.hcl` or `infra/live/<env>/terragrunt.hcl`.
+- Do not use AWS CLI or shell scripts to create long-lived infrastructure resources that Terraform owns. Shell scripts are acceptable for image builds/pushes and for creating/updating secret values outside Terraform state.

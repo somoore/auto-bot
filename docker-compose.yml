@@ -15,13 +15,30 @@ services:
       - livekit
     environment:
       - VOICE_PROVIDER=nova-sonic
+      - APP_ENV=local
+      - APP_AUTH_MODE=${APP_AUTH_MODE:-token}
+      - APP_API_TOKEN=${APP_API_TOKEN:-local-dev-only-change-me}
+      - APP_ROOM_ID=${APP_ROOM_ID:-kanban-meeting}
+      - APP_BOARD_ID=${APP_BOARD_ID:-default}
+      - BOARD_SQLITE_PATH=${BOARD_SQLITE_PATH:-/srv/data/board.sqlite}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
       - AWS_REGION=us-east-1
       - LIVEKIT_URL=ws://livekit:7880
+      - LIVEKIT_BROWSER_URL=${LIVEKIT_BROWSER_URL:-ws://localhost:7880}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
       - NOVA_SONIC_MODEL=amazon.nova-sonic-v1:0
       - NOVA_SONIC_VOICE=matthew
-      - APP_API_TOKEN=${APP_API_TOKEN:-}
+      - JIRA_CONFIG_PATH=${JIRA_CONFIG_PATH:-}
+      - JIRA_CONFIG_JSON=${JIRA_CONFIG_JSON:-}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
+      - AUDIT_LOG_PATH=${AUDIT_LOG_PATH:-}
+      - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-}
+    volumes:
+      - ./config:/srv/config:ro
+      - board-data:/srv/data
+
+volumes:
+  board-data:

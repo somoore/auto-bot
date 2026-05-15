@@ -71,6 +71,56 @@ else
   printf "${YELLOW}  ⚠ govulncheck not installed — skipping (go install golang.org/x/vuln/cmd/govulncheck@latest)${NC}\n"
 fi
 
+# ── Terraform / Terragrunt hygiene ──
+
+step "Checking Terraform formatting"
+if command -v terraform >/dev/null 2>&1; then
+  if terraform fmt -check -recursive infra/ 2>&1; then
+    pass "Terraform files are formatted"
+  else
+    fail "terraform fmt found files that need formatting"
+  fi
+elif command -v docker >/dev/null 2>&1; then
+  if docker run --rm -v "$PWD:/work" -w /work hashicorp/terraform:latest fmt -check -recursive infra/ 2>&1; then
+    pass "Terraform files are formatted via Docker"
+  else
+    fail "terraform fmt found files that need formatting"
+  fi
+else
+  printf "${YELLOW}  ⚠ terraform not installed — skipping Terraform fmt check${NC}\n"
+fi
+
+step "Checking Terragrunt formatting"
+if command -v terragrunt >/dev/null 2>&1; then
+  TG_HCL_FORMAT_HELP="$(terragrunt hcl format --help 2>&1 || true)"
+  TG_HCLFMT_HELP="$(terragrunt hclfmt --help 2>&1 || true)"
+  if echo "$TG_HCL_FORMAT_HELP" | grep -q -- '--check'; then
+    TG_HCLFMT_CMD=(terragrunt hcl format --check)
+  elif echo "$TG_HCLFMT_HELP" | grep -q -- '--check'; then
+    TG_HCLFMT_CMD=(terragrunt hclfmt --check)
+  elif echo "$TG_HCLFMT_HELP" | grep -q -- '--terragrunt-check'; then
+    TG_HCLFMT_CMD=(terragrunt hclfmt --terragrunt-check)
+  else
+    TG_HCLFMT_CMD=()
+  fi
+
+  if [ "${#TG_HCLFMT_CMD[@]}" -eq 0 ]; then
+    printf "${YELLOW}  ⚠ terragrunt hclfmt check flag unavailable — skipping Terragrunt hclfmt check${NC}\n"
+  elif (cd infra && "${TG_HCLFMT_CMD[@]}") 2>&1; then
+    pass "Terragrunt files are formatted"
+  else
+    fail "terragrunt hclfmt found files that need formatting"
+  fi
+elif command -v docker >/dev/null 2>&1; then
+  if docker run --rm -v "$PWD:/work" -w /work alpine/terragrunt:latest terragrunt hcl format --check 2>&1; then
+    pass "Terragrunt files are formatted via Docker"
+  else
+    fail "terragrunt hclfmt found files that need formatting"
+  fi
+else
+  printf "${YELLOW}  ⚠ terragrunt not installed — skipping Terragrunt hclfmt check${NC}\n"
+fi
+
 # ── Docker image digest pinning ──
 
 step "Checking Docker image pinning (sha256 digests)"

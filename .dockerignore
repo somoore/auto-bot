@@ -1,0 +1,11 @@
+.git
+.DS_Store
+.env
+.env.*
+var/
+infra/**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+public/screenshot.png

@@ -252,6 +252,22 @@
         overflow-wrap: anywhere;
       }
 
+      .card-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        color: #66707f;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.2;
+      }
+
+      .card-meta span {
+        border-radius: 999px;
+        background: #edf1f7;
+        padding: 4px 7px;
+      }
+
       .owner-avatar {
         display: inline-grid;
         place-items: center;
@@ -658,6 +674,7 @@
     </style>
   </head>
   <body>
+    <script>window.__WS_URL__="{{.WS}}";</script>
     <main>
       <header class="topbar">
         <span class="presenting-pill" aria-hidden="true">K</span>
@@ -715,6 +732,7 @@
       let pc
       let ws
       let localStream
+      let authSession
       let hasBoardSnapshot = false
       let commentPreviewTimer
       const remoteElements = new Map()
@@ -738,9 +756,12 @@
 
       async function joinRoom() {
         joinButton.disabled = true
-        setStatus('Requesting camera and microphone')
+        setStatus('Authenticating')
 
         try {
+          const preferredIdentity = prompt('Enter your name:', 'User') || 'User'
+          authSession = await ensureAuthenticated(preferredIdentity)
+          setStatus('Requesting camera and microphone')
           localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
           localVideo.srcObject = localStream
 
@@ -762,18 +783,44 @@
           localStream.getTracks().forEach(track => pc.addTrack(track, localStream))
 
           const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
-          ws = new WebSocket(`${scheme}://${window.location.host}/websocket`)
+          const wsURL = new URL(window.__WS_URL__ || `${scheme}://${window.location.host}/websocket`)
+          wsURL.searchParams.set('room_id', authSession.room_id)
+          wsURL.searchParams.set('board_id', authSession.board_id)
+          ws = new WebSocket(wsURL.toString())
           ws.onopen = () => {
             leaveButton.disabled = false
             setStatus('Connected')
           }
-          ws.onmessage = event => handleSignal(JSON.parse(event.data))
+          ws.onmessage = event => {
+            try { handleSignal(JSON.parse(event.data)) } catch (err) { console.warn('Invalid WS message', err) }
+          }
           ws.onclose = () => leaveRoom()
           ws.onerror = () => setLog('WebSocket error')
         } catch (error) {
           setLog(error.message || String(error))
           leaveRoom()
         }
+      }
+
+      async function ensureAuthenticated(preferredIdentity) {
+        const current = await fetch('/auth/session', { credentials: 'same-origin' })
+        if (current.ok) return current.json()
+
+        const token = prompt('Enter app access token:')
+        if (!token) throw new Error('Access token is required')
+        const response = await fetch('/auth/session', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, identity: cleanIdentity(preferredIdentity) }),
+        })
+        if (!response.ok) throw new Error(`Authentication failed: ${response.status}`)
+        return response.json()
+      }
+
+      function cleanIdentity(value) {
+        const cleaned = String(value || 'User').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
+        return cleaned || 'User'
       }
 
       async function handleSignal(message) {
@@ -811,6 +858,22 @@
           case 'status':
             setLog(String(message.data || ''))
             break
+          case 'highlight':
+            highlightCard(message.data?.card_id)
+            break
+          case 'close_detail':
+            closeCardDetail()
+            break
+        }
+      }
+
+      function highlightCard(cardId) {
+        if (!cardId) {
+          return
+        }
+        const card = cards.find(candidate => candidate.id === cardId)
+        if (card) {
+          showCardDetail(card)
         }
       }
 
@@ -934,6 +997,11 @@
         heading.append(title, renderOwnerAvatar(card))
         article.appendChild(heading)
 
+        const meta = renderCardMeta(card)
+        if (meta) {
+          article.appendChild(meta)
+        }
+
         if (card.tags?.length > 0) {
           const tags = document.createElement('ul')
           tags.className = 'tags'
@@ -963,6 +1031,11 @@
       }
 
       function cardOwner(card) {
+        if (card?.assignee?.displayName || card?.assignee?.emailAddress || card?.assignee?.accountId) {
+          return {
+            name: card.assignee.displayName || card.assignee.emailAddress || card.assignee.accountId
+          }
+        }
         const owners = [
           'Avery Chen',
           'Blake Stone',
@@ -978,6 +1051,23 @@
         return {
           name: owners[hash % owners.length]
         }
+      }
+
+      function renderCardMeta(card) {
+        const values = []
+        if (card.priority) values.push(`Priority ${card.priority}`)
+        if (card.dueDate) values.push(`ETA ${card.dueDate}`)
+        if (card.blockedReason) values.push('Blocked')
+        if ((card.comments || []).length > 0) values.push(`${card.comments.length} comment${card.comments.length === 1 ? '' : 's'}`)
+        if (values.length === 0) return null
+        const meta = document.createElement('div')
+        meta.className = 'card-meta'
+        meta.append(...values.map(value => {
+          const item = document.createElement('span')
+          item.textContent = value
+          return item
+        }))
+        return meta
       }
 
       function renderIdenticon(seed) {
@@ -1076,8 +1166,12 @@
         details.appendChild(renderPreviewDetail('Status', card.status || 'Unassigned'))
         details.appendChild(renderPreviewDetail('Card ID', card.id || 'No card id'))
         details.appendChild(renderPreviewDetail('Owner', owner.name))
+        details.appendChild(renderPreviewDetail('Priority', card.priority || 'No priority set'))
+        details.appendChild(renderPreviewDetail('ETA', card.dueDate || 'No ETA set'))
+        details.appendChild(renderPreviewDetail('Blocked reason', card.blockedReason || 'No blocker recorded'))
         details.appendChild(renderPreviewDetail('Tags', card.tags?.length > 0 ? renderTagList(card) : 'No tags'))
         details.appendChild(renderPreviewDetail('Notes', card.notes || 'No notes yet.'))
+        details.appendChild(renderPreviewDetail('Latest comment', latestCommentBody(card) || 'No comments yet.'))
 
         panel.append(header, details)
         cardDetailRegion.replaceChildren(panel)
@@ -1156,6 +1250,24 @@
             }
           }
 
+          if (previousCard.assigneeKey !== assigneeKey(card) && shouldToast) {
+            messages.push(card.assignee ? `Assigned "${card.title}" to ${cardOwner(card).name}` : `Unassigned "${card.title}"`)
+          }
+
+          if (previousCard.dueDate !== (card.dueDate || '') && shouldToast) {
+            messages.push(card.dueDate ? `Set ETA on "${card.title}" to ${card.dueDate}` : `Cleared ETA on "${card.title}"`)
+          }
+
+          if (previousCard.priority !== (card.priority || '') && shouldToast) {
+            messages.push(card.priority ? `Set "${card.title}" priority to ${card.priority}` : `Cleared priority on "${card.title}"`)
+          }
+
+          const latestComment = latestCommentBody(card)
+          if (previousCard.latestComment !== latestComment && latestComment && shouldToast) {
+            messages.push(`Added comment to "${card.title}"`)
+            commentPreviews.push({ card: cardSnapshot(card), comment: latestComment })
+          }
+
           cardSnapshots.set(card.id, cardSnapshot(card))
         }
 
@@ -1178,8 +1290,23 @@
           title: card.title || '',
           status: card.status || '',
           notes: card.notes || '',
-          tags: Array.isArray(card.tags) ? [...card.tags] : []
+          tags: Array.isArray(card.tags) ? [...card.tags] : [],
+          assignee: card.assignee ? { ...card.assignee } : null,
+          assigneeKey: assigneeKey(card),
+          dueDate: card.dueDate || '',
+          priority: card.priority || '',
+          blockedReason: card.blockedReason || '',
+          latestComment: latestCommentBody(card)
         }
+      }
+
+      function assigneeKey(card) {
+        return card?.assignee?.accountId || card?.assignee?.displayName || card?.assignee?.emailAddress || ''
+      }
+
+      function latestCommentBody(card) {
+        const comments = Array.isArray(card?.comments) ? card.comments : []
+        return comments.length > 0 ? String(comments[comments.length - 1]?.body || '').trim() : ''
       }
 
       function sameTags(left, right) {

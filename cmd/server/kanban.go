@@ -467,6 +467,7 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 
 	result, changed, err := app.board.ApplyToolCall(outputItem.Name, outputItem.Arguments)
 	if err != nil {
+		log.Errorf("Kanban tool call %q failed: %v", outputItem.Name, err)
 		result = map[string]any{
 			"ok":    false,
 			"error": "tool call failed",
@@ -478,7 +479,7 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 		"item": map[string]any{
 			"type":    "function_call_output",
 			"call_id": outputItem.CallID,
-			"output":  mustMarshalJSON(result),
+			"output":  mustMarshalJSON(modelSafeToolResult(result)),
 		},
 	}); err != nil {
 		log.Errorf("Failed to send Kanban function output: %v", err)
@@ -488,7 +489,10 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 		return
 	}
 
-	broadcastKanbanEvent("board", app.board.SnapshotState())
+	syncJiraToolCall(outputItem.Name, outputItem.Arguments, result)
+	state := app.board.SnapshotState()
+	auditBoardMutation("openai-realtime", outputItem.Name, result, state)
+	broadcastKanbanEvent("board", state)
 	if err := app.SendEvent(app.sessionUpdateEvent()); err != nil {
 		log.Errorf("Failed to refresh Kanban Realtime session: %v", err)
 	}

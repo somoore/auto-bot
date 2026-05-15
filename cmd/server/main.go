@@ -1,17 +1,16 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"context"
 	"encoding/json"
 	"flag"
+	"html/template"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -26,6 +25,8 @@ const (
 	wsWriteWait    = 10 * time.Second
 	wsPongWait     = 60 * time.Second
 	wsPingInterval = (wsPongWait * 9) / 10
+	wsRateLimit    = 60
+	tokenRateLimit = 30
 )
 
 // nolint
@@ -48,6 +49,10 @@ var (
 	novaSonic     *novaSonicApp
 	roomMixer     *audioMixer
 	voiceProvider string
+	jiraSync      *jiraSyncer
+
+	websocketLimiter    = newFixedWindowRateLimiter(wsRateLimit, time.Minute)
+	livekitTokenLimiter = newFixedWindowRateLimiter(tokenRateLimit, time.Minute)
 )
 
 var validIdentityRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -90,18 +95,34 @@ func main() {
 	}
 
 	apiToken = strings.TrimSpace(os.Getenv("APP_API_TOKEN"))
-	if apiToken == "" {
-		b := make([]byte, 32)
-		if _, err := rand.Read(b); err != nil {
-			panic(err)
-		}
-		apiToken = hex.EncodeToString(b)
-		log.Infof("Generated ephemeral APP_API_TOKEN=%s (set APP_API_TOKEN env to use a fixed token)", apiToken)
+	if apiToken == "" && strings.EqualFold(getEnvDefault("APP_ENV", "production"), "local") {
+		apiToken = defaultLocalAPIToken
+		log.Warnf("Using local-only default APP_API_TOKEN; set APP_API_TOKEN before sharing this server")
+	}
+	if err := configureAppSecurity(); err != nil {
+		panic(err)
 	}
 
 	upgrader.CheckOrigin = makeOriginChecker(*allowedOrigins)
 
-	sharedBoard = newKanbanBoard()
+	boardStore, err := setupBoardStore()
+	if err != nil {
+		panic(err)
+	}
+	if boardStore != nil {
+		defer boardStore.Close()
+	}
+	sharedBoard, err = newPersistentKanbanBoard(appBoardID, boardStore)
+	if err != nil {
+		panic(err)
+	}
+	appContext := context.Background()
+	configuredJiraSync, err := setupJiraSync(appContext, sharedBoard)
+	if err != nil {
+		log.Errorf("Jira sync disabled: %v", err)
+	} else {
+		jiraSync = configuredJiraSync
+	}
 
 	switch voiceProvider {
 	case "openai":
@@ -153,6 +174,20 @@ func main() {
 	indexTemplate = template.Must(template.New("").Parse(string(indexHTML)))
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", healthHandler)
+	mux.HandleFunc("/auth/session", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			sessionStatusHandler(w, r)
+		case http.MethodPost:
+			createSessionHandler(w, r)
+		case http.MethodDelete:
+			deleteSessionHandler(w, r)
+		default:
+			setSecurityHeaders(w)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
 	mux.HandleFunc("/websocket", websocketHandler)
 
 	baseURL := strings.TrimSpace(os.Getenv("APP_BASE_URL"))
@@ -167,8 +202,7 @@ func main() {
 			wsURL = scheme + "://" + r.Host + "/websocket"
 		}
 		if err = indexTemplate.Execute(w, map[string]string{
-			"WS":    wsURL,
-			"Token": apiToken,
+			"WS": wsURL,
 		}); err != nil {
 			log.Errorf("Failed to parse index template: %v", err)
 		}
@@ -205,21 +239,31 @@ func main() {
 func livekitTokenHandler(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 
-	if !checkAPIToken(r) {
+	if !livekitTokenLimiter.Allow(clientAddress(r)) {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+
+	authCtx, ok := authorizeRequest(r)
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	identity := r.URL.Query().Get("identity")
+	identity := normalizeParticipantIdentity(r.URL.Query().Get("identity"))
 	if identity == "" {
-		identity = "participant"
+		identity = authCtx.Identity
 	}
-	if !validIdentityRe.MatchString(identity) {
+	if identity == "" {
 		http.Error(w, "invalid identity: must be 1-64 alphanumeric/dash/underscore characters", http.StatusBadRequest)
 		return
 	}
+	if authCtx.SessionID != "" && identity != authCtx.Identity {
+		http.Error(w, "identity does not match authenticated session", http.StatusForbidden)
+		return
+	}
 
-	token, err := generateLivekitToken(identity)
+	token, err := generateLivekitToken(authCtx.RoomID, identity)
 	if err != nil {
 		log.Errorf("Failed to generate LiveKit token: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -227,7 +271,18 @@ func livekitTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"token": token})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"token":       token,
+		"livekit_url": browserLiveKitURL(r),
+		"room_id":     authCtx.RoomID,
+		"board_id":    authCtx.BoardID,
+		"identity":    identity,
+	})
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
 func newPeerConnection() (*webrtc.PeerConnection, error) {
@@ -423,6 +478,18 @@ func dispatchKeyFrame() {
 }
 
 func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
+	if !websocketLimiter.Allow(clientAddress(r)) {
+		setSecurityHeaders(w)
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+	authCtx, ok := authorizeRequest(r)
+	if !ok {
+		setSecurityHeaders(w)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	unsafeConn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Errorf("Failed to upgrade HTTP to Websocket: %v", err)
@@ -434,7 +501,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 	defer c.Close() //nolint
 
-	if !registerWSClient(c) {
+	if !registerWSClient(c, authCtx.BoardID) {
 		log.Warnf("Rejecting WebSocket: max clients (%d) reached", maxWSClients)
 		return
 	}
@@ -650,15 +717,6 @@ func setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; media-src 'self' blob:; frame-ancestors 'none'")
-}
-
-func checkAPIToken(r *http.Request) bool {
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		token = r.Header.Get("Authorization")
-		token = strings.TrimPrefix(token, "Bearer ")
-	}
-	return token == apiToken
 }
 
 func makeOriginChecker(allowed string) func(r *http.Request) bool {

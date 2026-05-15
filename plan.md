@@ -13,6 +13,19 @@ The board generates its own roadmap.
 
 ---
 
+## Implementation Checkpoint — 2026-05-15
+
+The current repo has moved beyond the original Phase 2/3 scaffold in several areas:
+
+- Jira sync now includes project-key safety, startup hydration, polling, real Blocked workflow support, blocked flag fallback, assignment, comments, ETA, priority, labels, subtasks, story points, estimates, worklogs, issue links, sprint assignment, ranking, components, fix versions, custom fields, remote links, reporter, watchers, metadata discovery, and transition option discovery.
+- The voice agent now has structured scrum-master meeting tools for starting meetings, registering participants, recording updates, tracking blockers/risks/action items, choosing the next speaker, summarizing, and ending meetings.
+- Public-traffic hardening now includes HttpOnly session auth, authenticated WebSockets, room/board binding, rate limits, production LiveKit credential checks, prompt-injection defenses, audit logging, and optional SQLite event history.
+- AWS infrastructure now exists in Terraform/Terragrunt for ECS Fargate app + LiveKit, ALB/NLB, ECR, CloudWatch, Secrets Manager, EFS persistence, Bedrock task-role permissions, S3 remote state, and DynamoDB locking in `us-east-1`.
+
+Remaining plan gaps are tracked in `progress.md`; the largest are live Jira sprint/rank validation, Jira conflict handling, OIDC/Cognito, true multi-room orchestration, AWS deployment validation, and Phase 4 agent execution.
+
+---
+
 ## Prove the Product
 
 This plan isn't just "build the product" — it's "prove the product." The wedge is 4 hours of meetings per week. That number gets tracked across phases. If it doesn't move in our own team's data, the product doesn't work and we'll know sooner rather than later.

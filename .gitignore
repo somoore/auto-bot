@@ -1,6 +1,6 @@
 # ---------- Go ----------
 # Compiled binaries
-auto-bot
+/auto-bot
 /server
 openai-realtime-meeting-assistant
 *.exe
@@ -67,8 +67,24 @@ $RECYCLE.BIN/
 .env.*.local
 .env.development
 .env.production
+config/*.local.json
+config/*.secret.json
 
 # ---------- Docker ----------
 # docker-compose.yml and Dockerfile are tracked;
 # ignore runtime volumes and overrides
 docker-compose.override.yml
+var/
+
+# ---------- Terraform ----------
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
