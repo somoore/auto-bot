@@ -36,5 +36,6 @@
     "Customer Impact": "customfield_10042"
   },
   "delete_transition": "31",
-  "poll_interval_seconds": 30
+  "poll_interval_seconds": 30,
+  "webhook_secret": "replace-with-random-shared-secret"
 }

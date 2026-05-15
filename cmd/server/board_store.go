@@ -22,11 +22,18 @@ type boardStore interface {
 
 type boardEventRecord struct {
 	BoardID        string         `json:"board_id"`
+	EventID        string         `json:"event_id,omitempty"`
 	OccurredAt     string         `json:"occurred_at"`
 	ToolName       string         `json:"tool_name"`
 	Arguments      map[string]any `json:"arguments,omitempty"`
 	Result         map[string]any `json:"result,omitempty"`
 	SequenceNumber int64          `json:"sequence_number"`
+	Source         string         `json:"source,omitempty"`
+	Actor          string         `json:"actor,omitempty"`
+	RiskLevel      string         `json:"risk_level,omitempty"`
+	ConfirmationID string         `json:"confirmation_id,omitempty"`
+	UndoOf         string         `json:"undo_of,omitempty"`
+	Summary        string         `json:"summary,omitempty"`
 }
 
 type sqliteBoardStore struct {

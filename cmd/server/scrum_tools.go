@@ -552,6 +552,8 @@ func (board *kanbanBoard) startMeeting(args map[string]any) (map[string]any, boo
 	if len(participants) > 0 {
 		board.meeting.CurrentSpeaker = participants[0].Name
 	}
+	briefing := board.scrumBriefingLocked(time.Now().UTC().Add(-24 * time.Hour))
+	board.meeting.LastBriefing = &briefing
 	board.touchLocked()
 
 	return map[string]any{
@@ -560,6 +562,8 @@ func (board *kanbanBoard) startMeeting(args map[string]any) (map[string]any, boo
 		"meeting":         cloneScrumMeetingState(board.meeting),
 		"meeting_id":      meetingID,
 		"current_speaker": board.meeting.CurrentSpeaker,
+		"briefing":        briefing,
+		"briefing_text":   briefing.Summary,
 	}, true, nil
 }
 
@@ -644,6 +648,7 @@ func (board *kanbanBoard) recordParticipantUpdate(args map[string]any) (map[stri
 	if update.FollowUp != "" {
 		board.meeting.ActionItems = uniqueStrings(append(board.meeting.ActionItems, update.FollowUp))
 	}
+	board.syncMeetingMemoryFromUpdateLocked(update)
 
 	var ticketChange string
 	if update.CardID != "" {
@@ -1001,17 +1006,22 @@ func (board *kanbanBoard) meetingSummaryLocked() map[string]any {
 	summaryText := fmt.Sprintf("%s meeting has %d participant updates, %d blockers/risks, and %d action items.",
 		board.meeting.Mode, len(board.meeting.Updates), len(board.meeting.Risks), len(board.meeting.ActionItems))
 	return map[string]any{
-		"meeting_id":      board.meeting.MeetingID,
-		"summary":         summaryText,
-		"participants":    append([]scrumParticipant(nil), board.meeting.Participants...),
-		"unspoken":        unspoken,
-		"updates":         append([]scrumParticipantUpdate(nil), board.meeting.Updates...),
-		"blockers":        append([]string(nil), board.meeting.Risks...),
-		"risks":           append([]string(nil), board.meeting.Risks...),
-		"decisions":       append([]string(nil), board.meeting.Decisions...),
-		"action_items":    append([]string(nil), board.meeting.ActionItems...),
-		"ticket_changes":  ticketChanges,
-		"current_speaker": board.meeting.CurrentSpeaker,
+		"meeting_id":          board.meeting.MeetingID,
+		"summary":             summaryText,
+		"participants":        append([]scrumParticipant(nil), board.meeting.Participants...),
+		"unspoken":            unspoken,
+		"updates":             append([]scrumParticipantUpdate(nil), board.meeting.Updates...),
+		"blockers":            append([]string(nil), board.meeting.Risks...),
+		"risks":               append([]string(nil), board.meeting.Risks...),
+		"decisions":           append([]string(nil), board.meeting.Decisions...),
+		"action_items":        append([]string(nil), board.meeting.ActionItems...),
+		"parking_lot":         append([]string(nil), board.meeting.ParkingLot...),
+		"follow_ups":          append([]scrumFollowUp(nil), board.meeting.FollowUps...),
+		"unresolved_blockers": append([]scrumBlocker(nil), board.meeting.UnresolvedBlockers...),
+		"ownership":           append([]scrumOwnership(nil), board.meeting.Ownership...),
+		"briefing":            board.meeting.LastBriefing,
+		"ticket_changes":      ticketChanges,
+		"current_speaker":     board.meeting.CurrentSpeaker,
 	}
 }
 

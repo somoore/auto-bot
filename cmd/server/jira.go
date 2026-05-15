@@ -40,6 +40,7 @@ type jiraConfig struct {
 	RankCustomFieldID        int                       `json:"rank_custom_field_id,omitempty"`
 	CustomFieldMappings      map[string]string         `json:"custom_field_mappings,omitempty"`
 	PollIntervalSeconds      int                       `json:"poll_interval_seconds,omitempty"`
+	WebhookSecret            string                    `json:"webhook_secret,omitempty"`
 }
 
 type jiraClient struct {
@@ -116,6 +117,9 @@ func loadJiraConfig(ctx context.Context, path string) (*jiraConfig, error) {
 	}
 	if config.BlockedFlagField != "" && strings.TrimSpace(config.BlockedFlagValue) == "" {
 		config.BlockedFlagValue = "Impediment"
+	}
+	if config.WebhookSecret == "" {
+		config.WebhookSecret = strings.TrimSpace(os.Getenv("JIRA_WEBHOOK_SECRET"))
 	}
 
 	token, err := config.resolveAPIToken(ctx)
@@ -952,18 +956,28 @@ func (syncer *jiraSyncer) startPolling(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				cards, err := syncer.client.SearchKanbanCards(ctx)
-				if err != nil {
+				if err := syncer.RefreshFromJira(ctx, "jira-poll"); err != nil {
 					log.Errorf("Jira poll failed: %v", err)
-					continue
 				}
-				syncer.board.ReplaceCards(cards)
-				state := syncer.board.SnapshotState()
-				auditBoardRefresh("jira-poll", state)
-				broadcastKanbanEvent("board", state)
 			}
 		}
 	}()
+}
+
+func (syncer *jiraSyncer) RefreshFromJira(ctx context.Context, source string) error {
+	cards, err := syncer.client.SearchKanbanCards(ctx)
+	if err != nil {
+		return err
+	}
+	conflicts := syncer.board.ApplyJiraCards(cards, source)
+	state := syncer.board.SnapshotState()
+	syncer.board.persistSnapshot(source)
+	auditBoardRefresh(source, state)
+	broadcastKanbanEvent("board", state)
+	for _, conflict := range conflicts {
+		broadcastKanbanEvent("conflict", conflict)
+	}
+	return nil
 }
 
 func syncJiraToolCall(toolName string, rawArgs string, result map[string]any) {
@@ -973,8 +987,26 @@ func syncJiraToolCall(toolName string, rawArgs string, result map[string]any) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if toolName == "confirm_action" {
+		if originalTool := asString(result["original_tool_name"]); originalTool != "" {
+			toolName = originalTool
+			rawArgs = asString(result["original_arguments_json"])
+		}
+	}
+	if toolName == "undo_last_mutation" {
+		if record, ok := result["undo_record"].(boardMutationRecord); ok {
+			if err := jiraSync.ApplyUndo(ctx, record); err != nil {
+				log.Errorf("Jira undo sync failed: %v", err)
+			}
+		}
+		return
+	}
 	if err := jiraSync.ApplyToolCall(ctx, toolName, rawArgs, result); err != nil {
 		log.Errorf("Jira sync failed for %s: %v", toolName, err)
+		if conflict := jiraSync.board.RecordJiraSyncFailure(toolName, rawArgs, result, err); conflict.ConflictID != "" {
+			broadcastKanbanEvent("conflict", conflict)
+			broadcastKanbanEvent("board", jiraSync.board.SnapshotState())
+		}
 	}
 }
 

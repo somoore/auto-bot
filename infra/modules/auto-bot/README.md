@@ -10,7 +10,7 @@ This module deploys the production-shaped runtime:
 - EFS-backed `/srv/data` mount for the app's SQLite board snapshot/event store.
 - Task execution role with Secrets Manager access.
 - App task role with Bedrock invoke permission.
-- Secrets Manager wiring for OpenAI, LiveKit, Jira API token, and inline Jira sync config.
+- Secrets Manager wiring for OpenAI, LiveKit, Jira API token, Jira webhook secret, and inline Jira sync config.
 - Production runtime variables for room/board authorization and durable board state.
 
 The module is consumed through Terragrunt from `infra/live/dev`. Do not add backend or provider blocks here; the root `infra/terragrunt.hcl` generates them.

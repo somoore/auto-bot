@@ -1,9 +1,10 @@
 locals {
-  aws_region           = "us-east-1"
-  project_name         = "auto-bot"
-  aws_provider_version = "6.45.0"
-  state_bucket         = "${local.project_name}-terraform-state-${get_aws_account_id()}"
-  lock_table           = "${local.project_name}-terraform-locks"
+  aws_region                 = "us-east-1"
+  project_name               = "auto-bot"
+  aws_provider_version       = "6.45.0"
+  cloudinit_provider_version = "2.4.0"
+  state_bucket               = "${local.project_name}-terraform-state-${get_aws_account_id()}"
+  lock_table                 = "${local.project_name}-terraform-locks"
 }
 
 remote_state {
@@ -45,6 +46,10 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = "= ${local.aws_provider_version}"
+    }
+    cloudinit = {
+      source  = "hashicorp/cloudinit"
+      version = "= ${local.cloudinit_provider_version}"
     }
   }
 }

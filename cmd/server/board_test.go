@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGetBoardReturnsFreshnessContract(t *testing.T) {
@@ -150,6 +151,185 @@ func TestPromptInjectionGuardRejectsToolArguments(t *testing.T) {
 	}
 }
 
+func TestRiskyVoiceToolsRequireConfirmationAndCanBeConfirmed(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"Confirmable assignment","notes":"Needs owner","tags":["jira"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	result, changed, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`","account_id":"account-123","display_name":"Scott Moore"}`, toolCallMeta{Source: "openai-realtime"})
+	if err != nil {
+		t.Fatalf("assign_ticket returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("pending confirmation should not mutate the board")
+	}
+	if requires, _ := result["requires_confirmation"].(bool); !requires {
+		t.Fatalf("assign_ticket result = %#v, want confirmation", result)
+	}
+	confirmationID := result["confirmation_id"].(string)
+	if len(board.SnapshotState().PendingConfirmations) != 1 {
+		t.Fatalf("pending confirmations = %d, want 1", len(board.SnapshotState().PendingConfirmations))
+	}
+
+	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"`+confirmationID+`"}`, toolCallMeta{Source: "openai-realtime"})
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("confirm_action should execute the pending mutation")
+	}
+	if result["original_tool_name"] != "assign_ticket" {
+		t.Fatalf("original_tool_name = %v, want assign_ticket", result["original_tool_name"])
+	}
+	state := board.SnapshotState()
+	if len(state.PendingConfirmations) != 0 {
+		t.Fatalf("pending confirmations = %d, want 0", len(state.PendingConfirmations))
+	}
+	updated := findBoardTestCard(t, state.Cards, card.ID)
+	if updated.Assignee == nil || updated.Assignee.DisplayName != "Scott Moore" {
+		t.Fatalf("Assignee = %+v, want Scott Moore", updated.Assignee)
+	}
+}
+
+func TestMeetingMemoryBriefingAuditReplayAndUndo(t *testing.T) {
+	board := newKanbanBoard()
+	board.RecordTranscript("user", "Scott", "I finished the LiveKit work and EMAL-14 is blocked by DNS.")
+	result, changed, err := board.ApplyToolCallWithMeta("start_meeting", `{"participants":["Scott","Sarah"],"agenda":["standup"]}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("start_meeting returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("start_meeting should mutate meeting state")
+	}
+	if result["briefing_text"] == "" {
+		t.Fatalf("start_meeting result missing briefing_text: %#v", result)
+	}
+
+	result, changed, err = board.ApplyToolCallWithMeta("create_ticket", `{"title":"Track DNS blocker","notes":"LiveKit DNS needs validation","tags":["livekit"],"status":"Backlog"}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("create_ticket should mutate")
+	}
+	card := result["card"].(kanbanCard)
+
+	_, changed, err = board.ApplyToolCallWithMeta("record_participant_update", `{
+		"participant":"Scott",
+		"card_id":"`+card.ID+`",
+		"spoken_text":"I am blocked by DNS validation.",
+		"blocker":"DNS validation is missing",
+		"follow_up":"Scott to validate DNS before AWS apply",
+		"eta":"2026-05-20"
+	}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("record_participant_update returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("record_participant_update should mutate")
+	}
+
+	state := board.SnapshotState()
+	if state.Meeting == nil || len(state.Meeting.FollowUps) == 0 || len(state.Meeting.UnresolvedBlockers) == 0 || len(state.Meeting.Ownership) == 0 {
+		t.Fatalf("meeting memory not populated: %#v", state.Meeting)
+	}
+
+	audit, _, err := board.ApplyToolCall("get_audit_events", `{"limit":5}`)
+	if err != nil {
+		t.Fatalf("get_audit_events returned error: %v", err)
+	}
+	events := audit["events"].([]boardMutationView)
+	if len(events) == 0 {
+		t.Fatal("expected audit events")
+	}
+	replay, _, err := board.ApplyToolCall("replay_audit_event", `{"event_id":"`+events[0].EventID+`"}`)
+	if err != nil {
+		t.Fatalf("replay_audit_event returned error: %v", err)
+	}
+	if ok, _ := replay["ok"].(bool); !ok {
+		t.Fatalf("replay result = %#v, want ok", replay)
+	}
+	if !strings.Contains(mustMarshalJSON(replay["transcript"]), "LiveKit work") {
+		t.Fatalf("replay transcript = %#v, want captured transcript evidence", replay["transcript"])
+	}
+
+	beforeUndo := board.SnapshotState().SequenceNumber
+	undo, changed, err := board.ApplyToolCallWithMeta("undo_last_mutation", `{}`, toolCallMeta{Source: "ui"})
+	if err != nil {
+		t.Fatalf("undo_last_mutation returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("undo_last_mutation should mutate")
+	}
+	if undo["undone"] != true {
+		t.Fatalf("undo result = %#v, want undone", undo)
+	}
+	if got := board.SnapshotState().SequenceNumber; got <= beforeUndo {
+		t.Fatalf("sequence after undo = %d, want > %d", got, beforeUndo)
+	}
+}
+
+func TestJiraConflictResolutionKeepsLocalOrUsesJira(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Local title","notes":"Local notes","tags":["local"],"status":"Backlog"}`, toolCallMeta{Source: "openai-realtime"})
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+	conflicts := board.ApplyJiraCards([]kanbanCard{{
+		ID:     card.ID,
+		Status: kanbanStatusInProgress,
+		Title:  "Jira title",
+		Notes:  "Jira notes",
+		Tags:   []string{"jira"},
+	}}, "jira-webhook")
+	if len(conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(conflicts))
+	}
+	if len(board.SnapshotState().Conflicts) != 1 {
+		t.Fatalf("snapshot conflicts = %d, want 1", len(board.SnapshotState().Conflicts))
+	}
+
+	_, changed, err := board.ApplyToolCall("resolve_jira_conflict", `{"conflict_id":"`+conflicts[0].ConflictID+`","resolution":"use_jira"}`)
+	if err != nil {
+		t.Fatalf("resolve_jira_conflict returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("use_jira resolution should mutate")
+	}
+	updated := findBoardTestCard(t, board.SnapshotState().Cards, card.ID)
+	if updated.Title != "Jira title" || updated.Status != kanbanStatusInProgress {
+		t.Fatalf("updated card = %#v, want Jira version", updated)
+	}
+}
+
+func TestGenerateScrumBriefingCountsBoardSignals(t *testing.T) {
+	board := newKanbanBoard()
+	yesterday := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+	_, _, err := board.ApplyToolCall("create_ticket", `{"title":"Ready PR","notes":"PR ready","tags":["pr-ready"],"status":"In Progress"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	_, _, err = board.ApplyToolCall("create_ticket", `{"title":"Blocked work","notes":"Waiting","tags":["blocked"],"status":"Blocked"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	result, _, err := board.ApplyToolCall("generate_scrum_briefing", `{"since":"`+yesterday+`"}`)
+	if err != nil {
+		t.Fatalf("generate_scrum_briefing returned error: %v", err)
+	}
+	briefing := result["briefing"].(scrumBriefing)
+	if briefing.PRsReady != 1 || briefing.BlockedCount != 1 {
+		t.Fatalf("briefing = %#v, want PR and blocked counts", briefing)
+	}
+	if !strings.Contains(briefing.Summary, "Since yesterday") {
+		t.Fatalf("briefing summary = %q", briefing.Summary)
+	}
+}
+
 func TestToolDefinitionsIncludeGetBoard(t *testing.T) {
 	board := newKanbanBoard()
 
@@ -252,4 +432,15 @@ func boardTestContainsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func findBoardTestCard(t *testing.T, cards []kanbanCard, cardID string) kanbanCard {
+	t.Helper()
+	for _, card := range cards {
+		if card.ID == cardID {
+			return card
+		}
+	}
+	t.Fatalf("card %s not found", cardID)
+	return kanbanCard{}
 }

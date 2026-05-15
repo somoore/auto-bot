@@ -38,7 +38,8 @@ A git pre-commit hook at `scripts/pre-commit` runs automatically. It checks:
 3. `go vet ./...` — code correctness
 4. Unused imports (via `goimports -l`)
 5. Docker digest presence in `Dockerfile` and `docker-compose.yml`
-6. SRI attributes on all external `<script>` tags
+6. Forbidden `:latest` / `@latest` references in operational files
+7. SRI attributes on all external `<script>` tags
 
 If any check fails, the commit is blocked. NEVER bypass with `--no-verify` unless explicitly discussed.
 

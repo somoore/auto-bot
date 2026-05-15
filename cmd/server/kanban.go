@@ -432,6 +432,14 @@ func (app *kanbanBoardApp) handleRealtimeEvent(raw []byte) {
 			log.Errorf("OpenAI Realtime error code=%s message=%s", event.Error.Code, event.Error.Message)
 			broadcastKanbanEvent("status", event.Error.Message)
 		}
+	case "conversation.item.input_audio_transcription.completed", "input_audio_buffer.transcription.completed":
+		if strings.TrimSpace(event.Transcript) != "" {
+			app.board.RecordTranscript("user", "", event.Transcript)
+			broadcastKanbanEvent("transcription", map[string]any{
+				"role": "user",
+				"text": event.Transcript,
+			})
+		}
 	case "response.output_item.done":
 		if event.Item != nil && event.Item.Type == "function_call" {
 			app.handleToolCall(*event.Item)
@@ -465,7 +473,10 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 		return
 	}
 
-	result, changed, err := app.board.ApplyToolCall(outputItem.Name, outputItem.Arguments)
+	result, changed, err := app.board.ApplyToolCallWithMeta(outputItem.Name, outputItem.Arguments, toolCallMeta{
+		Source: "openai-realtime",
+		CallID: outputItem.CallID,
+	})
 	if err != nil {
 		log.Errorf("Kanban tool call %q failed: %v", outputItem.Name, err)
 		result = map[string]any{

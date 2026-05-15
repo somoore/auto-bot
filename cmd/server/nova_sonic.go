@@ -477,12 +477,14 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 	switch out.Role {
 	case "USER":
 		log.Infof("Nova Sonic ASR: [user transcript received]")
+		app.board.RecordTranscript("user", "", out.Content)
 		broadcastKanbanEvent("transcription", map[string]any{
 			"role": "user",
 			"text": out.Content,
 		})
 	case "ASSISTANT":
 		log.Infof("Nova Sonic assistant: [assistant response]")
+		app.board.RecordTranscript("assistant", "Assistant", out.Content)
 		broadcastKanbanEvent("transcription", map[string]any{
 			"role": "assistant",
 			"text": out.Content,
@@ -511,7 +513,10 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 		return
 	}
 
-	result, changed, err := app.board.ApplyToolCall(tu.ToolName, tu.Content)
+	result, changed, err := app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
+		Source: "nova-sonic",
+		CallID: tu.ToolUseID,
+	})
 	if err != nil {
 		log.Errorf("Nova Sonic tool call %q failed: %v", tu.ToolName, err)
 		result = map[string]any{

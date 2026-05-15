@@ -3,8 +3,13 @@ set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
 TG_DIR="${TG_DIR:-infra/live/dev}"
-TAG="${TAG:-latest}"
+TAG="${TAG:-$(git rev-parse --short=12 HEAD)}"
 ENV_FILE="${ENV_FILE:-.env.aws.local}"
+
+if [ "$TAG" = "latest" ]; then
+  echo "TAG=latest is not allowed; use an immutable release or git SHA tag." >&2
+  exit 1
+fi
 
 if ! command -v terragrunt >/dev/null 2>&1; then
   echo "terragrunt is required" >&2

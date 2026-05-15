@@ -41,20 +41,25 @@ Open [http://localhost:3000](http://localhost:3000), click **Join room**, and st
 ```bash
 # Prerequisites: Docker, AWS CLI with granted credential-process
 
-# 1. Authenticate with AWS
+# 1. Create local env and set a non-shared app token
+cp .env.example .env
+perl -0pi -e "s/APP_API_TOKEN=.*/APP_API_TOKEN=$(openssl rand -hex 32)/" .env
+
+# 2. Authenticate with AWS
 assume test_AccountA/AdministratorAccess
 
-# 2. Start the stack (resolves credentials and passes them to Docker)
+# 3. Start the stack (resolves credentials and passes them to Docker)
 ./scripts/dc-up.sh --build -d
 
 # Or manually export credentials and run docker compose:
 export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_SESSION_TOKEN=...
+export APP_API_TOKEN="$(openssl rand -hex 32)"
 docker compose up --build -d
 ```
 
 Open [http://localhost:3001](http://localhost:3001), click **Join room**, grant microphone access, and start talking. The LiveKit SFU runs on port 7880, the app on port 3001.
 
-The Docker Compose stack is explicitly `APP_ENV=local` and uses `local-dev-only-change-me` as the default app access token. Change `APP_API_TOKEN` before sharing the server with anyone else.
+The Docker Compose stack is explicitly `APP_ENV=local`. `APP_API_TOKEN` is required and should come from your uncommitted `.env`; the app token is not baked into the image or served to the browser.
 
 For a local end-to-end stack with Jira sync, copy [config/jira.example.json](config/jira.example.json), set `JIRA_CONFIG_PATH=/srv/config/<your-file>.json` or set `JIRA_CONFIG_JSON`, export `JIRA_API_TOKEN`, and run Docker Compose. The app container mounts `./config` read-only at `/srv/config`.
 
@@ -66,13 +71,14 @@ brew install go opus pkg-config
 
 # Start LiveKit dev server in a separate terminal
 docker run --rm -p 7880:7880 -p 7881:7881 -p 7882-7892:7882-7892/udp \
-  livekit/livekit-server:latest --dev --bind 0.0.0.0 --node-ip 127.0.0.1
+  livekit/livekit-server:v1.9.1@sha256:c039a1bfa154c8479ac369c380665638e92a7e9531e69664549c0c0d3eb65e63 \
+  --dev --bind 0.0.0.0 --node-ip 127.0.0.1
 
 # Authenticate and run the app
 assume test_AccountA/AdministratorAccess
 VOICE_PROVIDER=nova-sonic \
 APP_ENV=local \
-APP_API_TOKEN=local-dev-only-change-me \
+APP_API_TOKEN="$(openssl rand -hex 32)" \
 AWS_REGION=us-east-1 \
 LIVEKIT_API_KEY=devkey \
 LIVEKIT_API_SECRET=secret \
@@ -90,6 +96,8 @@ go run ./cmd/server/
 ```
 
 When `JIRA_CONFIG_PATH` or `JIRA_CONFIG_JSON` is set, the server loads the initial board from Jira using the configured JQL and writes board mutations back to Jira: create issues/sub-tasks, transition issues, update summary/description, append notes, add comments, add/remove labels, assign/unassign issues, set reporter/watchers, set due dates/ETAs, set priority, set story points and time estimates, add worklogs, link issues, assign sprint, rank backlog/sprint issues, set components/fix versions/custom fields, attach remote links, mark blocked, and close/cancel for deletes. Keep the API token outside the repo; prefer `api_token_file`, `api_token_command`, or `api_token_env` in the config.
+
+Jira webhooks are available at `POST /jira/webhook`. Set `webhook_secret` in the Jira config or `JIRA_WEBHOOK_SECRET`; Jira should send the same value as `Authorization: Bearer <secret>` or `X-Auto-Bot-Jira-Webhook-Secret`. Webhook payloads are project-key checked before refresh, then the board is refreshed from Jira. If Jira changed a card that also has newer local meeting changes, the UI surfaces a conflict and asks whether to keep the local meeting update or use Jira's latest value.
 
 Jira writes are constrained to the configured `project_key`. Existing-issue mutations refuse issue keys outside that project, newly created Jira issue keys are verified before local cards are renamed, and startup hydration fails if the configured JQL returns issues from another project. This keeps a bad voice command or overly broad JQL from touching someone else's Jira board.
 
@@ -141,7 +149,9 @@ The scrum master agent understands natural language commands:
 | "Set component to Voice Agent and fix version to scrum-master-mvp" | Updates Jira planning metadata |
 | "Delete the old task" | Removes a ticket from the board |
 
-The agent also responds to implicit status updates during standup — if someone says "I finished X", it moves the matching card to Done automatically. In structured meetings it can start/end meetings, track participants, move to the next speaker, record blockers/risks/action items, summarize the meeting, and keep Jira synchronized.
+The agent also responds to implicit status updates during standup — if someone says "I finished X", it moves the matching card to Done automatically. In structured meetings it can start/end meetings, deliver a 60-second opening briefing, track participants, move to the next speaker, record blockers/risks/decisions/action items/follow-ups/parking-lot topics, track ownership, summarize the meeting, and keep Jira synchronized.
+
+Medium-risk Jira actions such as assignment, ETA, priority, and reporter changes create a pending confirmation before they write. High-risk actions such as delete/close, sprint moves, and ranking changes also require explicit confirmation. The UI exposes **Undo** and **Audit** controls; audit replay shows the mutation, before/after context, and captured transcript evidence when available.
 
 ## Multi-Party Video & Layout Modes
 
@@ -191,6 +201,8 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `AWS_REGION` | `us-east-1` | Nova Sonic | Bedrock region |
 | `NOVA_SONIC_MODEL` | `amazon.nova-sonic-v1:0` | Nova Sonic | Bedrock model ID |
 | `NOVA_SONIC_VOICE` | `matthew` | Nova Sonic | TTS voice ID |
+| `LIVEKIT_DEPLOYMENT_MODE` | `self-hosted` | Nova Sonic/AWS | Terraform media-plane switch: `self-hosted` deploys LiveKit, `cloud` uses LiveKit Cloud with `LIVEKIT_CLOUD_URL`. |
+| `LIVEKIT_CLOUD_URL` | _unset_ | Nova Sonic/AWS | LiveKit Cloud URL, for example `wss://project.livekit.cloud`, used when `LIVEKIT_DEPLOYMENT_MODE=cloud`. |
 | `LIVEKIT_URL` | `ws://localhost:7880` | Nova Sonic | LiveKit server WebSocket URL |
 | `LIVEKIT_BROWSER_URL` | _derived_ | Nova Sonic | Browser-facing LiveKit URL returned by `/livekit-token`; useful when server-internal `LIVEKIT_URL` is not browser reachable. |
 | `LIVEKIT_API_KEY` | _(required)_ | Nova Sonic | LiveKit API key (no default — must be set) |
@@ -198,10 +210,20 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `JIRA_CONFIG_PATH` | _unset_ | Both | Optional Jira Cloud sync configuration JSON |
 | `JIRA_CONFIG_JSON` | _unset_ | Both | Optional inline Jira Cloud sync configuration JSON; useful for AWS Secrets Manager injection |
 | `JIRA_API_TOKEN` | _unset_ | Both | Optional Jira API token when the config uses `"api_token_env": "JIRA_API_TOKEN"` |
+| `JIRA_WEBHOOK_SECRET` | _unset_ | Both | Optional shared secret for `POST /jira/webhook`; also supported as `webhook_secret` in the Jira config |
 | `AUDIT_LOG_PATH` | _unset_ | Both | Optional JSONL file for board mutation and Jira refresh audit events |
 | `TRUST_PROXY_HEADERS` | _unset_ | Both | Set to `1` behind a trusted reverse proxy so rate limiting uses forwarded client IP headers |
 
 See [.env.example](.env.example) for a copyable template.
+
+## Speech-to-Speech Providers
+
+The backend is already provider-switched with `VOICE_PROVIDER`:
+
+- `VOICE_PROVIDER=openai` uses the OpenAI Realtime path and `OPENAI_REALTIME_MODEL`.
+- `VOICE_PROVIDER=nova-sonic` uses LiveKit for the meeting room and Amazon Bedrock Nova Sonic for full-duplex speech-to-speech via `NOVA_SONIC_MODEL`.
+
+To add another full-duplex speech model, keep the browser/session/Jira/tool surface unchanged and add a provider implementation beside `kanban.go` and `nova_sonic.go` that consumes the shared `KanbanToolDefs()` and `SessionInstructions()` contracts. The app should only need a new `VOICE_PROVIDER` value, model env vars, and any provider-specific secret ARN wiring in Terraform.
 
 ## Architecture
 
@@ -299,22 +321,40 @@ When running the OpenAI path on the same Mac as the browser, set `CONFERENCE_LOO
 
 ## AWS Deployment
 
-AWS infrastructure lives under [infra](infra/README.md) and uses Terragrunt with S3 remote state and DynamoDB locking in `us-east-1`. The generated Terraform provider is pinned to `hashicorp/aws = 6.45.0`.
+AWS infrastructure lives under [infra](infra/README.md) and uses Terragrunt with S3 remote state and DynamoDB locking in `us-east-1`. The generated Terraform providers are pinned to `hashicorp/aws = 6.45.0` and `hashicorp/cloudinit = 2.4.0`.
 
 The dev stack deploys:
 
-- ECS Fargate app service behind an Application Load Balancer
-- ECS Fargate LiveKit service behind a Network Load Balancer
-- TCP signaling, TCP fallback, and one muxed UDP RTC media listener for LiveKit
+- VPC `10.20.0.0/16`, the AWS-canonical form of the requested `10.20.21.0/16`, with public subnets starting at `10.20.21.0/24` only for the app ALB, LiveKit NLB, and fck-nat
+- ECS Fargate app and optional self-hosted LiveKit services in private subnets with no public task IPs
+- Application Load Balancer with AWS WAF managed rules and a rate limit
+- Network Load Balancer for self-hosted LiveKit signaling, media, and TURN
+- TCP/TLS signaling, TCP fallback, one muxed UDP RTC media listener, embedded TURN/UDP, optional TURN/TLS, and Redis-backed distributed LiveKit routing
+- Terraform bit flip from self-hosted LiveKit to LiveKit Cloud through `LIVEKIT_DEPLOYMENT_MODE=cloud` and `LIVEKIT_CLOUD_URL`
 - ECR repository for the app image
-- CloudWatch log groups
+- CloudWatch log groups and an operations dashboard
+- fck-nat module `RaJiska/fck-nat/aws = 1.4.0` for private subnet egress; no AWS NAT Gateway is used
+- Private VPC endpoints for S3, ECR, CloudWatch Logs, Secrets Manager, and Bedrock Runtime
 - Secrets Manager injection for app, Jira, OpenAI, and LiveKit secrets
 - EFS-backed `/srv/data` volume for the app's SQLite board snapshot/event store
-- Task role access to Bedrock for Nova Sonic
+- Least-privilege ECS execution/task policies, including narrowed Bedrock model ARNs and EFS access point authorization
 
 Bootstrap flow:
 
 ```bash
+# Pin a reviewed fck-nat AMI ID for us-east-1. Do not leave this to a latest lookup.
+export FCK_NAT_AMI_ID=ami-xxxxxxxxxxxxxxxxx
+
+# Optional but recommended for self-hosted LiveKit DNS/TLS.
+export HOSTED_ZONE_ID=Z123...
+export LIVEKIT_DOMAIN_NAME=livekit.example.com
+export LIVEKIT_TURN_DOMAIN_NAME=turn.example.com
+export LIVEKIT_CERTIFICATE_ARN=arn:aws:acm:us-east-1:...
+
+# Optional LiveKit Cloud switch. Keep the API key/secret env vars set to the Cloud project keys.
+# export LIVEKIT_DEPLOYMENT_MODE=cloud
+# export LIVEKIT_CLOUD_URL=wss://your-project.livekit.cloud
+
 AWS_REGION=us-east-1 ./scripts/aws-upsert-secrets.sh
 set -a; source .env.aws.local; set +a
 
@@ -327,9 +367,24 @@ cd ../../..
 ./scripts/aws-deploy-dev.sh
 ```
 
+To discover the current fck-nat AMI for review before pinning it, query AMIs owned by `568608671756` in `us-east-1`, then copy the returned `ImageId` into `FCK_NAT_AMI_ID`. The Terraform module requires that explicit AMI ID so deploys are reproducible.
+
+```bash
+aws ec2 describe-images \
+  --region us-east-1 \
+  --owners 568608671756 \
+  --filters 'Name=name,Values=fck-nat-al2023-hvm-*' 'Name=architecture,Values=arm64' \
+  --query 'sort_by(Images,&CreationDate)[-1].{ImageId:ImageId,Name:Name,CreationDate:CreationDate}' \
+  --output table
+```
+
+`scripts/aws-build-push.sh` tags the app image with the current git SHA by default and updates `.env.aws.local` with `APP_IMAGE`. Full deploys fail if `APP_IMAGE` is missing or uses a moving tag.
+
+For TURN/TLS, also set `LIVEKIT_TURN_CERTIFICATE_ARN` and keep `LIVEKIT_TURN_DOMAIN_NAME` pointed at the LiveKit NLB. The module defaults TURN/UDP on 443 and keeps TURN/TLS off until a matching certificate ARN is provided.
+
 For Jira in ECS, set `JIRA_API_TOKEN` and `JIRA_CONFIG_JSON_FILE=/absolute/path/to/jira.json` before `aws-upsert-secrets.sh`; that Jira config should use `"api_token_env": "JIRA_API_TOKEN"`.
 
-Self-hosted LiveKit on Fargate is supported for testing, but it is operationally more sensitive than the Go app because WebRTC requires public UDP reachability. LiveKit Cloud remains the lower-ops path until self-hosting is validated for your network profile.
+Self-hosted LiveKit on Fargate is supported for testing and now includes Redis-backed distributed routing plus TURN hooks, but it is still operationally more sensitive than the Go app because WebRTC depends on public UDP/TURN reachability and per-room node capacity. LiveKit Cloud remains a one-variable infrastructure switch when we decide the managed media edge is worth it.
 
 ## Security
 
@@ -345,9 +400,13 @@ This application includes several hardening measures:
 - **WebSocket limits**: 64KB max message size, 100 max concurrent connections.
 - **Rate limiting**: Per-client fixed-window limits on WebSocket upgrades and LiveKit token minting.
 - **Audit trail**: Board mutations and Jira refreshes are logged as structured audit events; set `AUDIT_LOG_PATH` to also write JSONL.
+- **Undo and replay**: Voice/UI mutations keep a bounded in-memory audit history with before/after board state, transcript evidence, undo support, and UI replay controls.
+- **Confirmation gates**: Medium/high-risk Jira actions create pending confirmations instead of writing immediately.
+- **Jira webhook conflicts**: Authenticated Jira webhooks refresh the board and surface local-vs-Jira conflicts for human resolution.
 - **Prompt-injection guardrails**: Jira/task text is treated as untrusted data, not instructions. Model-facing board context and tool outputs redact detected prompt-injection payloads, tool arguments are scanned before mutation, and tool schemas tell the model that only live user speech can authorize Jira changes.
 - **Input validation**: Identity parameters validated to `[a-zA-Z0-9_-]{1,64}`. Card titles, notes, and tags have size caps.
 - **Non-root container**: Docker image runs as `appuser`, not root.
+- **LiveKit media hardening**: AWS self-host mode uses private ECS tasks, NLB edge listeners, Redis distributed routing, embedded TURN/UDP hooks, optional TURN/TLS, and CloudWatch dashboarding. LiveKit Cloud can be enabled by Terraform inputs without changing app code.
 - **Supply chain**: All Docker images pinned to `@sha256:` digests, CDN scripts use SRI, Go modules verified via `go.sum`.
 - **Pre-commit hook**: Runs `go vet`, `goimports`, `govulncheck`, Docker digest checks, SRI checks, and secrets scanning before every commit.
 - **No sensitive logging**: SDP, ICE candidates, transcripts, and tool arguments are redacted from logs.

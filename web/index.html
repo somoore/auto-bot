@@ -706,6 +706,8 @@
         <p id="log" class="log" aria-live="polite">Team meeting</p>
         <div class="controls">
           <button id="join" class="primary" type="button">Join room</button>
+          <button id="undoLast" type="button" disabled>Undo</button>
+          <button id="auditLog" type="button" disabled>Audit</button>
           <button id="leave" type="button" disabled>Leave</button>
         </div>
         <span aria-hidden="true"></span>
@@ -721,6 +723,8 @@
       const statusEl = document.getElementById('status')
       const logEl = document.getElementById('log')
       const joinButton = document.getElementById('join')
+      const undoLastButton = document.getElementById('undoLast')
+      const auditLogButton = document.getElementById('auditLog')
       const leaveButton = document.getElementById('leave')
       const localVideo = document.getElementById('localVideo')
       const videoStack = document.getElementById('videoStack')
@@ -739,6 +743,8 @@
       const cardSnapshots = new Map()
 
       joinButton.addEventListener('click', joinRoom)
+      undoLastButton.addEventListener('click', () => sendKanbanCommand('undo_last_mutation'))
+      auditLogButton.addEventListener('click', () => sendKanbanCommand('get_audit_events', { limit: 20 }))
       leaveButton.addEventListener('click', leaveRoom)
       window.addEventListener('beforeunload', leaveRoom)
       window.addEventListener('keydown', event => {
@@ -789,6 +795,8 @@
           ws = new WebSocket(wsURL.toString())
           ws.onopen = () => {
             leaveButton.disabled = false
+            undoLastButton.disabled = false
+            auditLogButton.disabled = false
             setStatus('Connected')
           }
           ws.onmessage = event => {
@@ -858,6 +866,31 @@
           case 'status':
             setLog(String(message.data || ''))
             break
+          case 'confirmation':
+            handleConfirmation(message.data)
+            break
+          case 'confirmation_cancelled':
+            showToast('Action cancelled')
+            break
+          case 'conflict':
+            handleConflict(message.data)
+            break
+          case 'conflict_resolved':
+            showToast('Jira conflict resolved')
+            break
+          case 'audit_events':
+            showAuditPanel(message.data?.events || [])
+            break
+          case 'replay_state':
+            showReplayPanel(message.data)
+            break
+          case 'undo_result':
+            showToast(message.data?.summary || 'Undo complete')
+            break
+          case 'command_result':
+            if (message.data?.ok === false && message.data?.error) showToast(message.data.error)
+            else if (message.data?.undo_summary) showToast(message.data.undo_summary)
+            break
           case 'highlight':
             highlightCard(message.data?.card_id)
             break
@@ -875,6 +908,79 @@
         if (card) {
           showCardDetail(card)
         }
+      }
+
+      function sendKanbanCommand(tool, args = {}) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return
+        ws.send(JSON.stringify({ event: 'kanban_command', data: JSON.stringify({ tool, arguments: args }) }))
+      }
+
+      function handleConfirmation(data) {
+        if (!data?.confirmationId) return
+        showToast(data.prompt || 'Action requires confirmation')
+        const accepted = window.confirm(data.prompt || 'Confirm this Jira action?')
+        sendKanbanCommand(accepted ? 'confirm_action' : 'cancel_confirmation', { confirmation_id: data.confirmationId })
+      }
+
+      function handleConflict(conflict) {
+        if (!conflict?.conflictId) return
+        const useJira = window.confirm(`${conflict.summary || 'Jira changed this card.'}\n\nOK: use Jira latest\nCancel: keep local meeting update`)
+        sendKanbanCommand('resolve_jira_conflict', {
+          conflict_id: conflict.conflictId,
+          resolution: useJira ? 'use_jira' : 'keep_local'
+        })
+      }
+
+      function showAuditPanel(events) {
+        const panel = document.createElement('article')
+        panel.className = 'card-detail'
+        panel.setAttribute('role', 'dialog')
+        panel.setAttribute('aria-modal', 'true')
+        const header = document.createElement('header')
+        header.className = 'card-detail-header'
+        const title = document.createElement('div')
+        title.className = 'card-detail-title'
+        const strong = document.createElement('strong')
+        strong.textContent = 'Recent board audit'
+        title.appendChild(strong)
+        const closeButton = document.createElement('button')
+        closeButton.className = 'card-detail-close'
+        closeButton.type = 'button'
+        closeButton.textContent = 'x'
+        closeButton.addEventListener('click', closeCardDetail)
+        header.append(title, closeButton)
+        const details = document.createElement('div')
+        details.className = 'comment-preview-details'
+        if (events.length === 0) details.appendChild(renderPreviewDetail('Events', 'No mutation events yet.'))
+        events.slice(0, 12).forEach(event => {
+          const row = document.createElement('div')
+          row.className = 'comment-preview-detail-value'
+          const text = document.createElement('span')
+          text.textContent = `${event.summary || event.toolName} (${event.eventId})`
+          const replay = document.createElement('button')
+          replay.type = 'button'
+          replay.textContent = 'Replay'
+          replay.addEventListener('click', () => sendKanbanCommand('replay_audit_event', { event_id: event.eventId }))
+          const undo = document.createElement('button')
+          undo.type = 'button'
+          undo.textContent = 'Undo'
+          undo.addEventListener('click', () => sendKanbanCommand('undo_last_mutation', { event_id: event.eventId }))
+          row.append(text, replay, undo)
+          details.appendChild(renderPreviewDetail(event.occurredAt || 'Event', row))
+        })
+        panel.append(header, details)
+        cardDetailRegion.replaceChildren(panel)
+        cardDetailRegion.classList.add('visible')
+      }
+
+      function showReplayPanel(data) {
+        if (!data?.ok) {
+          showToast(data?.error || 'Audit event not found')
+          return
+        }
+        const event = data.event || {}
+        const transcript = data.transcript?.summary || 'No transcript evidence captured.'
+        showToast(`${event.summary || 'Audit replay'}: ${transcript}`)
       }
 
       function addRemoteTrack(event) {
@@ -1468,6 +1574,8 @@
       function leaveRoom() {
         joinButton.disabled = false
         leaveButton.disabled = true
+        undoLastButton.disabled = true
+        auditLogButton.disabled = true
 
         if (ws && ws.readyState !== WebSocket.CLOSED) {
           ws.close()

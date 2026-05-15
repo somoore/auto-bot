@@ -4,7 +4,7 @@ Last updated: 2026-05-15
 
 ## Current Rule
 
-Testing is complete for this pass. Scott explicitly requested a `jira-scrum` branch commit and push on 2026-05-15.
+Do not commit new work until local validation for this security/infra pass is complete and Scott asks to commit.
 
 ## Implemented In This Pass
 
@@ -35,6 +35,23 @@ Testing is complete for this pass. Scott explicitly requested a `jira-scrum` bra
 - Added structured scrum-master meeting state and tools:
   - `start_meeting`, `register_participant`, `record_participant_update`
   - `next_speaker`, `summarize_meeting`, `end_meeting`
+- Added meeting intelligence:
+  - Meeting memory now tracks agenda, decisions, risks, action items, parking-lot topics, follow-ups, unresolved blockers, and ownership.
+  - Meeting start generates a 60-second scrum-master briefing from recent board movement, ready-PR signals, blocked work, unassigned work, stale cards, and unresolved blockers.
+  - Added `record_meeting_memory` and `generate_scrum_briefing` tools.
+- Added selective confirmation gates for risky Jira actions:
+  - Medium-risk actions: assignment/unassignment, ETA, priority, and reporter changes.
+  - High-risk actions: close/delete, sprint assignment, and Jira ranking.
+  - Added `confirm_action`, `cancel_confirmation`, and `list_pending_confirmations` tools plus UI confirmation prompts.
+- Added undo and audit replay:
+  - Voice/UI mutations keep bounded before/after mutation history with transcript evidence when provider transcripts are available.
+  - Added `undo_last_mutation`, `get_audit_events`, and `replay_audit_event` tools.
+  - Added Undo and Audit controls to both web clients.
+- Added authenticated Jira webhook refresh and conflict resolution:
+  - `POST /jira/webhook` accepts `Authorization: Bearer <secret>` or `X-Auto-Bot-Jira-Webhook-Secret`.
+  - Webhook payload issue keys are project-key checked before refresh.
+  - Poll/webhook refreshes surface local-vs-Jira conflicts when meeting-local changes would be overwritten.
+  - Added `resolve_jira_conflict` tool and UI conflict prompts.
 - Updated both web UIs to display real assignee, priority, ETA, blocked reason, and latest comments, and aligned card detail open/close events across OpenAI and LiveKit frontends.
 - Added `config/jira.example.json`.
 - Added Jira tests using an `httptest` fake Jira server.
@@ -68,12 +85,18 @@ Testing is complete for this pass. Scott explicitly requested a `jira-scrum` bra
 - Updated README and `.env.example` for Jira, audit, and rate-limit proxy behavior.
 - Added Terragrunt/Terraform AWS deployment shape:
   - Root Terragrunt config generates S3 state, DynamoDB locking, and AWS provider config in `us-east-1`.
-  - AWS provider is pinned to `hashicorp/aws = 6.45.0`.
-  - Reusable module deploys ECS Fargate app service, ECS Fargate LiveKit service, ALB, NLB, ECR, CloudWatch logs, Secrets Manager injection, EFS board persistence, and Bedrock task-role permissions.
-  - LiveKit is modeled with TCP signaling, TCP fallback, and one muxed UDP media port for the Fargate path.
+  - AWS provider is pinned to `hashicorp/aws = 6.45.0`; `hashicorp/cloudinit = 2.4.0` is pinned for the fck-nat module.
+  - Reusable module deploys ECS Fargate app service, optional ECS Fargate self-hosted LiveKit service, ALB, NLB, ECR, CloudWatch logs/dashboard, Secrets Manager injection, EFS board persistence, WAF, VPC endpoints, fck-nat private egress, ElastiCache Redis for LiveKit, and narrowed Bedrock task-role permissions.
+  - VPC uses AWS-canonical `10.20.0.0/16` for the requested `10.20.21.0/16` range; public subnets start at `10.20.21.0/24`, and ECS/EFS live in private subnets.
+  - AWS NAT Gateway is intentionally not used; fck-nat module `RaJiska/fck-nat/aws = 1.4.0` is pinned and full deploys require explicit `FCK_NAT_AMI_ID`.
+  - Full deploys require an explicit pushed `APP_IMAGE`; the ECR `:bootstrap` fallback is only for initial targeted repository creation.
+  - ECS task execution policy is inline/resource-scoped instead of using the broad AWS managed execution policy.
+  - LiveKit Cloud is a Terraform bit flip with `LIVEKIT_DEPLOYMENT_MODE=cloud` plus `LIVEKIT_CLOUD_URL`; self-hosted resources are skipped in that mode.
+  - ECR app image tags are immutable, app images cannot use `:latest`, Docker/Terraform/Terragrunt helper images are pinned by version and digest, and pre-commit checks forbid `:latest` / `@latest` in operational files.
+  - Self-hosted LiveKit is modeled with TCP/TLS signaling, TCP fallback, one muxed UDP media port, embedded TURN/UDP, optional TURN/TLS, Redis distributed routing, and Prometheus metrics for the Fargate path.
   - Added AWS helper scripts for secrets, image push, and dev deploy.
   - Added Cursor rule for Terraform/Terragrunt conventions.
-  - Updated pre-commit checks to use Dockerized Terraform/Terragrunt format checks when local binaries are absent.
+  - Updated pre-commit checks to use pinned Dockerized Terraform/Terragrunt format checks when local binaries are absent.
 
 ## Phase Status
 
@@ -81,11 +104,11 @@ Testing is complete for this pass. Scott explicitly requested a `jira-scrum` bra
 | --- | --- | --- | --- |
 | Prove the Product | Partial | Plan has meeting-hour targets. | No automated meeting-hour tracking or dashboard. |
 | Phase 1 - OpenAI Realtime Baseline | Partial | OpenAI provider path, shared board tools, audio mixer, local quickstart, board regression tests, and seed failure inventory exist. | Manual voice validation, two-tab audio validation evidence, fork confirmation, and live replay results are not complete. |
-| Phase 2 - Jira Sync | Partial | Jira config/client/startup hydration/write-through/polling foundation is implemented. `get_board` freshness contract is implemented. Voice tools now cover assignment, reporter/watchers, notes, comments, ETA/due date, priority, tag removal, subtasks, story points, estimates, worklogs, issue links, sprint assignment, ranking, components, fix versions, custom fields, remote links, real Blocked workflow transitions, blocked flag fallback, metadata/transition discovery, and project-key write safety. Live read hydration and basic write-through passed against `EMAL`. | Webhooks, sync-failure surfacing in the UI, conflict logging, and failure replay against real Jira are not complete. |
+| Phase 2 - Jira Sync | Partial | Jira config/client/startup hydration/write-through/polling/webhook foundation is implemented. `get_board` freshness contract is implemented. Voice tools now cover assignment, reporter/watchers, notes, comments, ETA/due date, priority, tag removal, subtasks, story points, estimates, worklogs, issue links, sprint assignment, ranking, components, fix versions, custom fields, remote links, real Blocked workflow transitions, blocked flag fallback, metadata/transition discovery, project-key write safety, confirmation gates, undo, audit replay, and conflict resolution. Live read hydration and basic write-through passed against `EMAL`. | Live webhook delivery from Atlassian and live conflict drills are not complete. |
 | Phase 2.5 - Workflow Config | Partial | JSON config supports status mappings, transition IDs, required fields, delete transition, polling, advanced field IDs, custom field mappings, metadata discovery, and transition option discovery. | Needs validation against three real workflows and a published known-limitations matrix. |
-| Phase 3 - Nova Sonic 2 via LiveKit | Partial | Provider selection, LiveKit media path, Nova Sonic Bedrock path, tool handling, transcription broadcast, stream lifecycle renewal foundation, and post-mutation sanitized board-context refresh exist. | LiveKit data-channel board events, full 8-minute renewal proof, VAD calibration, A/B provider comparison, and real end-to-end tests are not complete. |
+| Phase 3 - Nova Sonic 2 via LiveKit | Partial | Provider selection, LiveKit media path, Nova Sonic Bedrock path, tool handling, transcription broadcast, transcript evidence capture, stream lifecycle renewal foundation, and post-mutation sanitized board-context refresh exist. | LiveKit data-channel board events, full 8-minute renewal proof, VAD calibration, A/B provider comparison, and real end-to-end tests are not complete. |
 | Phase 4 - Agent-First Task Execution | Missing / blocked | None beyond board tags and Jira foundation. | Requires persistent task/agent state, classifier, cold-start labels, cost caps, sandboxed runners, checkpoints, take_over, retry_with, typed escalations, standup summary, and metrics. |
-| Phase 5 - Auth, Hardening, AWS Deployment | Partial | Docker, non-root runtime, origin checks, headers, timeouts, read limits, max clients, HttpOnly session auth, board/room request authorization, rate limits, audit JSONL, SQLite board event history, Terragrunt remote state, ECS/Fargate app, ECS/Fargate LiveKit with muxed UDP media, ALB/NLB, ECR, CloudWatch logs, Secrets Manager wiring, EFS board persistence, and Bedrock task-role permissions exist. | OIDC/Cognito auth, true multi-room agent orchestration, CloudWatch dashboards, TURN deployment, DNS/certificate wiring, and validated LiveKit self-hosting are not complete. |
+| Phase 5 - Auth, Hardening, AWS Deployment | Partial | Docker, non-root runtime, origin checks, headers, timeouts, read limits, max clients, HttpOnly session auth, board/room request authorization, rate limits, audit JSONL, SQLite board event history, Jira webhook secret injection, Terragrunt remote state, private-subnet ECS/Fargate app and optional self-hosted LiveKit services, ALB with WAF, LiveKit NLB, ECR immutable tags, CloudWatch logs/dashboard, Secrets Manager wiring, private VPC endpoints, fck-nat private egress, ElastiCache Redis for LiveKit routing, embedded TURN/UDP, optional TURN/TLS, EFS board persistence with IAM access-point auth, LiveKit Cloud mode switch, and narrowed Bedrock task-role permissions exist. | OIDC/Cognito auth, true multi-room agent orchestration, CloudWatch alarms, AWS-applied DNS/certificate validation, pinned fck-nat AMI selection for the target account, and validated LiveKit self-hosting are not complete. |
 
 ## Jira Setup Needed From The New Account
 
@@ -133,7 +156,8 @@ go run ./cmd/server/
 - Run `go mod verify`. Last local result: pass.
 - Run `scripts/pre-commit`. Last local result: pass.
 - Run inline JavaScript syntax checks for both web clients. Last local result: pass via `node --check` on extracted inline scripts.
-- Run Terraform/Terragrunt formatting and Terraform validation. Last local result: pass via Dockerized `hashicorp/terraform:latest` and `alpine/terragrunt:latest`; module validation used exact provider pin `hashicorp/aws = 6.45.0`; local `terraform` and `terragrunt` binaries are not installed.
+- Run Terraform/Terragrunt formatting and Terraform validation. Last local result: pass via Dockerized `hashicorp/terraform:1.14.0@sha256:3abcdb56739bf9c61a0290cfd1a2e41ef9c3799c0e6fa7f3c467f883367d3ecb` and `alpine/terragrunt:1.15.2@sha256:002defed150fa617710d6c5c208c1d54dd7ad60821d83f0408457d116e39f191`; module validation used `hashicorp/aws = 6.45.0` and `hashicorp/cloudinit = 2.4.0`; local `terraform` and `terragrunt` binaries are not installed.
+- Scan for forbidden `:latest` / `@latest` references in operational Docker/Terraform/script files. Last local result: pass.
 - Start without Jira and verify the local demo still renders. Last local result: pass with `APP_API_TOKEN=test-token` and no provider credentials.
 - Verify `/websocket` rejects missing token and reaches the WebSocket upgrader when token is present. Last local result: pass.
 - Verify served HTML does not contain `APP_API_TOKEN`, `window.__APP_TOKEN__`, or query-string token wiring. Last local unit-test result: pass.
@@ -159,20 +183,20 @@ go run ./cmd/server/
 
 - Auth is now meaningful against random web clients because the app token is not rendered into HTML, but it is still a shared bootstrap token. Public production should use OIDC/Cognito with per-user room membership instead of shared-token sessions.
 - The current server authorizes one configured `APP_ROOM_ID`/`APP_BOARD_ID` per deployment. True multi-room operation still needs per-room agent orchestration, per-room Jira config, and per-user authorization records.
-- Jira conflict handling is not implemented. Current behavior is write-through plus polling refresh, effectively last writer wins without losing-write records.
-- Jira webhooks are not implemented. Polling is available as the current fallback.
+- Jira conflict handling now exists for webhook/poll refreshes and Jira write-through failures, with UI-visible resolution. It still needs live Atlassian webhook testing and richer field-level merge policies.
+- Jira webhooks are implemented with a shared secret and project-key safety, but have not been exercised against live Atlassian webhook delivery yet.
 - Jira assignable-user search is implemented and passed live with the replacement scoped token; the current `EMAL` project returns Scott Moore as the only assignable user.
 - The current `EMAL` Jira workflow now has `To Do`, `In Progress`, `Blocked`, and `Done`; Blocked uses project-scoped status ID `10039` and transition ID `41`.
 - Broader Jira issue actions still not exposed as voice tools: attachments, votes, issue security levels, bulk edits, release/version creation, sprint creation/closure, workflow administration, and full validator-aware conflict resolution. Issue links, watchers, ranking, worklogs, reporter changes, parent/subtask links, and custom fields now have voice tools and Jira write-through paths.
-- Secrets Manager wiring exists for AWS ECS secrets. 1Password lookup is not wired; local OpenAI and LiveKit paths still support env-based secrets.
+- Secrets Manager wiring exists for all AWS ECS runtime secrets. 1Password lookup is not wired; local OpenAI and LiveKit paths still support env-based secrets for local-only development.
 - Agent execution is not implemented. Phase 4 needs a separate state model and sandbox runner before any real dispatch should be trusted.
-- AWS deployment is scaffolded but not applied. Terraform/Terragrunt validation and a real AWS deploy still need to run with your AWS credentials; local `terraform` and `terragrunt` binaries are not installed in this environment.
-- LiveKit on Fargate is implemented as a testable self-host path, but WebRTC UDP reachability must be validated in AWS before treating it as production-ready.
+- AWS deployment is scaffolded but not applied. A real AWS deploy still needs AWS credentials, a reviewed/pinned `FCK_NAT_AMI_ID`, DNS/cert inputs if using TLS/TURN/TLS, and LiveKit network validation; local `terraform` and `terragrunt` binaries are not installed in this environment.
+- LiveKit on Fargate is implemented as a testable self-host path with Redis and TURN hooks, but WebRTC UDP/TURN reachability must be validated in AWS before treating it as production-ready. LiveKit Cloud mode is available as a Terraform input switch.
 - Jira Software board configuration reads are not wired into startup sync; the diagnostic script is available for token/scope verification if we decide to consume `/rest/agile/1.0/board/{boardId}/configuration`.
 
 ## Useful Next Build Steps
 
 1. Live-test Jira Software sprint assignment and issue ranking with the final scoped token, because those call Agile endpoints rather than only Platform issue APIs.
-2. Add Jira conflict detection, losing-write audit records, and UI-visible sync failure state.
+2. Live-test Jira webhook delivery, conflict prompts, and undo/replay against the real EMAL board.
 3. Add OIDC/Cognito user login and per-room membership before exposing this beyond local/ngrok demos.
 4. Add multi-room agent orchestration so each room has its own LiveKit agent, board store, Jira config, audit stream, and authorization policy.

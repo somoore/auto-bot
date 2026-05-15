@@ -6,6 +6,7 @@ alwaysApply: true
 # AWS Terraform / Terragrunt
 
 - AWS region is always `us-east-1`.
+- The requested VPC range is `10.20.21.0/16`; use AWS's canonical equivalent `10.20.0.0/16` in Terraform to avoid drift, with public subnets starting at `10.20.21.0/24`.
 - Use Terragrunt for live infrastructure under `infra/live/**`.
 - Keep Terraform modules under `infra/modules/**` provider-agnostic; do not add provider or backend blocks inside modules.
 - Root `infra/terragrunt.hcl` is responsible for generating:
@@ -14,6 +15,12 @@ alwaysApply: true
   - the S3 backend config
 - The AWS provider must be pinned exactly. Current pin: `hashicorp/aws = 6.45.0`.
 - Terraform state must use S3 remote state with DynamoDB locking.
+- Public subnets are only for internet-facing load balancers and fck-nat. ECS tasks, EFS, ElastiCache Redis, and VPC endpoints must stay in private subnets.
+- Do not add AWS NAT Gateway. Private subnet egress must use the pinned fck-nat Terraform module and an explicit `FCK_NAT_AMI_ID`; never use the fck-nat latest AMI lookup for deploys.
+- Attach AWS WAF to the public app ALB. WAF cannot protect the LiveKit NLB UDP/TCP media edge, so keep LiveKit security group ingress explicit and CIDR-scoped.
+- Keep LiveKit Cloud as a Terraform bit flip. `LIVEKIT_DEPLOYMENT_MODE=cloud` must not create the self-hosted LiveKit ECS/NLB/Redis resources and must use `LIVEKIT_CLOUD_URL` plus Secrets Manager API keys.
+- Self-hosted LiveKit must include Redis distributed routing, TURN hooks, and metrics. TURN/TLS must require a matching ACM certificate and TURN domain.
+- IAM changes must be least privilege: prefer resource-scoped inline policies over broad AWS managed policies, and document any unavoidable wildcard such as `ecr:GetAuthorizationToken`.
 - Never commit `.tfstate`, `.tfvars`, generated backend/provider files, or `.terraform` directories.
 - Secrets must live in AWS Secrets Manager for AWS runs. Do not put secret values in Terraform variables or committed Terragrunt inputs.
 - Prefer adding reusable infrastructure to `infra/modules/auto-bot` and only environment-specific inputs to `infra/env.hcl` or `infra/live/<env>/terragrunt.hcl`.

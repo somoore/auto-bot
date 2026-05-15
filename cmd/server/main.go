@@ -189,6 +189,7 @@ func main() {
 		}
 	})
 	mux.HandleFunc("/websocket", websocketHandler)
+	mux.HandleFunc("/jira/webhook", jiraWebhookHandler)
 
 	baseURL := strings.TrimSpace(os.Getenv("APP_BASE_URL"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -538,6 +539,8 @@ func websocketHandlerNovaSonic(c *threadSafeWriter) {
 		switch message.Event {
 		case "confirm_board":
 			broadcastKanbanEvent("status", "Board confirmed by team")
+		case "kanban_command":
+			handleClientKanbanCommand(c, message.Data)
 		default:
 			log.Infof("Nova Sonic WS: ignoring event %q", message.Event)
 		}
@@ -665,6 +668,8 @@ func websocketHandlerOpenAI(c *threadSafeWriter) {
 		}
 
 		switch message.Event {
+		case "kanban_command":
+			handleClientKanbanCommand(c, message.Data)
 		case "candidate":
 			candidate := webrtc.ICECandidateInit{}
 			if err := json.Unmarshal([]byte(message.Data), &candidate); err != nil {
@@ -695,6 +700,46 @@ func websocketHandlerOpenAI(c *threadSafeWriter) {
 			log.Errorf("unknown message: %+v", message)
 		}
 	}
+}
+
+func handleClientKanbanCommand(c *threadSafeWriter, rawData string) {
+	var request struct {
+		Tool      string         `json:"tool"`
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal([]byte(rawData), &request); err != nil {
+		_ = sendKanbanEvent(c, "command_result", map[string]any{"ok": false, "error": "invalid command"})
+		return
+	}
+	if request.Tool == "" {
+		_ = sendKanbanEvent(c, "command_result", map[string]any{"ok": false, "error": "tool is required"})
+		return
+	}
+	if request.Arguments == nil {
+		request.Arguments = map[string]any{}
+	}
+	rawArgs := mustMarshalJSON(request.Arguments)
+	result, changed, err := sharedBoard.ApplyToolCallWithMeta(request.Tool, rawArgs, toolCallMeta{Source: "ui"})
+	if err != nil {
+		result = map[string]any{"ok": false, "error": err.Error()}
+	}
+
+	switch request.Tool {
+	case "get_audit_events":
+		_ = sendKanbanEvent(c, "audit_events", result)
+	case "replay_audit_event":
+		_ = sendKanbanEvent(c, "replay_state", result)
+	default:
+		_ = sendKanbanEvent(c, "command_result", result)
+	}
+
+	if !changed {
+		return
+	}
+	syncJiraToolCall(request.Tool, rawArgs, result)
+	state := sharedBoard.SnapshotState()
+	auditBoardMutation("ui", request.Tool, result, state)
+	broadcastKanbanEvent("board", state)
 }
 
 // Helper to make Gorilla Websockets threadsafe.
