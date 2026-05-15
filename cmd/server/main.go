@@ -175,6 +175,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
+	mux.HandleFunc("/auth/local-login", localLoginHandler)
 	mux.HandleFunc("/auth/session", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:

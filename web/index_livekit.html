@@ -1188,8 +1188,8 @@
         const current = await fetch('/auth/session', { credentials: 'same-origin' })
         if (current.ok) return current.json()
 
-        const token = prompt('Enter app access token:')
-        if (!token) throw new Error('Access token is required')
+        const token = await getLocalClipboardToken() || prompt('Enter app access token:')
+        if (!token) throw new Error('Access token is required. Run scripts/local-up.sh, then paste the copied local token.')
         const response = await fetch('/auth/session', {
           method: 'POST',
           credentials: 'same-origin',
@@ -1198,6 +1198,19 @@
         })
         if (!response.ok) throw new Error(`Authentication failed: ${response.status}`)
         return response.json()
+      }
+
+      async function getLocalClipboardToken() {
+        const host = window.location.hostname
+        const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
+        if (!isLocal || !navigator.clipboard?.readText) return ''
+        try {
+          const token = (await navigator.clipboard.readText()).trim()
+          if (/^[A-Za-z0-9._~+=/-]{20,512}$/.test(token)) return token
+        } catch (_) {
+          // Clipboard access may be denied by the browser. Fall back to prompt.
+        }
+        return ''
       }
 
       function cleanIdentity(value) {

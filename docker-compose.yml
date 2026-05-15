@@ -17,7 +17,8 @@ services:
       - VOICE_PROVIDER=nova-sonic
       - APP_ENV=local
       - APP_AUTH_MODE=${APP_AUTH_MODE:-token}
-      - APP_API_TOKEN=${APP_API_TOKEN:?set APP_API_TOKEN in your local .env}
+      - APP_API_TOKEN=${APP_API_TOKEN:?set APP_API_TOKEN via scripts/dc-up-keychain.sh or an exported environment variable}
+      - APP_LOCAL_LOGIN_TOKEN=${APP_LOCAL_LOGIN_TOKEN:-}
       - APP_ROOM_ID=${APP_ROOM_ID:-kanban-meeting}
       - APP_BOARD_ID=${APP_BOARD_ID:-default}
       - BOARD_SQLITE_PATH=${BOARD_SQLITE_PATH:-/srv/data/board.sqlite}
@@ -25,6 +26,7 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
       - AWS_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
       - LIVEKIT_URL=ws://livekit:7880
       - LIVEKIT_BROWSER_URL=${LIVEKIT_BROWSER_URL:-ws://localhost:7880}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}

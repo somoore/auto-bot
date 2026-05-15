@@ -108,6 +108,64 @@ func TestConfigureSecurityRejectsDisabledAuthOutsideLocal(t *testing.T) {
 	}
 }
 
+func TestConfigureSecurityRejectsLocalLoginOutsideLocal(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("APP_AUTH_MODE", "token")
+	t.Setenv("APP_LOCAL_LOGIN_TOKEN", "local-login-token")
+	voiceProvider = "openai"
+	apiToken = "strong-test-token"
+
+	if err := configureAppSecurity(); err == nil {
+		t.Fatal("configureAppSecurity accepted APP_LOCAL_LOGIN_TOKEN outside APP_ENV=local")
+	}
+}
+
+func TestLocalLoginCreatesSessionOnlyWithLocalToken(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	appEnvironment = "local"
+	appAuthMode = "token"
+	appLocalLoginToken = "local-login-token"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+
+	badReq := httptest.NewRequest(http.MethodGet, "/auth/local-login?token=wrong", nil)
+	badRec := httptest.NewRecorder()
+	localLoginHandler(badRec, badReq)
+	if badRec.Code != http.StatusUnauthorized {
+		t.Fatalf("localLoginHandler bad token status = %d, want 401", badRec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/local-login?token=local-login-token&identity=Scott_1&next=/hello", nil)
+	rec := httptest.NewRecorder()
+	localLoginHandler(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("localLoginHandler status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if location := rec.Header().Get("Location"); location != "/hello" {
+		t.Fatalf("redirect location = %q, want /hello", location)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].HttpOnly {
+		t.Fatalf("local login cookies = %#v", cookies)
+	}
+
+	authorizedReq := httptest.NewRequest(http.MethodGet, "/websocket?room_id=team-room&board_id=team-board", nil)
+	authorizedReq.AddCookie(cookies[0])
+	ctx, ok := authorizeRequest(authorizedReq)
+	if !ok {
+		t.Fatal("local login cookie did not authenticate request")
+	}
+	if ctx.Identity != "Scott_1" {
+		t.Fatalf("identity = %q, want Scott_1", ctx.Identity)
+	}
+}
+
 func TestFrontendDoesNotReferenceBrowserVisibleAppToken(t *testing.T) {
 	for _, path := range []string{"../../web/index.html", "../../web/index_livekit.html"} {
 		raw, err := os.ReadFile(path)
@@ -129,6 +187,7 @@ func snapshotAuthGlobals() func() {
 	oldEnvironment := appEnvironment
 	oldRoomID := appRoomID
 	oldBoardID := appBoardID
+	oldLocalLoginToken := appLocalLoginToken
 	oldAuthStore := authStore
 	oldVoiceProvider := voiceProvider
 	return func() {
@@ -137,6 +196,7 @@ func snapshotAuthGlobals() func() {
 		appEnvironment = oldEnvironment
 		appRoomID = oldRoomID
 		appBoardID = oldBoardID
+		appLocalLoginToken = oldLocalLoginToken
 		authStore = oldAuthStore
 		voiceProvider = oldVoiceProvider
 	}

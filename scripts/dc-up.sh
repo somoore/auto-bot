@@ -1,7 +1,13 @@
 #!/bin/sh
-# Resolve AWS credentials via granted credential-process and export them
-# for the Docker container, which doesn't have the granted CLI.
+# Compatibility wrapper. Local macOS development should use Keychain-backed
+# secrets through dc-up-keychain.sh instead of project .env files.
 set -e
+
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+if [ "$(uname -s)" = "Darwin" ] && [ -z "${APP_API_TOKEN:-}" ]; then
+  exec "$ROOT_DIR/scripts/dc-up-keychain.sh" "$@"
+fi
 
 CREDS=$(granted credential-process --profile "test_AccountA/AdministratorAccess")
 

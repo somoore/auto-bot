@@ -12,7 +12,9 @@ This file is a current risk register. Older findings about unauthenticated LiveK
 
 **Status:** Partially mitigated.
 
-The app no longer injects `APP_API_TOKEN` into served HTML. Browser users now create an HttpOnly `SameSite=Lax` session through `/auth/session`, and `/websocket` plus `/livekit-token` reject unauthenticated requests. Query-string tokens are rejected. Bearer auth remains available for non-browser automation.
+The app no longer injects `APP_API_TOKEN` into served HTML. Browser users now create an HttpOnly `SameSite=Lax` session through `/auth/session`, and `/websocket` plus `/livekit-token` reject unauthenticated requests. Query-string tokens are rejected for normal auth. Bearer auth remains available for non-browser automation.
+
+Local Docker development also has a separate `/auth/local-login` bootstrap token so `scripts/local-up.sh` can open a browser and set the session cookie automatically. That token is stored in macOS Keychain, is separate from `APP_API_TOKEN`, and is accepted only when `APP_ENV=local`; production startup rejects `APP_LOCAL_LOGIN_TOKEN`.
 
 **Remaining risk:** `APP_API_TOKEN` is still a shared bootstrap secret, not a user identity provider. Anyone with that token can create a browser session.
 
@@ -90,6 +92,16 @@ When `BOARD_SQLITE_PATH` is set, board snapshots and mutation events are persist
 
 After successful Nova Sonic board mutations, the server now sends a sanitized board-context refresh containing `ModelContextJSON()` and the latest sequence number. Nova Sonic also has the `get_board` tool for explicit freshness checks.
 
+The initial Bedrock stream sends exactly one `SYSTEM` content block. Post-mutation board refreshes are sent as non-interactive user/application data and explicitly state that Jira/card fields are untrusted data, preventing Bedrock duplicate-system validation failures and reducing prompt-injection risk from task text.
+
+### Nova Sonic Abrupt Stream Ends
+
+**Status:** Remediated for the known failure modes.
+
+A live local run exposed two adjacent Bedrock stream abort causes: post-mutation context refreshes were being sent as a second `SYSTEM` content block, and quiet room periods could leave Bedrock waiting for input events. The Nova Sonic path now sends post-mutation refreshes as app-supplied data and sends periodic silent audio frames while the stream is open.
+
+**Remaining risk:** This still needs a long live-room replay with real participants, forced mutations while the agent is speaking, and quiet-room pauses before we treat the Nova Sonic path as fully validated.
+
 ### Prompt Injection From Jira/Task/Meeting Text
 
 **Status:** Remediated as defense in depth.
@@ -136,11 +148,12 @@ ECS app and optional self-hosted LiveKit tasks now run in private subnets with `
 
 AWS runtime secrets are injected from Secrets Manager: app token, LiveKit API key/secret, self-hosted `LIVEKIT_KEYS`, optional custom LiveKit config, Jira token/config, and OpenAI key. ECS execution permissions are inline/resource-scoped; EFS uses access point IAM authorization; Bedrock access is narrowed to configured model ARNs.
 
-**Remaining risk:** Local development still uses environment variables. Production user identity is still a shared bootstrap token until Cognito/OIDC is added.
+**Remaining risk:** Local development resolves secrets from macOS Keychain and passes them only to child processes/containers. Production user identity is still a shared bootstrap token until Cognito/OIDC is added.
 
 ## Current Hardening Controls
 
 - HttpOnly browser sessions for web users.
+- Local-only Keychain-backed `/auth/local-login` bootstrap; production rejects `APP_LOCAL_LOGIN_TOKEN`.
 - Bearer token support for non-browser automation.
 - Same-origin WebSocket origin validation by default.
 - Strict identity format: `[a-zA-Z0-9_-]{1,64}`.
@@ -165,6 +178,7 @@ AWS runtime secrets are injected from Secrets Manager: app token, LiveKit API ke
 - LiveKit Cloud mode as a Terraform input switch.
 - AWS Secrets Manager injection for ECS runtime secrets.
 - Least-privilege inline ECS IAM policies for logs, ECR pull, Secrets Manager reads, EFS access, and Bedrock model invocation.
+- Nova Sonic single-system-prompt discipline plus silent audio keepalive during meeting pauses.
 - Pre-commit checks for tests, vetting, formatting, Docker digests, forbidden latest references, SRI, and secret patterns.
 
 ## Recommended Next Security Work

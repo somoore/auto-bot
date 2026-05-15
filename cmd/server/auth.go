@@ -22,11 +22,12 @@ const (
 )
 
 var (
-	appEnvironment = "production"
-	appAuthMode    = "token"
-	appRoomID      = defaultAppRoomID
-	appBoardID     = defaultAppBoardID
-	authStore      = newWebAuthStore(defaultSessionTTL)
+	appEnvironment     = "production"
+	appAuthMode        = "token"
+	appRoomID          = defaultAppRoomID
+	appBoardID         = defaultAppBoardID
+	appLocalLoginToken = ""
+	authStore          = newWebAuthStore(defaultSessionTTL)
 )
 
 type requestAuthContext struct {
@@ -63,9 +64,13 @@ func configureAppSecurity() error {
 	appAuthMode = strings.ToLower(strings.TrimSpace(getEnvDefault("APP_AUTH_MODE", "token")))
 	appRoomID = normalizeRuntimeID(getEnvDefault("APP_ROOM_ID", defaultAppRoomID), defaultAppRoomID)
 	appBoardID = normalizeRuntimeID(getEnvDefault("APP_BOARD_ID", defaultAppBoardID), defaultAppBoardID)
+	appLocalLoginToken = strings.TrimSpace(os.Getenv("APP_LOCAL_LOGIN_TOKEN"))
 
 	if appAuthMode != "token" && appAuthMode != "disabled" {
 		return fmt.Errorf("APP_AUTH_MODE must be token or disabled")
+	}
+	if appLocalLoginToken != "" && appEnvironment != "local" {
+		return fmt.Errorf("APP_LOCAL_LOGIN_TOKEN is only allowed when APP_ENV=local")
 	}
 	if appAuthMode == "disabled" && appEnvironment != "local" {
 		return fmt.Errorf("APP_AUTH_MODE=disabled is only allowed when APP_ENV=local")
@@ -359,6 +364,52 @@ func createSessionHandler(w http.ResponseWriter, r *http.Request) {
 		"board_id":             session.BoardID,
 		"expires_at":           session.ExpiresAt.Format(time.RFC3339),
 	})
+}
+
+func localLoginHandler(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if appEnvironment != "local" || appAuthMode != "token" || appLocalLoginToken == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if !secureTokenEqual(strings.TrimSpace(r.URL.Query().Get("token")), appLocalLoginToken) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	identity := normalizeParticipantIdentity(r.URL.Query().Get("identity"))
+	if identity == "" {
+		identity = "local-user"
+	}
+	session, err := authStore.create(identity)
+	if err != nil {
+		log.Errorf("Failed to create local auth session: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     authCookieName,
+		Value:    session.ID,
+		Path:     "/",
+		Expires:  session.ExpiresAt,
+		MaxAge:   int(authStore.ttl.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsHTTPS(r),
+	})
+	next := cleanLocalLoginRedirect(r.URL.Query().Get("next"))
+	http.Redirect(w, r, next, http.StatusSeeOther)
+}
+
+func cleanLocalLoginRedirect(next string) string {
+	next = strings.TrimSpace(next)
+	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return "/"
+	}
+	return next
 }
 
 func deleteSessionHandler(w http.ResponseWriter, r *http.Request) {

@@ -20,6 +20,54 @@ Both paths share the same Kanban board state and tool definitions ([cmd/server/b
 
 ## Quickstart
 
+Local secrets belong in macOS Keychain. Do not create a project `.env` file for local development.
+
+For the normal local stack, use the one-command launcher:
+
+```bash
+cd /Users/scottmoore/github/auto-bot
+scripts/local-up.sh
+```
+
+It generates missing local app/login/webhook secrets, stores them in macOS Keychain, prompts once for the Jira token if it is not already stored, forces AWS to `us-east-1`, runs `assume test_AccountA/AdministratorAccess`, starts Docker Compose, opens a local-only login URL to set the HttpOnly session cookie, and redirects to [http://localhost:3001](http://localhost:3001).
+
+Use the local Compose wrapper for routine stack commands:
+
+```bash
+scripts/local-compose.sh ps
+scripts/local-compose.sh logs -f app livekit
+scripts/local-down.sh
+```
+
+Recommended Keychain service names:
+
+| Secret | Service | Account |
+| --- | --- | --- |
+| Local app/session bootstrap token | `auto-bot/app-api-token` | your macOS user |
+| Local one-click login token | `auto-bot/local-login-token` | your macOS user |
+| OpenAI API key | `auto-bot/openai-api-key` | your macOS user |
+| Jira API token | `auto-bot/jira-api-token` | your Jira email |
+| Jira webhook secret | `auto-bot/jira-webhook-secret` | your macOS user |
+
+Store secrets with:
+
+```bash
+scripts/keychain-store-secret.sh auto-bot/app-api-token "$USER"
+scripts/keychain-store-secret.sh auto-bot/jira-api-token somoore2025@gmail.com
+
+# Only needed for the OpenAI provider:
+scripts/keychain-store-secret.sh auto-bot/openai-api-key "$USER"
+
+# Optional, for local webhook testing:
+scripts/keychain-store-secret.sh auto-bot/jira-webhook-secret "$USER"
+```
+
+Read the fallback app access token when you need to enter it manually:
+
+```bash
+scripts/keychain-get-secret.sh auto-bot/app-api-token "$USER"
+```
+
 ### Option A: OpenAI Realtime (local, no Docker)
 
 ```bash
@@ -27,11 +75,7 @@ Both paths share the same Kanban board state and tool definitions ([cmd/server/b
 brew install go opus pkg-config
 
 # Run
-CONFERENCE_LOOPBACK_ONLY=1 \
-APP_ENV=local \
-APP_API_TOKEN=local-dev-only-change-me \
-OPENAI_API_KEY=sk-... \
-go run ./cmd/server/
+scripts/run-openai-keychain.sh
 ```
 
 Open [http://localhost:3000](http://localhost:3000), click **Join room**, and start talking.
@@ -39,29 +83,26 @@ Open [http://localhost:3000](http://localhost:3000), click **Join room**, and st
 ### Option B: Nova Sonic 2 (Docker Compose)
 
 ```bash
-# Prerequisites: Docker, AWS CLI with granted credential-process
+# Prerequisites: Docker, AWS CLI with granted credential-process, Keychain secrets above
 
-# 1. Create local env and set a non-shared app token
-cp .env.example .env
-perl -0pi -e "s/APP_API_TOKEN=.*/APP_API_TOKEN=$(openssl rand -hex 32)/" .env
+# Optional if your AWS profile differs from the repo default:
+export AWS_PROFILE=test_AccountA/AdministratorAccess
 
-# 2. Authenticate with AWS
-assume test_AccountA/AdministratorAccess
-
-# 3. Start the stack (resolves credentials and passes them to Docker)
-./scripts/dc-up.sh --build -d
-
-# Or manually export credentials and run docker compose:
-export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_SESSION_TOKEN=...
-export APP_API_TOKEN="$(openssl rand -hex 32)"
-docker compose up --build -d
+# Start the stack. Prefer the one-command launcher:
+./scripts/local-up.sh
 ```
 
 Open [http://localhost:3001](http://localhost:3001), click **Join room**, grant microphone access, and start talking. The LiveKit SFU runs on port 7880, the app on port 3001.
 
-The Docker Compose stack is explicitly `APP_ENV=local`. `APP_API_TOKEN` is required and should come from your uncommitted `.env`; the app token is not baked into the image or served to the browser.
+The Docker Compose stack is explicitly `APP_ENV=local`. `APP_API_TOKEN` is required and should come from Keychain through `scripts/dc-up-keychain.sh`; the app token is not baked into the image or served to the browser. `scripts/local-up.sh` also provisions a separate local-only `APP_LOCAL_LOGIN_TOKEN` and opens `/auth/local-login` to set the HttpOnly session cookie without prompting. That endpoint only exists in local mode; production rejects `APP_LOCAL_LOGIN_TOKEN`.
 
-For a local end-to-end stack with Jira sync, copy [config/jira.example.json](config/jira.example.json), set `JIRA_CONFIG_PATH=/srv/config/<your-file>.json` or set `JIRA_CONFIG_JSON`, export `JIRA_API_TOKEN`, and run Docker Compose. The app container mounts `./config` read-only at `/srv/config`.
+For a local end-to-end stack with Jira sync, use [config/jira.local.json](config/jira.local.json) and store the Jira token in Keychain as `auto-bot/jira-api-token` for account `somoore2025@gmail.com`. The Keychain launcher sets `JIRA_CONFIG_PATH=/srv/config/jira.local.json` automatically when that token is present. The app container mounts `./config` read-only at `/srv/config`.
+
+To run the UI, board, and Jira control plane without AWS voice credentials:
+
+```bash
+AUTO_BOT_SKIP_AWS=1 ./scripts/dc-up-keychain.sh --build -d
+```
 
 ### Option C: Nova Sonic 2 (local, no Docker)
 
@@ -78,7 +119,9 @@ docker run --rm -p 7880:7880 -p 7881:7881 -p 7882-7892:7882-7892/udp \
 assume test_AccountA/AdministratorAccess
 VOICE_PROVIDER=nova-sonic \
 APP_ENV=local \
-APP_API_TOKEN="$(openssl rand -hex 32)" \
+APP_API_TOKEN="$(scripts/keychain-get-secret.sh auto-bot/app-api-token "$USER")" \
+JIRA_API_TOKEN="$(scripts/keychain-get-secret.sh auto-bot/jira-api-token somoore2025@gmail.com)" \
+JIRA_CONFIG_PATH="$PWD/config/jira.local.json" \
 AWS_REGION=us-east-1 \
 LIVEKIT_API_KEY=devkey \
 LIVEKIT_API_SECRET=secret \
@@ -87,13 +130,13 @@ go run ./cmd/server/
 
 ### Optional: Jira Sync
 
-Create a Jira Cloud API token, save it in a local file or expose it with `JIRA_API_TOKEN`, copy [config/jira.example.json](config/jira.example.json), and fill in your Jira base URL, email, project key, status mappings, and transition IDs. Scoped API tokens should use the Atlassian API gateway base URL: `https://api.atlassian.com/ex/jira/<cloud-id>`. Then start the app with:
+Create a Jira Cloud API token and store it in macOS Keychain. For this repo's local EMAL project config, the service/account pair is:
 
 ```bash
-JIRA_CONFIG_PATH=/absolute/path/to/jira.json \
-OPENAI_API_KEY=sk-... \
-go run ./cmd/server/
+scripts/keychain-store-secret.sh auto-bot/jira-api-token somoore2025@gmail.com
 ```
+
+The checked-in local Jira config [config/jira.local.json](config/jira.local.json) already contains the non-secret EMAL site/project mapping and reads the token from `JIRA_API_TOKEN`. Local launchers load that token from Keychain and set `JIRA_API_TOKEN` only for the child process/container.
 
 When `JIRA_CONFIG_PATH` or `JIRA_CONFIG_JSON` is set, the server loads the initial board from Jira using the configured JQL and writes board mutations back to Jira: create issues/sub-tasks, transition issues, update summary/description, append notes, add comments, add/remove labels, assign/unassign issues, set reporter/watchers, set due dates/ETAs, set priority, set story points and time estimates, add worklogs, link issues, assign sprint, rank backlog/sprint issues, set components/fix versions/custom fields, attach remote links, mark blocked, and close/cancel for deletes. Keep the API token outside the repo; prefer `api_token_file`, `api_token_command`, or `api_token_env` in the config.
 
@@ -108,14 +151,14 @@ Optional advanced fields in [config/jira.example.json](config/jira.example.json)
 The Jira Software Agile board APIs use a separate scope family from the platform issue APIs. If you want to read board column metadata through `/rest/agile/1.0/board/{boardId}/configuration`, create a scoped token that also includes `read:board-scope:jira-software` and `read:issue-details:jira`. Add `read:project:jira` if you need to discover/list boards instead of checking a known board ID. You can verify a token with:
 
 ```bash
-JIRA_API_TOKEN=... \
+JIRA_API_TOKEN="$(scripts/keychain-get-secret.sh auto-bot/jira-api-token somoore2025@gmail.com)" \
 scripts/jira-check-board-config.sh config/jira.local.json 1
 ```
 
 Current sync does not depend on that Agile endpoint. For scoped API tokens, validate the working issue/status/transition path with Jira Platform APIs instead:
 
 ```bash
-JIRA_API_TOKEN=... \
+JIRA_API_TOKEN="$(scripts/keychain-get-secret.sh auto-bot/jira-api-token somoore2025@gmail.com)" \
 scripts/jira-validate-workflow-config.sh config/jira.local.json EMAL-11
 ```
 
@@ -186,6 +229,7 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `APP_ENV` | `production` | Both | Runtime safety mode. `production` rejects disabled auth and LiveKit dev credentials; Compose sets `local`. |
 | `APP_AUTH_MODE` | `token` | Both | `token` for HttpOnly browser sessions/Bearer auth; `disabled` is only allowed with `APP_ENV=local`. |
 | `APP_API_TOKEN` | _(required unless auth disabled)_ | Both | Shared bootstrap token for creating browser sessions and for non-browser Bearer auth. Never injected into served HTML. |
+| `APP_LOCAL_LOGIN_TOKEN` | _unset_ | Both/local only | Local-only one-click browser login token used by `scripts/local-up.sh`; rejected unless `APP_ENV=local`. Do not set in AWS. |
 | `APP_ROOM_ID` | `kanban-meeting` | Both | Authorized room ID for this deployment. |
 | `APP_BOARD_ID` | `default` | Both | Authorized board ID for this deployment. |
 | `APP_BASE_URL` | _(auto-detect)_ | Both | Override WebSocket base URL (e.g., `wss://example.com/websocket`) |
@@ -209,12 +253,12 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `LIVEKIT_API_SECRET` | _(required)_ | Nova Sonic | LiveKit API secret (no default — must be set) |
 | `JIRA_CONFIG_PATH` | _unset_ | Both | Optional Jira Cloud sync configuration JSON |
 | `JIRA_CONFIG_JSON` | _unset_ | Both | Optional inline Jira Cloud sync configuration JSON; useful for AWS Secrets Manager injection |
-| `JIRA_API_TOKEN` | _unset_ | Both | Optional Jira API token when the config uses `"api_token_env": "JIRA_API_TOKEN"` |
+| `JIRA_API_TOKEN` | _unset_ | Both | Optional Jira API token when the config uses `"api_token_env": "JIRA_API_TOKEN"`. Local launchers load it from macOS Keychain. |
 | `JIRA_WEBHOOK_SECRET` | _unset_ | Both | Optional shared secret for `POST /jira/webhook`; also supported as `webhook_secret` in the Jira config |
 | `AUDIT_LOG_PATH` | _unset_ | Both | Optional JSONL file for board mutation and Jira refresh audit events |
 | `TRUST_PROXY_HEADERS` | _unset_ | Both | Set to `1` behind a trusted reverse proxy so rate limiting uses forwarded client IP headers |
 
-See [.env.example](.env.example) for a copyable template.
+Local development should use macOS Keychain via the scripts above. `.env.example` is retained only as an environment variable reference; do not copy it into a local `.env`.
 
 ## Speech-to-Speech Providers
 
@@ -224,6 +268,8 @@ The backend is already provider-switched with `VOICE_PROVIDER`:
 - `VOICE_PROVIDER=nova-sonic` uses LiveKit for the meeting room and Amazon Bedrock Nova Sonic for full-duplex speech-to-speech via `NOVA_SONIC_MODEL`.
 
 To add another full-duplex speech model, keep the browser/session/Jira/tool surface unchanged and add a provider implementation beside `kanban.go` and `nova_sonic.go` that consumes the shared `KanbanToolDefs()` and `SessionInstructions()` contracts. The app should only need a new `VOICE_PROVIDER` value, model env vars, and any provider-specific secret ARN wiring in Terraform.
+
+The Nova Sonic path sends exactly one Bedrock `SYSTEM` content block when a stream starts. Later board refreshes are sent as non-interactive application data, not new system prompts, because Bedrock rejects duplicate system content. The audio input stream also sends periodic silent frames while participants are paused so Bedrock does not close the meeting stream for lack of input events.
 
 ## Architecture
 
@@ -238,7 +284,7 @@ VOICE_PROVIDER=openai                    VOICE_PROVIDER=nova-sonic
 
 Both paths share the Kanban board state, tool definitions, and session instructions from `board.go`. The OpenAI path uses Pion WebRTC with data channels; the Nova Sonic path uses LiveKit as the SFU and sends audio to Bedrock via bidirectional HTTP/2 streaming.
 
-The Nova Sonic Bedrock stream is **lazy** — it only starts when the first participant joins the room and auto-restarts if the stream ends or errors.
+The Nova Sonic Bedrock stream is **lazy** — it only starts when the first participant joins the room and auto-restarts if the stream ends or errors. After each board mutation, Nova Sonic receives a sanitized board-context refresh with the latest sequence number, and that refresh is explicitly framed as untrusted application data so Jira/task text cannot become instructions.
 
 ## Project Layout
 
@@ -265,7 +311,15 @@ web/
   index.html            OpenAI frontend (Pion WebRTC)
   index_livekit.html    Nova Sonic frontend (LiveKit SDK, multi-party video, layout modes, transcription)
 scripts/
-  dc-up.sh              Resolve AWS credentials and start Docker Compose
+  local-up.sh           One-command local startup: Keychain, assume, Docker Compose, browser
+  local-compose.sh      Docker Compose wrapper that injects Keychain-backed local env
+  local-down.sh         Stop the local stack through local-compose.sh
+  dc-up-keychain.sh     Resolve macOS Keychain secrets, AWS credentials, and start Docker Compose
+  run-openai-keychain.sh
+                         Run the OpenAI provider with local secrets from macOS Keychain
+  keychain-store-secret.sh / keychain-get-secret.sh
+                         Store/read local development secrets in macOS Keychain
+  dc-up.sh              Legacy AWS credential launcher; prefer dc-up-keychain.sh locally
   aws-upsert-secrets.sh Create/update AWS Secrets Manager values for ECS
   aws-build-push.sh     Build and push the app image to ECR
   aws-deploy-dev.sh     Source local AWS env exports and run Terragrunt apply
@@ -283,7 +337,7 @@ public/
   screenshot.png        README screenshot
 Dockerfile              Multi-stage build (Go 1.26 + libopus)
 docker-compose.yml      LiveKit + app for local Nova Sonic dev
-.env.example            All env vars documented
+.env.example            Environment variable reference only; do not copy to local .env
 plan.md                 Project roadmap
 ```
 
@@ -338,6 +392,7 @@ The dev stack deploys:
 - Secrets Manager injection for app, Jira, OpenAI, and LiveKit secrets
 - EFS-backed `/srv/data` volume for the app's SQLite board snapshot/event store
 - Least-privilege ECS execution/task policies, including narrowed Bedrock model ARNs and EFS access point authorization
+- No `APP_LOCAL_LOGIN_TOKEN` in AWS; the local one-click login endpoint is rejected when `APP_ENV` is not `local`
 
 Bootstrap flow:
 

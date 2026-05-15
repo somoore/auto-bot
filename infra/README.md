@@ -124,6 +124,7 @@ The version was verified against the HashiCorp releases index on 2026-05-15.
 - ECS tasks and EFS mount targets run in private subnets with `assign_public_ip = false`.
 - The fck-nat module version is pinned to `1.4.0`, and full deploys require an explicit `FCK_NAT_AMI_ID`.
 - The app runs with `APP_ENV=production`, token-backed HttpOnly browser sessions, and `APP_ROOM_ID` / `APP_BOARD_ID` authorization for this deployment.
+- Do not set `APP_LOCAL_LOGIN_TOKEN` in AWS. The Keychain-backed `/auth/local-login` path is local-only and production startup rejects that variable.
 - The app mounts EFS at `/srv/data` and uses `BOARD_SQLITE_PATH=/srv/data/board.sqlite` for board snapshots and event history.
 - Jira sync is injected through Secrets Manager. The app supports the same advanced Jira config used locally: project-key safety, status mappings, transition IDs, blocked flag fallback, story points field, sprint field, epic link field, rank custom field ID, named custom field mappings, authenticated Jira webhooks, and visible conflict resolution.
 - Fargate can run UDP services through NLB target groups, but LiveKit self-hosting is more sensitive than the Go app because WebRTC needs publicly reachable UDP media. LiveKit Cloud remains the lower-ops production path until self-hosting is proven.

@@ -4,7 +4,7 @@ Last updated: 2026-05-15
 
 ## Current Rule
 
-Do not commit new work until local validation for this security/infra pass is complete and Scott asks to commit.
+Scott has now asked to update docs, commit to `jira-scrum`, and push after local validation. Do not commit secrets, generated local state, or unrelated work.
 
 ## Implemented In This Pass
 
@@ -82,6 +82,12 @@ Do not commit new work until local validation for this security/infra pass is co
   - Per-stream audio forwarding goroutine stops when that stream ends.
   - Bedrock stream renews before the expected session limit.
   - Nova Sonic receives a sanitized full-board context refresh after successful board mutations.
+  - Board-context refreshes are sent as non-interactive user/application data instead of a second `SYSTEM` block, avoiding Bedrock's duplicate-system validation failure.
+  - The Bedrock audio input stream sends periodic silent frames during meeting pauses to avoid idle input timeouts while the agent is still present.
+- Added macOS Keychain-backed local automation:
+  - `scripts/local-up.sh` provisions missing local app/login/webhook secrets in Keychain, prompts once for the Jira token when missing, runs `assume test_AccountA/AdministratorAccess` in `us-east-1`, starts Docker Compose, and opens a local-only login URL.
+  - `scripts/local-compose.sh`, `scripts/local-down.sh`, and `scripts/dc-up-keychain.sh` keep Docker commands Keychain-backed without a local `.env`.
+  - `/auth/local-login` creates the browser session only when `APP_ENV=local`; production rejects `APP_LOCAL_LOGIN_TOKEN`.
 - Updated README and `.env.example` for Jira, audit, and rate-limit proxy behavior.
 - Added Terragrunt/Terraform AWS deployment shape:
   - Root Terragrunt config generates S3 state, DynamoDB locking, and AWS provider config in `us-east-1`.
@@ -106,9 +112,9 @@ Do not commit new work until local validation for this security/infra pass is co
 | Phase 1 - OpenAI Realtime Baseline | Partial | OpenAI provider path, shared board tools, audio mixer, local quickstart, board regression tests, and seed failure inventory exist. | Manual voice validation, two-tab audio validation evidence, fork confirmation, and live replay results are not complete. |
 | Phase 2 - Jira Sync | Partial | Jira config/client/startup hydration/write-through/polling/webhook foundation is implemented. `get_board` freshness contract is implemented. Voice tools now cover assignment, reporter/watchers, notes, comments, ETA/due date, priority, tag removal, subtasks, story points, estimates, worklogs, issue links, sprint assignment, ranking, components, fix versions, custom fields, remote links, real Blocked workflow transitions, blocked flag fallback, metadata/transition discovery, project-key write safety, confirmation gates, undo, audit replay, and conflict resolution. Live read hydration and basic write-through passed against `EMAL`. | Live webhook delivery from Atlassian and live conflict drills are not complete. |
 | Phase 2.5 - Workflow Config | Partial | JSON config supports status mappings, transition IDs, required fields, delete transition, polling, advanced field IDs, custom field mappings, metadata discovery, and transition option discovery. | Needs validation against three real workflows and a published known-limitations matrix. |
-| Phase 3 - Nova Sonic 2 via LiveKit | Partial | Provider selection, LiveKit media path, Nova Sonic Bedrock path, tool handling, transcription broadcast, transcript evidence capture, stream lifecycle renewal foundation, and post-mutation sanitized board-context refresh exist. | LiveKit data-channel board events, full 8-minute renewal proof, VAD calibration, A/B provider comparison, and real end-to-end tests are not complete. |
+| Phase 3 - Nova Sonic 2 via LiveKit | Partial | Provider selection, LiveKit media path, Nova Sonic Bedrock path, tool handling, transcription broadcast, transcript evidence capture, stream lifecycle renewal foundation, duplicate-system-safe post-mutation board-context refresh, and silence keepalive exist. | LiveKit data-channel board events, full 8-minute renewal proof, VAD calibration, A/B provider comparison, and real end-to-end voice tests are not complete. |
 | Phase 4 - Agent-First Task Execution | Missing / blocked | None beyond board tags and Jira foundation. | Requires persistent task/agent state, classifier, cold-start labels, cost caps, sandboxed runners, checkpoints, take_over, retry_with, typed escalations, standup summary, and metrics. |
-| Phase 5 - Auth, Hardening, AWS Deployment | Partial | Docker, non-root runtime, origin checks, headers, timeouts, read limits, max clients, HttpOnly session auth, board/room request authorization, rate limits, audit JSONL, SQLite board event history, Jira webhook secret injection, Terragrunt remote state, private-subnet ECS/Fargate app and optional self-hosted LiveKit services, ALB with WAF, LiveKit NLB, ECR immutable tags, CloudWatch logs/dashboard, Secrets Manager wiring, private VPC endpoints, fck-nat private egress, ElastiCache Redis for LiveKit routing, embedded TURN/UDP, optional TURN/TLS, EFS board persistence with IAM access-point auth, LiveKit Cloud mode switch, and narrowed Bedrock task-role permissions exist. | OIDC/Cognito auth, true multi-room agent orchestration, CloudWatch alarms, AWS-applied DNS/certificate validation, pinned fck-nat AMI selection for the target account, and validated LiveKit self-hosting are not complete. |
+| Phase 5 - Auth, Hardening, AWS Deployment | Partial | Docker, non-root runtime, origin checks, headers, timeouts, read limits, max clients, HttpOnly session auth, local-only Keychain login bootstrap, board/room request authorization, rate limits, audit JSONL, SQLite board event history, Jira webhook secret injection, Terragrunt remote state, private-subnet ECS/Fargate app and optional self-hosted LiveKit services, ALB with WAF, LiveKit NLB, ECR immutable tags, CloudWatch logs/dashboard, Secrets Manager wiring, private VPC endpoints, fck-nat private egress, ElastiCache Redis for LiveKit routing, embedded TURN/UDP, optional TURN/TLS, EFS board persistence with IAM access-point auth, LiveKit Cloud mode switch, and narrowed Bedrock task-role permissions exist. | OIDC/Cognito auth, true multi-room agent orchestration, CloudWatch alarms, AWS-applied DNS/certificate validation, pinned fck-nat AMI selection for the target account, and validated LiveKit self-hosting are not complete. |
 
 ## Jira Setup Needed From The New Account
 
@@ -140,12 +146,10 @@ curl -u "you@example.com:$(cat /absolute/path/to/jira-api-token)" \
   "https://your-site.atlassian.net/rest/api/3/issue/KAN-1/transitions"
 ```
 
-Then run locally with:
+Then run locally with macOS Keychain-backed secrets:
 
 ```bash
-JIRA_CONFIG_PATH=/absolute/path/to/jira.json \
-OPENAI_API_KEY=sk-... \
-go run ./cmd/server/
+scripts/local-up.sh
 ```
 
 ## Test Checklist Before Git Actions
@@ -162,6 +166,7 @@ go run ./cmd/server/
 - Verify `/websocket` rejects missing token and reaches the WebSocket upgrader when token is present. Last local result: pass.
 - Verify served HTML does not contain `APP_API_TOKEN`, `window.__APP_TOKEN__`, or query-string token wiring. Last local unit-test result: pass.
 - Verify session cookies authenticate only the configured room/board and reject cross-board requests. Last local unit-test result: pass.
+- Verify local-only `/auth/local-login` sets a browser session from the Keychain login token and is rejected outside `APP_ENV=local`. Last local unit-test/curl result: pass.
 - Verify production mode rejects disabled auth and LiveKit `devkey`/`secret`. Last local unit-test result: pass.
 - Verify SQLite board snapshots and event history survive board reload. Last local unit-test result: pass.
 - Run `docker compose config`. Last local result: pass; Compose warns if AWS credential env vars are unset.
@@ -178,6 +183,8 @@ go run ./cmd/server/
 - Advanced Jira write-through unit coverage for subtasks, story points, estimates, worklogs, issue links, sprint/rank metadata, components, fix versions, custom fields, remote links, reporter/watchers, and transition metadata. Last local result: pass in `go test ./cmd/server`; live Jira validation still needed for sprint/rank because those use Jira Software Agile endpoints and scopes.
 - Jira project-key safety guard. Last unit-test result: pass; cross-project write attempts are rejected before any HTTP request is sent, and mixed-project search results fail hydration.
 - Let Nova Sonic run past the renewal window or force-close the stream and verify audio restarts it.
+- Trigger a Nova Sonic board mutation while the agent is speaking and verify the stream does not abort with duplicate `SYSTEM` content.
+- Leave a Nova Sonic room quiet long enough to verify Bedrock does not abort with `Timed out waiting for input events`.
 
 ## Remaining High-Risk Gaps
 
@@ -187,6 +194,7 @@ go run ./cmd/server/
 - Jira webhooks are implemented with a shared secret and project-key safety, but have not been exercised against live Atlassian webhook delivery yet.
 - Jira assignable-user search is implemented and passed live with the replacement scoped token; the current `EMAL` project returns Scott Moore as the only assignable user.
 - The current `EMAL` Jira workflow now has `To Do`, `In Progress`, `Blocked`, and `Done`; Blocked uses project-scoped status ID `10039` and transition ID `41`.
+- The Nova Sonic duplicate-`SYSTEM` stream abort and idle-input timeout paths have code fixes, but still need long live-room replay with real speech before calling the provider flawless.
 - Broader Jira issue actions still not exposed as voice tools: attachments, votes, issue security levels, bulk edits, release/version creation, sprint creation/closure, workflow administration, and full validator-aware conflict resolution. Issue links, watchers, ranking, worklogs, reporter changes, parent/subtask links, and custom fields now have voice tools and Jira write-through paths.
 - Secrets Manager wiring exists for all AWS ECS runtime secrets. 1Password lookup is not wired; local OpenAI and LiveKit paths still support env-based secrets for local-only development.
 - Agent execution is not implemented. Phase 4 needs a separate state model and sandbox runner before any real dispatch should be trusted.

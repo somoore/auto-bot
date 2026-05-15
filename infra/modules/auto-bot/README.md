@@ -13,4 +13,6 @@ This module deploys the production-shaped runtime:
 - Secrets Manager wiring for OpenAI, LiveKit, Jira API token, Jira webhook secret, and inline Jira sync config.
 - Production runtime variables for room/board authorization and durable board state.
 
+The module is production-shaped and should not set `APP_LOCAL_LOGIN_TOKEN`; the local Keychain one-click login path is intentionally excluded from AWS.
+
 The module is consumed through Terragrunt from `infra/live/dev`. Do not add backend or provider blocks here; the root `infra/terragrunt.hcl` generates them.
