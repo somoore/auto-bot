@@ -43,6 +43,59 @@ func TestLoadJiraConfigFromTokenFile(t *testing.T) {
 	}
 }
 
+func TestJiraToolRequiresSync(t *testing.T) {
+	if !jiraToolRequiresSync("move_ticket", `{"card_id":"KAN-7","status":"In Progress"}`, nil) {
+		t.Fatal("move_ticket should require Jira sync")
+	}
+	if !jiraToolRequiresSync("confirm_action", `{}`, map[string]any{"original_tool_name": "assign_ticket"}) {
+		t.Fatal("confirmed assign_ticket should require Jira sync")
+	}
+	if !jiraToolRequiresSync("record_participant_update", `{}`, map[string]any{"update": scrumParticipantUpdate{CardID: "KAN-7"}}) {
+		t.Fatal("participant update tied to a card should require Jira sync")
+	}
+	if jiraToolRequiresSync("record_participant_update", `{"participant":"Scott","summary":"No ticket"}`, map[string]any{}) {
+		t.Fatal("participant update without a card should not require Jira sync")
+	}
+	if jiraToolRequiresSync("record_meeting_memory", `{"kind":"decision"}`, nil) {
+		t.Fatal("meeting memory should not require Jira sync")
+	}
+}
+
+func TestAnnotateJiraSyncResult(t *testing.T) {
+	previous := jiraSync
+	t.Cleanup(func() { jiraSync = previous })
+
+	jiraSync = nil
+	result := map[string]any{}
+	annotateJiraSyncResult(result, true, nil)
+	status, ok := result["jira_sync"].(map[string]any)
+	if !ok || status["ok"] != false || status["configured"] != false {
+		t.Fatalf("jira_sync without configured syncer = %#v, want ok=false configured=false", result["jira_sync"])
+	}
+
+	jiraSync = &jiraSyncer{}
+	result = map[string]any{}
+	annotateJiraSyncResult(result, true, context.Canceled)
+	status, ok = result["jira_sync"].(map[string]any)
+	errorMessage, _ := status["error"].(string)
+	if !ok || status["ok"] != false || status["configured"] != true || errorMessage == "" {
+		t.Fatalf("jira_sync with error = %#v, want ok=false configured=true with error", result["jira_sync"])
+	}
+
+	result = map[string]any{}
+	annotateJiraSyncResult(result, true, nil)
+	status, ok = result["jira_sync"].(map[string]any)
+	if !ok || status["ok"] != true || status["configured"] != true {
+		t.Fatalf("jira_sync success = %#v, want ok=true configured=true", result["jira_sync"])
+	}
+
+	result = map[string]any{}
+	annotateJiraSyncResult(result, false, nil)
+	if _, ok := result["jira_sync"]; ok {
+		t.Fatalf("jira_sync was annotated for non-Jira action: %#v", result["jira_sync"])
+	}
+}
+
 func TestJiraClientSearchKanbanCards(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/rest/api/3/search/jql" {

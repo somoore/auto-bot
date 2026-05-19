@@ -980,9 +980,10 @@ func (syncer *jiraSyncer) RefreshFromJira(ctx context.Context, source string) er
 	return nil
 }
 
-func syncJiraToolCall(toolName string, rawArgs string, result map[string]any) {
+func syncJiraToolCall(toolName string, rawArgs string, result map[string]any) (bool, error) {
+	jiraRequired := jiraToolRequiresSync(toolName, rawArgs, result)
 	if jiraSync == nil {
-		return
+		return jiraRequired, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -997,9 +998,11 @@ func syncJiraToolCall(toolName string, rawArgs string, result map[string]any) {
 		if record, ok := result["undo_record"].(boardMutationRecord); ok {
 			if err := jiraSync.ApplyUndo(ctx, record); err != nil {
 				log.Errorf("Jira undo sync failed: %v", err)
+				return true, err
 			}
+			return true, nil
 		}
-		return
+		return jiraRequired, nil
 	}
 	if err := jiraSync.ApplyToolCall(ctx, toolName, rawArgs, result); err != nil {
 		log.Errorf("Jira sync failed for %s: %v", toolName, err)
@@ -1007,6 +1010,82 @@ func syncJiraToolCall(toolName string, rawArgs string, result map[string]any) {
 			broadcastKanbanEvent("conflict", conflict)
 			broadcastKanbanEvent("board", jiraSync.board.SnapshotState())
 		}
+		return jiraRequired, err
+	}
+	return jiraRequired, nil
+}
+
+func annotateJiraSyncResult(result map[string]any, jiraRequired bool, syncErr error) {
+	if !jiraRequired || result == nil {
+		return
+	}
+
+	syncStatus := map[string]any{
+		"required":   true,
+		"configured": jiraSync != nil,
+		"ok":         jiraSync != nil && syncErr == nil,
+	}
+	switch {
+	case jiraSync == nil:
+		syncStatus["message"] = "Jira sync is not configured; only the local board changed."
+	case syncErr != nil:
+		syncStatus["error"] = syncErr.Error()
+		syncStatus["message"] = "The local board changed, but Jira write-through failed."
+	default:
+		syncStatus["message"] = "Jira write-through confirmed."
+	}
+	result["jira_sync"] = syncStatus
+}
+
+func jiraToolRequiresSync(toolName string, rawArgs string, result map[string]any) bool {
+	if toolName == "confirm_action" {
+		if originalTool := asString(result["original_tool_name"]); originalTool != "" {
+			return jiraToolRequiresSync(originalTool, asString(result["original_arguments_json"]), result)
+		}
+	}
+	if toolName == "undo_last_mutation" {
+		_, ok := result["undo_record"].(boardMutationRecord)
+		return ok
+	}
+	switch toolName {
+	case "create_ticket",
+		"create_subtask",
+		"move_ticket",
+		"add_tags",
+		"remove_tags",
+		"update_ticket",
+		"append_notes",
+		"add_comment",
+		"assign_ticket",
+		"unassign_ticket",
+		"set_eta",
+		"set_priority",
+		"set_story_points",
+		"set_estimate",
+		"add_worklog",
+		"link_issues",
+		"set_sprint",
+		"rank_issue",
+		"set_components",
+		"set_fix_versions",
+		"set_custom_field",
+		"add_remote_link",
+		"set_reporter",
+		"add_watcher",
+		"set_blocked",
+		"delete_ticket":
+		return true
+	case "record_participant_update":
+		if update, ok := result["update"].(scrumParticipantUpdate); ok {
+			return strings.TrimSpace(update.CardID) != ""
+		}
+		args := map[string]any{}
+		if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+			return false
+		}
+		return strings.TrimSpace(firstNonEmptyString(args, "card_id", "cardId")) != ""
+	default:
+		return false
 	}
 }
 

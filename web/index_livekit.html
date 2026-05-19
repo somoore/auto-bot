@@ -41,6 +41,8 @@
 
       /* ── Top bar ── */
       .topbar {
+        position: relative;
+        z-index: 1301;
         display: flex; align-items: center; gap: 10px;
         border-radius: var(--radius); background: var(--surface-raised);
         padding: 6px 12px; min-height: 36px;
@@ -655,7 +657,7 @@
 
       .meeting-access-scrim {
         position: fixed;
-        inset: 0;
+        inset: 64px 0 0 0;
         z-index: 1190;
         background: rgba(0,0,0,0.38);
         opacity: 0;
@@ -670,12 +672,15 @@
 
       .meeting-access-drawer {
         position: fixed;
-        top: 0;
+        top: 64px;
         right: 0;
         z-index: 1200;
-        width: min(390px, calc(100vw - 24px));
-        height: 100vh;
-        height: 100dvh;
+        display: grid;
+        align-content: start;
+        gap: 10px;
+        width: min(430px, calc(100vw - 24px));
+        height: calc(100vh - 64px);
+        height: calc(100dvh - 64px);
         overflow-y: auto;
         background: #0f1216;
         border-left: 1px solid var(--border-strong);
@@ -703,6 +708,10 @@
         background: #111418;
         padding: 12px;
         min-width: 0;
+      }
+
+      .operator-section[hidden] {
+        display: none;
       }
 
       .operator-heading {
@@ -1051,6 +1060,8 @@
         .log { text-align: center; font-size: 12px; }
 
         .topbar { padding: 4px 10px; min-height: 32px; }
+        .meeting-access-scrim { inset: 52px 0 0 0; }
+        .meeting-access-drawer { top: 52px; height: calc(100dvh - 52px); }
         h1 { font-size: 12px; }
 
         .media-btn { width: 40px; height: 40px; }
@@ -1076,6 +1087,8 @@
       @media (max-height: 600px) {
         main { padding: 4px; gap: 4px; }
         .topbar { min-height: 28px; padding: 3px 8px; }
+        .meeting-access-scrim { inset: 44px 0 0 0; }
+        .meeting-access-drawer { top: 44px; height: calc(100dvh - 44px); }
         .meeting-bar { min-height: 40px; }
       }
 
@@ -1094,9 +1107,9 @@
           <p class="status" id="status">Not connected</p>
         </div>
         <div class="topbar-right">
-          <button id="meetingConfigToggle" class="meeting-config-toggle warn" type="button" aria-expanded="false" aria-controls="meetingAccessDrawer" title="Meeting setup">
+          <button id="meetingConfigToggle" class="meeting-config-toggle warn" type="button" aria-expanded="false" aria-controls="meetingAccessDrawer" title="Meeting settings">
             <span class="meeting-config-dot" aria-hidden="true"></span>
-            <span id="meetingConfigLabel" class="meeting-config-label">Meeting setup</span>
+            <span id="meetingConfigLabel" class="meeting-config-label">Meeting Settings</span>
           </button>
           <div class="layout-group" id="layoutGroup" role="radiogroup" aria-label="Video layout">
             <button class="layout-btn active" data-layout="filmstrip" title="Filmstrip" aria-label="Filmstrip layout">
@@ -1137,12 +1150,12 @@
           </aside>
 
           <div id="meetingAccessScrim" class="meeting-access-scrim"></div>
-          <aside id="meetingAccessDrawer" class="meeting-access-drawer" aria-label="Meeting access settings" aria-hidden="true">
-            <section class="operator-section meeting-access-section" aria-label="Meeting access">
+          <aside id="meetingAccessDrawer" class="meeting-access-drawer" aria-label="Meeting settings" aria-hidden="true">
+            <section class="operator-section meeting-access-section" aria-label="Meeting setup and access">
               <div class="operator-heading">
                 <div>
-                  <div class="operator-eyebrow">Access</div>
-                  <h2>Meeting Path</h2>
+                  <div class="operator-eyebrow">Settings</div>
+                  <h2>Meeting Settings</h2>
                 </div>
                 <div class="operator-actions">
                   <span id="meetingAccessState" class="state-pill warn">Setup needed</span>
@@ -1192,27 +1205,6 @@
                 <p id="failureDetail">Resolve the issue, then try again.</p>
               </div>
             </section>
-          </aside>
-
-          <aside id="operatorPanel" class="operator-panel" aria-label="Meeting operator center">
-            <section class="operator-section" aria-label="Voice reliability dashboard">
-              <div class="operator-heading">
-                <div>
-                  <div class="operator-eyebrow">Reliability</div>
-                  <h2>Voice Dashboard</h2>
-                </div>
-                <span id="voiceOverallState" class="state-pill warn">Waiting</span>
-              </div>
-              <div class="health-grid" id="voiceHealthGrid">
-                <div class="health-row warn" data-health="mic"><span class="health-dot"></span><span class="health-label">Mic not checked</span></div>
-                <div class="health-row warn" data-health="livekit"><span class="health-dot"></span><span class="health-label">LiveKit waiting</span></div>
-                <div class="health-row warn" data-health="nova"><span class="health-dot"></span><span class="health-label">Nova Sonic waiting</span></div>
-                <div class="health-row warn" data-health="bedrock"><span class="health-dot"></span><span class="health-label">Bedrock stream waiting</span></div>
-                <div class="health-row warn" data-health="transcription"><span class="health-dot"></span><span class="health-label">Transcription waiting</span></div>
-                <div class="health-row warn" data-health="jira"><span class="health-dot"></span><span class="health-label">Jira not checked</span></div>
-                <div class="health-row warn" data-health="agent"><span class="health-dot"></span><span class="health-label">Agent not present</span></div>
-              </div>
-            </section>
 
             <section class="operator-section" aria-label="Meeting control center">
               <div class="operator-heading">
@@ -1251,6 +1243,25 @@
               <div class="operator-stack">
                 <span class="operator-eyebrow">Jira mutations</span>
                 <div id="jiraMutationsList" class="operator-list tall"></div>
+              </div>
+            </section>
+
+            <section id="voiceDashboardSection" class="operator-section" aria-label="Voice reliability dashboard">
+              <div class="operator-heading">
+                <div>
+                  <div class="operator-eyebrow">Reliability</div>
+                  <h2>Voice Dashboard</h2>
+                </div>
+                <span id="voiceOverallState" class="state-pill warn">Waiting</span>
+              </div>
+              <div class="health-grid" id="voiceHealthGrid">
+                <div class="health-row warn" data-health="mic"><span class="health-dot"></span><span class="health-label">Mic not checked</span></div>
+                <div class="health-row warn" data-health="livekit"><span class="health-dot"></span><span class="health-label">LiveKit waiting</span></div>
+                <div class="health-row warn" data-health="nova"><span class="health-dot"></span><span class="health-label">Nova Sonic waiting</span></div>
+                <div class="health-row warn" data-health="bedrock"><span class="health-dot"></span><span class="health-label">Bedrock stream waiting</span></div>
+                <div class="health-row warn" data-health="transcription"><span class="health-dot"></span><span class="health-label">Transcription waiting</span></div>
+                <div class="health-row warn" data-health="jira"><span class="health-dot"></span><span class="health-label">Jira not checked</span></div>
+                <div class="health-row warn" data-health="agent"><span class="health-dot"></span><span class="health-label">Agent not present</span></div>
               </div>
             </section>
 
@@ -1634,6 +1645,7 @@
           const focusTarget = meetingRole === 'participant' ? joinCodeInput : identityInput
           setTimeout(() => focusTarget?.focus(), 0)
         }
+        renderOperatorPanels()
       }
 
       function setMeetingRole(role, opts = {}) {
@@ -1888,9 +1900,11 @@
         meetingAccessState.textContent = hasCode ? `${meetingRole === 'host' ? 'Hosting' : 'Joining'} ${active.code}` : 'Setup needed'
         meetingAccessState.className = `state-pill ${hasCode ? 'ok' : 'warn'}`
         const hasVisibleFailure = failurePanel.classList.contains('visible')
-        meetingConfigLabel.textContent = hasVisibleFailure ? 'Setup issue' : hasCode ? 'Meeting ready' : 'Meeting setup'
+        meetingConfigLabel.textContent = hasVisibleFailure ? 'Settings issue' : 'Meeting Settings'
         meetingConfigToggle.className = `meeting-config-toggle ${hasVisibleFailure ? 'bad' : hasCode ? 'ok' : 'warn'}`
-        meetingConfigToggle.title = hasVisibleFailure ? 'Meeting setup needs attention' : hasCode ? 'Meeting is configured' : 'Configure meeting access'
+        meetingConfigToggle.title = meetingAccessDrawerOpen
+          ? 'Close meeting settings'
+          : hasVisibleFailure ? 'Meeting settings need attention' : 'Open meeting settings'
         meetingConfigToggle.setAttribute('aria-label', meetingConfigToggle.title)
         meetingTypeState.textContent = MEETING_TYPES[currentMeetingType] || 'Standup'
         riskState.textContent = meetingIntel.confidence.label
@@ -2013,8 +2027,9 @@
         const values = Object.values(voiceHealth)
         const bad = values.some(v => v.state === 'bad')
         const ok = values.every(v => v.state === 'ok')
+        const healthClass = ok ? 'ok' : bad ? 'bad' : 'warn'
         voiceOverallState.textContent = ok ? 'Healthy' : bad ? 'Attention' : 'Warming up'
-        voiceOverallState.className = `state-pill ${ok ? 'ok' : bad ? 'bad' : 'warn'}`
+        voiceOverallState.className = `state-pill ${healthClass}`
       }
 
       function setVoiceHealth(key, state, label) {

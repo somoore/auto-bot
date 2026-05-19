@@ -721,10 +721,14 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 		}
 	}
 
+	if changed {
+		jiraRequired, syncErr := syncJiraToolCall(tu.ToolName, tu.Content, result)
+		annotateJiraSyncResult(result, jiraRequired, syncErr)
+	}
+
 	app.sendToolResult(tu.ToolUseID, firstNonEmpty(tu.ContentID, tu.ContentName), result)
 
 	if changed {
-		syncJiraToolCall(tu.ToolName, tu.Content, result)
 		state := app.board.SnapshotState()
 		auditBoardMutation("nova-sonic", tu.ToolName, result, state)
 		broadcastKanbanEvent("board", state)

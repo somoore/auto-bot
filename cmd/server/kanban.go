@@ -485,6 +485,11 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 		}
 	}
 
+	if changed {
+		jiraRequired, syncErr := syncJiraToolCall(outputItem.Name, outputItem.Arguments, result)
+		annotateJiraSyncResult(result, jiraRequired, syncErr)
+	}
+
 	if err := app.SendEvent(map[string]any{
 		"type": "conversation.item.create",
 		"item": map[string]any{
@@ -500,7 +505,6 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 		return
 	}
 
-	syncJiraToolCall(outputItem.Name, outputItem.Arguments, result)
 	state := app.board.SnapshotState()
 	auditBoardMutation("openai-realtime", outputItem.Name, result, state)
 	broadcastKanbanEvent("board", state)

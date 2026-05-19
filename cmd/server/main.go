@@ -755,6 +755,11 @@ func handleClientKanbanCommand(c *threadSafeWriter, rawData string, authCtx requ
 		result = map[string]any{"ok": false, "error": err.Error()}
 	}
 
+	if changed {
+		jiraRequired, syncErr := syncJiraToolCall(request.Tool, rawArgs, result)
+		annotateJiraSyncResult(result, jiraRequired, syncErr)
+	}
+
 	switch request.Tool {
 	case "get_audit_events":
 		_ = sendKanbanEvent(c, "audit_events", result)
@@ -767,7 +772,6 @@ func handleClientKanbanCommand(c *threadSafeWriter, rawData string, authCtx requ
 	if !changed {
 		return
 	}
-	syncJiraToolCall(request.Tool, rawArgs, result)
 	state := sharedBoard.SnapshotState()
 	auditBoardMutation("ui", request.Tool, result, state)
 	broadcastKanbanEvent("board", state)
