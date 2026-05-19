@@ -195,6 +195,7 @@ type kanbanBoard struct {
 	updatedAt            time.Time
 	sequenceNumber       int64
 	handledCalls         map[string]struct{}
+	cardAliases          map[string]string
 	store                boardStore
 	meeting              scrumMeetingState
 	pendingConfirmations map[string]pendingConfirmation
@@ -251,6 +252,7 @@ func newKanbanBoard() *kanbanBoard {
 		updatedAt:            time.Now().UTC(),
 		sequenceNumber:       1,
 		handledCalls:         map[string]struct{}{},
+		cardAliases:          map[string]string{},
 		pendingConfirmations: map[string]pendingConfirmation{},
 	}
 }
@@ -325,6 +327,7 @@ func (board *kanbanBoard) ApplyToolCallWithMeta(toolName string, rawArgs string,
 	if err := guardKanbanToolArguments(toolName, args); err != nil {
 		return nil, false, err
 	}
+	args = board.canonicalizeToolArgs(args)
 
 	switch toolName {
 	case "confirm_action":
@@ -1724,7 +1727,7 @@ func (board *kanbanBoard) assignTicket(args map[string]any) (map[string]any, boo
 		Active:       true,
 	}
 	if assignee.AccountID == "" {
-		query := asString(args["query"])
+		query := firstNonEmptyString(args, "query", "display_name", "email_address")
 		if query == "" {
 			return map[string]any{
 				"ok":    false,
@@ -1967,6 +1970,7 @@ func nextCreatedIndexForCards(cards []kanbanCard) int {
 }
 
 func (board *kanbanBoard) findCardLocked(cardID string) (*kanbanCard, bool) {
+	cardID = board.resolveCardAliasLocked(cardID)
 	for index := range board.cards {
 		if board.cards[index].ID == cardID {
 			return &board.cards[index], true
@@ -1974,6 +1978,62 @@ func (board *kanbanBoard) findCardLocked(cardID string) (*kanbanCard, bool) {
 	}
 
 	return nil, false
+}
+
+func (board *kanbanBoard) canonicalizeToolArgs(args map[string]any) map[string]any {
+	board.mu.Lock()
+	defer board.mu.Unlock()
+
+	if len(board.cardAliases) == 0 {
+		return args
+	}
+
+	updated := false
+	canonical := cloneToolArgs(args)
+	for _, key := range []string{
+		"card_id",
+		"source_card_id",
+		"target_card_id",
+		"parent_id",
+		"parent_card_id",
+		"before_card_id",
+		"after_card_id",
+	} {
+		current := asString(canonical[key])
+		if current == "" {
+			continue
+		}
+		resolved := board.resolveCardAliasLocked(current)
+		if resolved != current {
+			canonical[key] = resolved
+			updated = true
+		}
+	}
+	if !updated {
+		return args
+	}
+	return canonical
+}
+
+func (board *kanbanBoard) resolveCardAliasLocked(cardID string) string {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" || len(board.cardAliases) == 0 {
+		return cardID
+	}
+
+	seen := map[string]struct{}{}
+	current := cardID
+	for {
+		next := strings.TrimSpace(board.cardAliases[current])
+		if next == "" || next == current {
+			return current
+		}
+		if _, ok := seen[next]; ok {
+			return current
+		}
+		seen[current] = struct{}{}
+		current = next
+	}
 }
 
 func (board *kanbanBoard) renameCardID(oldID string, newID string) bool {
@@ -1994,8 +2054,40 @@ func (board *kanbanBoard) renameCardID(oldID string, newID string) bool {
 		return false
 	}
 	card.ID = newID
+	if board.cardAliases == nil {
+		board.cardAliases = map[string]string{}
+	}
+	board.cardAliases[oldID] = newID
+	board.rewritePendingConfirmationCardIDsLocked(oldID, newID)
 	board.touchLocked()
 	return true
+}
+
+func (board *kanbanBoard) rewritePendingConfirmationCardIDsLocked(oldID string, newID string) {
+	for id, confirmation := range board.pendingConfirmations {
+		updated := false
+		args := cloneToolArgs(confirmation.Arguments)
+		for _, key := range []string{
+			"card_id",
+			"source_card_id",
+			"target_card_id",
+			"parent_id",
+			"parent_card_id",
+			"before_card_id",
+			"after_card_id",
+		} {
+			if asString(args[key]) == oldID {
+				args[key] = newID
+				updated = true
+			}
+		}
+		if !updated {
+			continue
+		}
+		confirmation.Arguments = args
+		confirmation.Prompt = confirmationPrompt(confirmation.ToolName, args)
+		board.pendingConfirmations[id] = confirmation
+	}
 }
 
 func (board *kanbanBoard) touchLocked() {

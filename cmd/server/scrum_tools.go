@@ -740,6 +740,7 @@ func (board *kanbanBoard) endMeeting(args map[string]any) (map[string]any, bool,
 }
 
 func (board *kanbanBoard) cardIndexLocked(cardID string) int {
+	cardID = board.resolveCardAliasLocked(cardID)
 	for index := range board.cards {
 		if board.cards[index].ID == cardID {
 			return index

@@ -805,6 +805,9 @@ func (syncer *jiraSyncer) ApplyToolCall(ctx context.Context, toolName string, ra
 			return fmt.Errorf("parse Jira sync args for %s: %w", toolName, err)
 		}
 	}
+	if syncer.board != nil {
+		args = syncer.board.canonicalizeToolArgs(args)
+	}
 
 	switch toolName {
 	case "create_ticket", "create_subtask":
@@ -819,6 +822,11 @@ func (syncer *jiraSyncer) ApplyToolCall(ctx context.Context, toolName string, ra
 		if syncer.board.renameCardID(card.ID, issueKey) {
 			log.Infof("Jira sync: renamed local card %s to issue %s", card.ID, issueKey)
 		}
+		result["previous_card_id"] = card.ID
+		result["card_id"] = issueKey
+		result["jira_issue_key"] = issueKey
+		card.ID = issueKey
+		result["card"] = cloneKanbanCard(card)
 		if card.Status != kanbanStatusBacklog {
 			return syncer.moveIssue(ctx, issueKey, card.Status, "")
 		}

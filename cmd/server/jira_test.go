@@ -259,6 +259,13 @@ func TestJiraSyncCreateTicketRenamesLocalCardToIssueKey(t *testing.T) {
 	if err := syncer.ApplyToolCall(context.Background(), "create_ticket", `{}`, result); err != nil {
 		t.Fatalf("ApplyToolCall returned error: %v", err)
 	}
+	renamedCard := result["card"].(kanbanCard)
+	if renamedCard.ID != "KAN-42" {
+		t.Fatalf("result card id = %q, want KAN-42", renamedCard.ID)
+	}
+	if result["card_id"] != "KAN-42" || result["previous_card_id"] != localID {
+		t.Fatalf("result ids = %#v, want card_id KAN-42 and previous_card_id %s", result, localID)
+	}
 
 	state := board.SnapshotState()
 	var foundJiraKey bool
@@ -272,6 +279,82 @@ func TestJiraSyncCreateTicketRenamesLocalCardToIssueKey(t *testing.T) {
 	}
 	if !foundJiraKey {
 		t.Fatal("renamed Jira issue KAN-42 not found on board")
+	}
+}
+
+func TestJiraRenamedCardAliasAllowsConfirmedAssignment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/rest/api/3/issue" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key":"KAN-42"}`))
+	}))
+	defer server.Close()
+
+	board := newKanbanBoard()
+	syncer := &jiraSyncer{
+		board: board,
+		client: newJiraClient(&jiraConfig{
+			BaseURL:        server.URL,
+			Email:          "bot@example.com",
+			APIToken:       "token",
+			ProjectKey:     "KAN",
+			IssueType:      "Task",
+			StatusMappings: map[string]string{},
+			Transitions:    map[string]string{},
+		}),
+	}
+
+	result, changed, err := board.ApplyToolCall("create_ticket", `{"title":"Assign after Jira rename","status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("create_ticket should mark board changed")
+	}
+	localID := result["card"].(kanbanCard).ID
+	if err := syncer.ApplyToolCall(context.Background(), "create_ticket", `{}`, result); err != nil {
+		t.Fatalf("create_ticket Jira sync returned error: %v", err)
+	}
+
+	assignArgs := `{"card_id":"` + localID + `","account_id":"account-123","display_name":"Scott Moore"}`
+	result, changed, err = board.ApplyToolCallWithMeta("assign_ticket", assignArgs, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("assign_ticket returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("assign_ticket should wait for confirmation")
+	}
+	if result["confirmation_id"] == "" {
+		t.Fatalf("assign_ticket result = %#v, want confirmation id", result)
+	}
+	pending := board.SnapshotState().PendingConfirmations
+	if len(pending) != 1 {
+		t.Fatalf("pending confirmations = %d, want 1", len(pending))
+	}
+	if pending[0].MatchedCardID != "KAN-42" {
+		t.Fatalf("pending matched card = %q, want KAN-42", pending[0].MatchedCardID)
+	}
+
+	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("confirm_action should apply assignment")
+	}
+	if result["card_id"] != "KAN-42" {
+		t.Fatalf("confirmed card_id = %v, want KAN-42", result["card_id"])
+	}
+	originalArgs, ok := result["original_arguments"].(map[string]any)
+	if !ok || originalArgs["card_id"] != "KAN-42" {
+		t.Fatalf("original arguments = %#v, want card_id KAN-42", result["original_arguments"])
+	}
+
+	card := findBoardTestCard(t, board.SnapshotState().Cards, "KAN-42")
+	if card.Assignee == nil || card.Assignee.DisplayName != "Scott Moore" {
+		t.Fatalf("Assignee = %+v, want Scott Moore", card.Assignee)
 	}
 }
 
