@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "meeting_evaluation",
+  "id": "executive_recap_sprint_review_v1",
+  "description": "Sprint review fixture focused on executive recap quality and change-since-start accounting.",
+  "meeting": {
+    "initial_type": "sprint_review",
+    "host": "Scott Moore",
+    "participants": [
+      {
+        "id": "host-scott",
+        "name": "Scott Moore",
+        "role": "host",
+        "expected_to_speak": true
+      },
+      {
+        "id": "eng-morgan",
+        "name": "Morgan Reed",
+        "role": "engineer",
+        "expected_to_speak": true
+      },
+      {
+        "id": "design-riley",
+        "name": "Riley Nguyen",
+        "role": "designer",
+        "expected_to_speak": true
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": "e01",
+      "type": "utterance",
+      "speaker": "Scott Moore",
+      "text": "Run this as a sprint review and track decisions, risks, blockers, and follow ups."
+    },
+    {
+      "id": "e02",
+      "type": "utterance",
+      "speaker": "Morgan Reed",
+      "text": "EMAL-21 shipped the webhook conflict UI. EMAL-22 moved to In Progress because the remaining risk is CloudWatch alarms."
+    },
+    {
+      "id": "e03",
+      "type": "utterance",
+      "speaker": "Riley Nguyen",
+      "text": "The decision is to keep the control center visible by default. I own the recap layout follow-up for Monday."
+    },
+    {
+      "id": "e04",
+      "type": "utterance",
+      "speaker": "Scott Moore",
+      "text": "End the meeting and give me the executive recap."
+    }
+  ],
+  "expected": {
+    "access_control": {
+      "requires_random_code": false,
+      "code_entropy_bits_min": 0,
+      "wrong_code_rejected": false,
+      "code_scoped_to_meeting": false,
+      "host_can_regenerate": false,
+      "participant_join_path": ""
+    },
+    "meeting_type_transitions": [],
+    "meeting_control_center": {
+      "spoken": [
+        "Scott Moore",
+        "Morgan Reed",
+        "Riley Nguyen"
+      ],
+      "not_spoken": [],
+      "blockers": [
+        "EMAL-22 is waiting on CloudWatch alarm proof."
+      ],
+      "decisions": [
+        "Keep the meeting control center visible by default."
+      ],
+      "action_items": [
+        {
+          "owner": "Riley Nguyen",
+          "text": "Finalize the recap layout.",
+          "due": "Monday"
+        }
+      ],
+      "pending_confirmations": [],
+      "jira_mutations": [
+        {
+          "tool": "move_ticket",
+          "issue_key": "EMAL-22",
+          "risk": "low",
+          "must_execute": true,
+          "requires_confirmation": false
+        }
+      ]
+    },
+    "voice_reliability_signals": [],
+    "failure_states": [],
+    "jira_actions": [
+      {
+        "tool": "move_ticket",
+        "issue_key": "EMAL-22",
+        "risk": "low",
+        "must_execute": true,
+        "requires_confirmation": false
+      }
+    ],
+    "forbidden_actions": [],
+    "confirmations": [],
+    "extractions": [
+      {
+        "type": "owner",
+        "issue_key": "",
+        "owner": "Riley Nguyen",
+        "value": "recap layout follow-up",
+        "source_event_id": "e03"
+      },
+      {
+        "type": "blocker",
+        "issue_key": "EMAL-22",
+        "owner": "Morgan Reed",
+        "value": "CloudWatch alarms",
+        "source_event_id": "e02"
+      }
+    ],
+    "recap": {
+      "slack_ready_summary": true,
+      "jira_changes_summary": true,
+      "blockers": [
+        "EMAL-22 is waiting on CloudWatch alarm proof."
+      ],
+      "action_items_by_owner": [
+        "Riley Nguyen: finalize recap layout by Monday."
+      ],
+      "unresolved_questions": [
+        "What CloudWatch alarm threshold should gate production self-hosted LiveKit?"
+      ],
+      "changed_since_start": [
+        "EMAL-21 shipped webhook conflict UI.",
+        "EMAL-22 moved to In Progress.",
+        "Control center default visibility decision captured."
+      ]
+    },
+    "confidence_explanations": [
+      {
+        "type": "issue_match",
+        "example": "Matched EMAL-22 because the speaker said the exact Jira key.",
+        "required": true
+      }
+    ],
+    "post_meeting_intelligence": {
+      "page_required": true,
+      "archives_report": true,
+      "slack_copy": true,
+      "transcript_evidence": true,
+      "github_context": true,
+      "setup_readiness": [
+        "auth",
+        "identity",
+        "jira",
+        "persistent meeting memory",
+        "livekit"
+      ],
+      "observability": [
+        "voice provider",
+        "livekit mode",
+        "jira configured",
+        "storage persistent",
+        "agent participant present",
+        "bedrock stream",
+        "board sequence"
+      ],
+      "sprint_signals": [
+        "blocked cards",
+        "unassigned cards",
+        "missing ETA",
+        "stale cards",
+        "PR ready",
+        "scope changes"
+      ],
+      "report_endpoint": "/meeting/intelligence",
+      "archive_list_endpoint": "/meetings"
+    }
+  }
+}

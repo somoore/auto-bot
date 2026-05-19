@@ -1,7 +1,7 @@
 # Application Security Review
 
 **Project:** auto-bot (Living Kanban Board)
-**Last updated:** 2026-05-15
+**Last updated:** 2026-05-19
 **Scope:** Go backend (`cmd/server/`), HTML frontends (`web/`), Docker, AWS/Terragrunt scaffold
 
 This file is a current risk register. Older findings about unauthenticated LiveKit token minting, disabled WebSocket origin checks, missing server timeouts, missing WebSocket read limits, root containers, unbounded WebSocket clients, unbounded tool dedupe, Nova Sonic duplicate tool calls, unvalidated LiveKit identity, 24-hour LiveKit tokens, and plaintext-only LiveKit URLs have been remediated or narrowed as described below.
@@ -60,6 +60,8 @@ The Terraform module models LiveKit on ECS Fargate in private subnets with Redis
 
 `/livekit-token` now requires an authenticated session cookie or Bearer token, validates identity format, binds browser identity to the session identity, rate-limits token minting, and mints 15-minute room-scoped JWTs.
 
+For `VOICE_PROVIDER=nova-sonic`, token minting also runs the voice readiness preflight. The server validates AWS credentials with STS in `us-east-1` and ensures the Nova Sonic LiveKit participant is connected before issuing a browser room token. This prevents a local user from joining an empty room when Docker was started without usable AWS credentials.
+
 ### APP_API_TOKEN in HTML
 
 **Status:** Remediated.
@@ -82,9 +84,9 @@ The HTML templates no longer contain `window.__APP_TOKEN__`, `{{.Token}}`, or qu
 
 **Status:** Partially remediated.
 
-When `BOARD_SQLITE_PATH` is set, board snapshots and mutation events are persisted in SQLite. Docker Compose persists `/srv/data/board.sqlite` in a named volume. The AWS module mounts `/srv/data` from EFS for Fargate.
+When `BOARD_SQLITE_PATH` is set, board snapshots, mutation events, and archived post-meeting intelligence reports are persisted in SQLite. Docker Compose persists `/srv/data/board.sqlite` in a named volume. The AWS module mounts `/srv/data` from EFS for Fargate.
 
-**Remaining risk:** SQLite/EFS is acceptable for a single app task, but a horizontally scaled production deployment should move board state to Postgres or another transactional service.
+**Remaining risk:** SQLite/EFS is acceptable for a single app task, but a horizontally scaled production deployment should move board state, meeting reports, conflict records, and audit events to Postgres or another transactional service.
 
 ### Nova Sonic Board Context Drift
 
@@ -165,7 +167,8 @@ AWS runtime secrets are injected from Secrets Manager: app token, LiveKit API ke
 - Per-client fixed-window rate limits for WebSocket upgrades and LiveKit token minting.
 - Optional JSONL audit trail.
 - Bounded in-memory mutation history with before/after state, transcript evidence, undo, and replay controls.
-- Optional SQLite board snapshot/event store.
+- Optional SQLite board snapshot/event store and archived meeting intelligence reports.
+- Authenticated post-meeting intelligence endpoints for current/archived reports, setup readiness, observability, voice provider options, and identity status.
 - Jira project-key safety boundary.
 - Authenticated Jira webhook endpoint with project-key safety and conflict prompts.
 - Medium/high-risk Jira action confirmation gates.
@@ -185,8 +188,8 @@ AWS runtime secrets are injected from Secrets Manager: app token, LiveKit API ke
 
 1. Add Cognito/OIDC and per-user room membership.
 2. Add true multi-room agent orchestration.
-3. Add Postgres-backed board/event storage before horizontal app scaling.
-4. Move board/audit/conflict state from SQLite/EFS to Postgres before horizontal app scaling.
+3. Add Postgres-backed board/event/report storage before horizontal app scaling.
+4. Move board/audit/conflict/report state from SQLite/EFS to Postgres before horizontal app scaling.
 5. Live-test Jira webhooks, conflict prompts, sprint/rank writes, and undo/replay with the final token and board scopes.
 6. Apply the AWS stack with a reviewed `FCK_NAT_AMI_ID` and validate LiveKit UDP/TURN networking from real client networks.
 7. Add CloudWatch alarms for auth failures, WAF blocks, WebSocket limits, LiveKit token failures, Jira sync errors, fck-nat health, Redis saturation, and Bedrock stream restarts.

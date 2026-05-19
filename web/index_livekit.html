@@ -58,6 +58,46 @@
       h1 { font-size: 13px; line-height: 1.2; }
       .status { color: var(--text-secondary); font-size: 13px; line-height: 1.45; }
 
+      .meeting-config-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 32px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255,255,255,0.06);
+        color: var(--text-primary);
+        cursor: pointer;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 800;
+        padding: 0 10px;
+        white-space: nowrap;
+      }
+
+      .meeting-config-toggle:hover,
+      .meeting-config-toggle[aria-expanded="true"] {
+        background: rgba(255,255,255,0.12);
+      }
+
+      .meeting-config-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--yellow);
+        box-shadow: 0 0 0 3px rgba(251,188,4,0.13);
+      }
+
+      .meeting-config-toggle.ok .meeting-config-dot {
+        background: var(--green);
+        box-shadow: 0 0 0 3px rgba(52,168,83,0.13);
+      }
+
+      .meeting-config-toggle.bad .meeting-config-dot {
+        background: var(--red);
+        box-shadow: 0 0 0 3px rgba(234,67,53,0.13);
+      }
+
       /* ── Layout switcher ── */
       .layout-switcher {
         position: relative;
@@ -600,6 +640,314 @@
       .comment-preview-latest { display: grid; gap: 6px; border-radius: 8px; background: #f1f7ff; padding: 10px; }
       .confetti-piece { position: fixed; z-index: 1000; width: 8px; height: 12px; border-radius: 2px; background: var(--confetti-color); pointer-events: none; animation: confetti-pop 1000ms ease-out forwards; }
 
+      /* ── Operator experience ── */
+      .operator-panel {
+        display: grid;
+        align-content: start;
+        gap: 10px;
+        width: var(--operator-panel-w, 360px);
+        min-width: 280px;
+        min-height: 0;
+        flex: 0 0 var(--operator-panel-w, 360px);
+        overflow-y: auto;
+        padding: 0 0 0 6px;
+      }
+
+      .meeting-access-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 1190;
+        background: rgba(0,0,0,0.38);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+      }
+
+      .meeting-access-scrim.visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .meeting-access-drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        z-index: 1200;
+        width: min(390px, calc(100vw - 24px));
+        height: 100vh;
+        height: 100dvh;
+        overflow-y: auto;
+        background: #0f1216;
+        border-left: 1px solid var(--border-strong);
+        box-shadow: -24px 0 60px rgba(0,0,0,0.42);
+        padding: 14px;
+        transform: translateX(calc(100% + 20px));
+        transition: transform 220ms ease;
+        pointer-events: none;
+      }
+
+      .meeting-access-drawer.open {
+        transform: translateX(0);
+        pointer-events: auto;
+      }
+
+      .meeting-access-section {
+        min-height: auto;
+      }
+
+      .operator-section {
+        display: grid;
+        gap: 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #111418;
+        padding: 12px;
+        min-width: 0;
+      }
+
+      .operator-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .operator-heading h2 {
+        color: var(--text-primary);
+        font-size: 13px;
+        line-height: 1.2;
+      }
+
+      .operator-eyebrow {
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .operator-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .operator-stack { display: grid; gap: 8px; min-width: 0; }
+
+      .field {
+        display: grid;
+        gap: 5px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .field input,
+      .field select {
+        width: 100%;
+        min-height: 36px;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: #202124;
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 13px;
+        outline: none;
+        padding: 8px 10px;
+      }
+
+      .field input:focus,
+      .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+      .segmented {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 2px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.05);
+        padding: 2px;
+      }
+
+      .segmented button,
+      .compact-btn {
+        min-width: 0;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+
+      .segmented button.active { background: var(--accent); color: #fff; }
+      .compact-btn { background: #202124; border: 1px solid var(--border); color: var(--text-primary); text-decoration: none; }
+
+      .meeting-code-box {
+        display: grid;
+        gap: 5px;
+        border-radius: 8px;
+        background: #202124;
+        border: 1px solid var(--border);
+        padding: 10px;
+      }
+
+      .meeting-code {
+        color: #fff;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 22px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        line-height: 1;
+      }
+
+      .meeting-code-meta {
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+
+      .state-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1;
+        padding: 5px 8px;
+        white-space: nowrap;
+      }
+
+      .state-pill.ok { background: rgba(52,168,83,0.18); color: #81c995; }
+      .state-pill.warn { background: rgba(251,188,4,0.18); color: #fdd663; }
+      .state-pill.bad { background: rgba(234,67,53,0.18); color: #f28b82; }
+
+      .failure-panel {
+        display: none;
+        gap: 6px;
+        border: 1px solid rgba(234,67,53,0.5);
+        border-radius: 8px;
+        background: rgba(234,67,53,0.11);
+        color: #fce8e6;
+        padding: 10px;
+      }
+
+      .failure-panel.visible { display: grid; }
+      .failure-panel strong { font-size: 13px; line-height: 1.25; }
+      .failure-panel p { color: #f4c7c3; font-size: 12px; line-height: 1.4; }
+
+      .health-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+      }
+
+      .health-row,
+      .validation-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        gap: 7px;
+        border-radius: 8px;
+        background: #202124;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.3;
+        padding: 8px;
+        min-width: 0;
+      }
+
+      .health-dot,
+      .validation-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: var(--text-muted);
+      }
+
+      .health-row.ok .health-dot,
+      .validation-row.ok .validation-dot { background: var(--green); box-shadow: 0 0 0 3px rgba(52,168,83,0.13); }
+      .health-row.warn .health-dot,
+      .validation-row.warn .validation-dot { background: var(--yellow); box-shadow: 0 0 0 3px rgba(251,188,4,0.13); }
+      .health-row.bad .health-dot,
+      .validation-row.bad .validation-dot { background: var(--red); box-shadow: 0 0 0 3px rgba(234,67,53,0.13); }
+
+      .health-label,
+      .validation-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .operator-list {
+        display: grid;
+        gap: 6px;
+        max-height: 132px;
+        overflow-y: auto;
+      }
+
+      .operator-list.tall { max-height: 190px; }
+
+      .operator-item {
+        display: grid;
+        gap: 4px;
+        border-radius: 8px;
+        background: #202124;
+        color: var(--text-primary);
+        font-size: 12px;
+        line-height: 1.35;
+        padding: 8px;
+        overflow-wrap: anywhere;
+      }
+
+      .operator-item.muted { color: var(--text-secondary); }
+      .operator-item strong { color: #fff; font-size: 12px; }
+      .operator-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+      .confidence-meter {
+        display: grid;
+        gap: 7px;
+        border-radius: 8px;
+        background: #202124;
+        padding: 10px;
+      }
+
+      .confidence-bar {
+        height: 7px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        overflow: hidden;
+      }
+
+      .confidence-fill {
+        width: var(--confidence, 0%);
+        height: 100%;
+        border-radius: inherit;
+        background: var(--accent);
+        transition: width 0.2s ease;
+      }
+
+      .confidence-copy {
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .recap-box {
+        max-height: 240px;
+        overflow: auto;
+        border-radius: 8px;
+        background: #202124;
+        color: #e8eaed;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        padding: 10px;
+        white-space: pre-wrap;
+      }
+
+      main[data-layout="spotlight"] .operator-panel {
+        width: auto;
+        flex: 0 0 240px;
+        padding-left: 0;
+      }
+
       /* ── Animations ── */
       @keyframes card-move-wiggle {
         0% { transform: translate3d(0,0,0) rotate(0) scale(1); }
@@ -681,6 +1029,14 @@
         main[data-layout="grid"] .content-area .transcription-panel,
         main[data-layout="spotlight"] .content-area .transcription-panel { width: auto; max-height: 160px; flex-shrink: 0; }
 
+        .operator-panel {
+          width: auto;
+          min-width: 0;
+          flex: 0 0 auto;
+          max-height: 280px;
+          padding-left: 0;
+        }
+
         main[data-layout="sidebar"] .workspace-area { flex-direction: column; }
         main[data-layout="sidebar"] .spotlight-area { order: 0; width: auto; height: auto; }
         main[data-layout="sidebar"] .video-area { flex-direction: row; overflow-x: auto; overflow-y: hidden; width: auto; height: 90px; }
@@ -703,6 +1059,7 @@
 
       @media (max-width: 640px) {
         .board { grid-template-columns: 1fr; min-width: 0; }
+        .operator-grid, .health-grid { grid-template-columns: 1fr; }
 
         main[data-layout="filmstrip"] .spotlight-area { height: 80px; min-height: 50px; }
         main[data-layout="filmstrip"] .participant-tile { width: 100px; }
@@ -710,6 +1067,8 @@
         .layout-group { gap: 1px; }
         .layout-btn { width: 28px; height: 28px; }
         .layout-btn svg { width: 14px; height: 14px; }
+        .meeting-config-toggle { padding: 0 8px; }
+        .meeting-config-label { display: none; }
 
         .topbar-right { gap: 4px; }
       }
@@ -735,6 +1094,10 @@
           <p class="status" id="status">Not connected</p>
         </div>
         <div class="topbar-right">
+          <button id="meetingConfigToggle" class="meeting-config-toggle warn" type="button" aria-expanded="false" aria-controls="meetingAccessDrawer" title="Meeting setup">
+            <span class="meeting-config-dot" aria-hidden="true"></span>
+            <span id="meetingConfigLabel" class="meeting-config-label">Meeting setup</span>
+          </button>
           <div class="layout-group" id="layoutGroup" role="radiogroup" aria-label="Video layout">
             <button class="layout-btn active" data-layout="filmstrip" title="Filmstrip" aria-label="Filmstrip layout">
               <svg viewBox="0 0 18 18"><rect x="1" y="1" width="3.5" height="3" rx="0.5"/><rect x="5.5" y="1" width="3.5" height="3" rx="0.5"/><rect x="10" y="1" width="3.5" height="3" rx="0.5"/><rect x="14.5" y="1" width="2.5" height="3" rx="0.5"/><rect x="1" y="5.5" width="16" height="11.5" rx="1" opacity="0.35"/></svg>
@@ -771,6 +1134,172 @@
               <span>Transcription</span>
             </div>
             <div id="transcriptionScroll" class="transcription-scroll"></div>
+          </aside>
+
+          <div id="meetingAccessScrim" class="meeting-access-scrim"></div>
+          <aside id="meetingAccessDrawer" class="meeting-access-drawer" aria-label="Meeting access settings" aria-hidden="true">
+            <section class="operator-section meeting-access-section" aria-label="Meeting access">
+              <div class="operator-heading">
+                <div>
+                  <div class="operator-eyebrow">Access</div>
+                  <h2>Meeting Path</h2>
+                </div>
+                <div class="operator-actions">
+                  <span id="meetingAccessState" class="state-pill warn">Setup needed</span>
+                  <button id="meetingAccessClose" class="compact-btn" type="button">Close</button>
+                </div>
+              </div>
+              <div class="segmented" role="radiogroup" aria-label="Meeting role">
+                <button id="roleHost" type="button" data-role="host">Host</button>
+                <button id="roleParticipant" type="button" data-role="participant">Participant</button>
+              </div>
+              <div class="operator-grid">
+                <label class="field">
+                  Name
+                  <input id="identityInput" autocomplete="name" inputmode="text" maxlength="64">
+                </label>
+                <label class="field">
+                  Meeting type
+                  <select id="meetingTypeSelect">
+                    <option value="general">General meeting</option>
+                    <option value="standup">Standup</option>
+                    <option value="one_on_one">1:1</option>
+                    <option value="sprint_review">Sprint review</option>
+                    <option value="open_ended">Open-ended</option>
+                  </select>
+                </label>
+              </div>
+              <div class="operator-stack" id="hostSetupFields">
+                <button id="createMeeting" class="compact-btn" type="button">Create meeting code</button>
+                <div class="meeting-code-box">
+                  <div id="meetingCodeText" class="meeting-code">------</div>
+                  <div id="meetingCodeMeta" class="meeting-code-meta">Create a meeting code before participants join.</div>
+                </div>
+                <div class="operator-actions">
+                  <button id="copyJoinLink" class="compact-btn" type="button" disabled>Copy link</button>
+                  <button id="copyJoinCode" class="compact-btn" type="button" disabled>Copy code</button>
+                </div>
+              </div>
+              <div class="operator-stack" id="participantSetupFields">
+                <label class="field">
+                  Meeting code
+                  <input id="joinCodeInput" autocomplete="off" inputmode="text" maxlength="16" placeholder="ABC-123">
+                </label>
+                <button id="prepareParticipant" class="compact-btn" type="button">Use meeting code</button>
+              </div>
+              <div id="failurePanel" class="failure-panel" aria-live="polite">
+                <strong id="failureTitle">Meeting setup needs attention</strong>
+                <p id="failureDetail">Resolve the issue, then try again.</p>
+              </div>
+            </section>
+          </aside>
+
+          <aside id="operatorPanel" class="operator-panel" aria-label="Meeting operator center">
+            <section class="operator-section" aria-label="Voice reliability dashboard">
+              <div class="operator-heading">
+                <div>
+                  <div class="operator-eyebrow">Reliability</div>
+                  <h2>Voice Dashboard</h2>
+                </div>
+                <span id="voiceOverallState" class="state-pill warn">Waiting</span>
+              </div>
+              <div class="health-grid" id="voiceHealthGrid">
+                <div class="health-row warn" data-health="mic"><span class="health-dot"></span><span class="health-label">Mic not checked</span></div>
+                <div class="health-row warn" data-health="livekit"><span class="health-dot"></span><span class="health-label">LiveKit waiting</span></div>
+                <div class="health-row warn" data-health="nova"><span class="health-dot"></span><span class="health-label">Nova Sonic waiting</span></div>
+                <div class="health-row warn" data-health="bedrock"><span class="health-dot"></span><span class="health-label">Bedrock stream waiting</span></div>
+                <div class="health-row warn" data-health="transcription"><span class="health-dot"></span><span class="health-label">Transcription waiting</span></div>
+                <div class="health-row warn" data-health="jira"><span class="health-dot"></span><span class="health-label">Jira not checked</span></div>
+                <div class="health-row warn" data-health="agent"><span class="health-dot"></span><span class="health-label">Agent not present</span></div>
+              </div>
+            </section>
+
+            <section class="operator-section" aria-label="Meeting control center">
+              <div class="operator-heading">
+                <div>
+                  <div class="operator-eyebrow">Control</div>
+                  <h2>Meeting Control Center</h2>
+                </div>
+                <span id="meetingTypeState" class="state-pill">Standup</span>
+              </div>
+              <div class="operator-grid">
+                <div class="operator-stack">
+                  <span class="operator-eyebrow">Spoken</span>
+                  <div id="spokenList" class="operator-list"></div>
+                </div>
+                <div class="operator-stack">
+                  <span class="operator-eyebrow">Not spoken</span>
+                  <div id="notSpokenList" class="operator-list"></div>
+                </div>
+              </div>
+              <div class="operator-stack">
+                <span class="operator-eyebrow">Blockers</span>
+                <div id="blockersList" class="operator-list"></div>
+              </div>
+              <div class="operator-stack">
+                <span class="operator-eyebrow">Decisions</span>
+                <div id="decisionsList" class="operator-list"></div>
+              </div>
+              <div class="operator-stack">
+                <span class="operator-eyebrow">Action items</span>
+                <div id="actionItemsList" class="operator-list"></div>
+              </div>
+              <div class="operator-stack">
+                <span class="operator-eyebrow">Pending confirmations</span>
+                <div id="pendingConfirmationsList" class="operator-list tall"></div>
+              </div>
+              <div class="operator-stack">
+                <span class="operator-eyebrow">Jira mutations</span>
+                <div id="jiraMutationsList" class="operator-list tall"></div>
+              </div>
+            </section>
+
+            <section class="operator-section" aria-label="Agent confidence">
+              <div class="operator-heading">
+                <div>
+                  <div class="operator-eyebrow">Confidence</div>
+                  <h2>Agent Confidence</h2>
+                </div>
+                <span id="riskState" class="state-pill">Idle</span>
+              </div>
+              <div class="confidence-meter">
+                <div class="confidence-bar"><div id="confidenceFill" class="confidence-fill"></div></div>
+                <p id="confidenceCopy" class="confidence-copy">Waiting for the next agent action.</p>
+              </div>
+              <div id="confidenceReasons" class="operator-list"></div>
+            </section>
+
+            <section class="operator-section" aria-label="Multi-person validation">
+              <div class="operator-heading">
+                <div>
+                  <div class="operator-eyebrow">Validation</div>
+                  <h2>Multi-Person Proof</h2>
+                </div>
+                <span id="validationState" class="state-pill warn">Collecting</span>
+              </div>
+              <div class="health-grid">
+                <div class="validation-row warn" data-validation="participants"><span class="validation-dot"></span><span class="validation-label">Need 2-4 people</span></div>
+                <div class="validation-row warn" data-validation="overlap"><span class="validation-dot"></span><span class="validation-label">Overlap not observed</span></div>
+                <div class="validation-row warn" data-validation="silence"><span class="validation-dot"></span><span class="validation-label">Silence not tested</span></div>
+                <div class="validation-row warn" data-validation="reconnect"><span class="validation-dot"></span><span class="validation-label">Reconnect not observed</span></div>
+                <div class="validation-row warn" data-validation="lateJoin"><span class="validation-dot"></span><span class="validation-label">Late join not observed</span></div>
+                <div class="validation-row warn" data-validation="confirmation"><span class="validation-dot"></span><span class="validation-label">Risky confirmation not observed</span></div>
+              </div>
+            </section>
+
+            <section class="operator-section" aria-label="Executive recap">
+              <div class="operator-heading">
+                <div>
+                  <div class="operator-eyebrow">Recap</div>
+                  <h2>Executive Output</h2>
+                </div>
+                <div class="operator-actions">
+                  <a class="compact-btn" href="/post-meeting" target="_blank" rel="noreferrer">Intelligence</a>
+                  <button id="copyRecap" class="compact-btn" type="button">Copy</button>
+                </div>
+              </div>
+              <pre id="executiveRecap" class="recap-box"></pre>
+            </section>
           </aside>
         </div>
       </div>
@@ -826,25 +1355,127 @@
       const spotlightTile = document.getElementById('spotlightTile')
       const participantCountEl = document.getElementById('participantCount')
       const layoutGroup = document.getElementById('layoutGroup')
+      const meetingConfigToggle = document.getElementById('meetingConfigToggle')
+      const meetingConfigLabel = document.getElementById('meetingConfigLabel')
+      const meetingAccessDrawer = document.getElementById('meetingAccessDrawer')
+      const meetingAccessScrim = document.getElementById('meetingAccessScrim')
+      const meetingAccessClose = document.getElementById('meetingAccessClose')
+      const identityInput = document.getElementById('identityInput')
+      const meetingTypeSelect = document.getElementById('meetingTypeSelect')
+      const roleHostButton = document.getElementById('roleHost')
+      const roleParticipantButton = document.getElementById('roleParticipant')
+      const hostSetupFields = document.getElementById('hostSetupFields')
+      const participantSetupFields = document.getElementById('participantSetupFields')
+      const createMeetingButton = document.getElementById('createMeeting')
+      const prepareParticipantButton = document.getElementById('prepareParticipant')
+      const copyJoinLinkButton = document.getElementById('copyJoinLink')
+      const copyJoinCodeButton = document.getElementById('copyJoinCode')
+      const copyRecapButton = document.getElementById('copyRecap')
+      const joinCodeInput = document.getElementById('joinCodeInput')
+      const meetingCodeText = document.getElementById('meetingCodeText')
+      const meetingCodeMeta = document.getElementById('meetingCodeMeta')
+      const meetingAccessState = document.getElementById('meetingAccessState')
+      const meetingTypeState = document.getElementById('meetingTypeState')
+      const voiceOverallState = document.getElementById('voiceOverallState')
+      const riskState = document.getElementById('riskState')
+      const validationState = document.getElementById('validationState')
+      const failurePanel = document.getElementById('failurePanel')
+      const failureTitle = document.getElementById('failureTitle')
+      const failureDetail = document.getElementById('failureDetail')
+      const spokenList = document.getElementById('spokenList')
+      const notSpokenList = document.getElementById('notSpokenList')
+      const blockersList = document.getElementById('blockersList')
+      const decisionsList = document.getElementById('decisionsList')
+      const actionItemsList = document.getElementById('actionItemsList')
+      const pendingConfirmationsList = document.getElementById('pendingConfirmationsList')
+      const jiraMutationsList = document.getElementById('jiraMutationsList')
+      const confidenceFill = document.getElementById('confidenceFill')
+      const confidenceCopy = document.getElementById('confidenceCopy')
+      const confidenceReasons = document.getElementById('confidenceReasons')
+      const executiveRecap = document.getElementById('executiveRecap')
 
       let cards = []
       let room
       let ws
+      let wsReconnectTimer
       let authSession
       let hasBoardSnapshot = false
       let commentPreviewTimer
       let micEnabled = true
       let camEnabled = true
       let localIdentity = 'User'
+      let intentionalLeave = false
       let currentLayout = localStorage.getItem('kanban-layout') || 'filmstrip'
       let spotlightIdentity = null
+      let meetingRole = localStorage.getItem('kanban-meeting-role') || 'host'
+      let currentMeetingType = localStorage.getItem('kanban-meeting-type') || 'standup'
+      let meetingSession = loadStoredMeetingSession()
+      let meetingAccessDrawerOpen = false
+      let meetingStartedAt = 0
+      let meetingJoined = false
+      let meetingLeaveNotified = false
+      let lastTranscriptAt = 0
+      let voiceStatusTimer
+      let silenceTimer
       const cardSnapshots = new Map()
       const activeSpeakers = new Set()
+      const spokenParticipants = new Set()
+      const participantPresence = new Map()
+      const pendingConfirmations = new Map()
+      const meetingIntel = {
+        blockers: [],
+        decisions: [],
+        actionItems: [],
+        jiraMutations: [],
+        auditEvents: [],
+        unresolved: [],
+        confidence: {
+          score: 0,
+          label: 'Idle',
+          risk: 'idle',
+          summary: 'Waiting for the next agent action.',
+          reasons: [],
+        },
+      }
+      const voiceHealth = {
+        mic: { state: 'warn', label: 'Mic not checked' },
+        livekit: { state: 'warn', label: 'LiveKit waiting' },
+        nova: { state: 'warn', label: 'Nova Sonic waiting' },
+        bedrock: { state: 'warn', label: 'Bedrock stream waiting' },
+        transcription: { state: 'warn', label: 'Transcription waiting' },
+        jira: { state: 'warn', label: 'Jira not checked' },
+        agent: { state: 'warn', label: 'Agent not present' },
+      }
+      const validationStateData = {
+        participants: false,
+        overlap: false,
+        silence: false,
+        reconnect: false,
+        lateJoin: false,
+        confirmation: false,
+      }
 
       const AVATAR_COLORS = [
         '#4285f4','#ea4335','#fbbc04','#34a853','#a142f4',
         '#00acc1','#ff7043','#9c27b0','#00897b','#c2185b',
       ]
+      const MEETING_TYPES = {
+        general: 'General meeting',
+        standup: 'Standup',
+        one_on_one: '1:1',
+        sprint_review: 'Sprint review',
+        open_ended: 'Open-ended',
+      }
+
+      function normalizeMeetingTypeKey(value) {
+        const raw = String(value || '').toLowerCase().trim().replace(/[-\s]+/g, '_')
+        if (!raw || raw === 'general_meeting') return 'general'
+        if (raw === 'daily' || raw === 'daily_standup' || raw === 'scrum') return 'standup'
+        if (raw === '1:1' || raw === 'one_to_one' || raw === 'oneonone' || raw === 'one_one') return 'one_on_one'
+        if (raw === 'review') return 'sprint_review'
+        if (raw === 'open' || raw === 'openended') return 'open_ended'
+        return MEETING_TYPES[raw] ? raw : 'standup'
+      }
 
       mainEl.dataset.layout = currentLayout
       layoutGroup.querySelector(`[data-layout="${currentLayout}"]`)?.classList.add('active')
@@ -864,18 +1495,34 @@
         updateSpotlight()
       })
 
-      joinButton.addEventListener('click', joinRoom)
+      initOperatorExperience()
+
+      joinButton.addEventListener('click', () => {
+        if (room && !canRoomPlayAudio()) {
+          ensureAudioPlayback()
+          return
+        }
+        joinRoom()
+      })
       undoLastButton.addEventListener('click', () => sendKanbanCommand('undo_last_mutation'))
       auditLogButton.addEventListener('click', () => sendKanbanCommand('get_audit_events', { limit: 20 }))
-      leaveButton.addEventListener('click', leaveRoom)
+      leaveButton.addEventListener('click', () => leaveRoom({ notify: true, clearMeetingSession: true }))
       confirmBoardButton.addEventListener('click', confirmBoard)
       toggleMicBtn.addEventListener('click', toggleMic)
       toggleCamBtn.addEventListener('click', toggleCam)
-      window.addEventListener('beforeunload', leaveRoom)
-      window.addEventListener('keydown', e => { if (e.key === 'Escape') closeCardDetail() })
+      window.addEventListener('beforeunload', () => notifyMeetingLeave(true))
+      window.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return
+        if (meetingAccessDrawerOpen) setMeetingAccessDrawerOpen(false)
+        closeCardDetail()
+      })
       cardDetailRegion.addEventListener('click', e => { if (e.target === cardDetailRegion) closeCardDetail() })
 
       renderBoard()
+      renderOperatorPanels()
+      refreshValidationPanel()
+      refreshVoiceHealthPanel()
+      startOperatorTimers()
 
       function avatarColor(name) {
         let h = 0
@@ -884,6 +1531,784 @@
       }
 
       function avatarInitial(name) { return (name || '?').charAt(0).toUpperCase() }
+
+      /* ── Operator setup / meeting state ── */
+
+      function initOperatorExperience() {
+        const params = new URLSearchParams(window.location.search)
+        const role = params.get('role')
+        const code = params.get('meeting_code') || params.get('code')
+        const type = params.get('meeting_type')
+        if (role === 'participant' || code) meetingRole = 'participant'
+        if (code) joinCodeInput.value = formatMeetingCode(code)
+        if (type) currentMeetingType = normalizeMeetingTypeKey(type)
+        if (!code && meetingSession?.code && meetingSession.role === 'participant') joinCodeInput.value = meetingSession.code
+        if (meetingSession?.meeting_type) currentMeetingType = normalizeMeetingTypeKey(meetingSession.meeting_type)
+
+        identityInput.value = cleanIdentity(localStorage.getItem('kanban-livekit-identity') || 'User')
+        meetingTypeSelect.value = MEETING_TYPES[currentMeetingType] ? currentMeetingType : 'standup'
+
+        meetingConfigToggle.addEventListener('click', () => setMeetingAccessDrawerOpen(!meetingAccessDrawerOpen))
+        meetingAccessClose.addEventListener('click', () => setMeetingAccessDrawerOpen(false))
+        meetingAccessScrim.addEventListener('click', () => setMeetingAccessDrawerOpen(false))
+        roleHostButton.addEventListener('click', () => setMeetingRole('host'))
+        roleParticipantButton.addEventListener('click', () => setMeetingRole('participant'))
+        identityInput.addEventListener('input', () => {
+          localIdentity = cleanIdentity(identityInput.value)
+          localStorage.setItem('kanban-livekit-identity', localIdentity)
+          renderOperatorPanels()
+        })
+        meetingTypeSelect.addEventListener('change', () => setMeetingType(meetingTypeSelect.value, { broadcast: true }))
+        joinCodeInput.addEventListener('input', () => {
+          joinCodeInput.value = formatMeetingCode(joinCodeInput.value)
+          if (meetingSession?.role === 'participant' && meetingSession.code !== joinCodeInput.value) storeMeetingSession(null)
+        })
+        createMeetingButton.addEventListener('click', async () => {
+          try {
+            createMeetingButton.disabled = true
+            localIdentity = cleanIdentity(identityInput.value)
+            authSession = authSession || await ensureAuthenticated(localIdentity)
+            meetingSession = await setupHostMeeting(authSession)
+            showToast(`Meeting code ${meetingSession.code} is ready`)
+            hideFailureState()
+          } catch (error) {
+            showFailureFromError(error)
+          } finally {
+            createMeetingButton.disabled = false
+            renderOperatorPanels()
+          }
+        })
+        prepareParticipantButton.addEventListener('click', async () => {
+          try {
+            prepareParticipantButton.disabled = true
+            localIdentity = cleanIdentity(identityInput.value)
+            meetingSession = await joinParticipantMeeting(authSession)
+            authSession = authSessionFromMeetingAccess(meetingSession)
+            showToast(`Meeting code ${meetingSession.code} accepted`)
+            hideFailureState()
+          } catch (error) {
+            showFailureFromError(error)
+          } finally {
+            prepareParticipantButton.disabled = false
+            renderOperatorPanels()
+          }
+        })
+        copyJoinLinkButton.addEventListener('click', () => copyMeetingLink())
+        copyJoinCodeButton.addEventListener('click', () => copyText(activeMeetingSession()?.code || ''))
+        copyRecapButton.addEventListener('click', () => copyText(executiveRecap.textContent || ''))
+
+        setMeetingRole(meetingRole, { silent: true })
+        setMeetingType(currentMeetingType, { silent: true })
+        setMeetingAccessDrawerOpen(false)
+      }
+
+      function loadStoredMeetingSession() {
+        try {
+          const parsed = JSON.parse(localStorage.getItem('kanban-meeting-session') || 'null')
+          if (!parsed || !parsed.code || !parsed.room_id) return null
+          return parsed
+        } catch (_) {
+          return null
+        }
+      }
+
+      function storeMeetingSession(session) {
+        meetingSession = session
+        if (session) localStorage.setItem('kanban-meeting-session', JSON.stringify(session))
+        else localStorage.removeItem('kanban-meeting-session')
+        renderOperatorPanels()
+      }
+
+      function activeMeetingSession() {
+        return meetingSession?.role === meetingRole ? meetingSession : null
+      }
+
+      function setMeetingAccessDrawerOpen(open) {
+        meetingAccessDrawerOpen = Boolean(open)
+        meetingAccessDrawer.classList.toggle('open', meetingAccessDrawerOpen)
+        meetingAccessScrim.classList.toggle('visible', meetingAccessDrawerOpen)
+        meetingAccessDrawer.setAttribute('aria-hidden', String(!meetingAccessDrawerOpen))
+        meetingConfigToggle.setAttribute('aria-expanded', String(meetingAccessDrawerOpen))
+        if ('inert' in meetingAccessDrawer) meetingAccessDrawer.inert = !meetingAccessDrawerOpen
+        if (meetingAccessDrawerOpen) {
+          const focusTarget = meetingRole === 'participant' ? joinCodeInput : identityInput
+          setTimeout(() => focusTarget?.focus(), 0)
+        }
+      }
+
+      function setMeetingRole(role, opts = {}) {
+        meetingRole = role === 'participant' ? 'participant' : 'host'
+        localStorage.setItem('kanban-meeting-role', meetingRole)
+        roleHostButton.classList.toggle('active', meetingRole === 'host')
+        roleParticipantButton.classList.toggle('active', meetingRole === 'participant')
+        hostSetupFields.style.display = meetingRole === 'host' ? '' : 'none'
+        participantSetupFields.style.display = meetingRole === 'participant' ? '' : 'none'
+        if (!opts.silent) renderOperatorPanels()
+      }
+
+      function setMeetingType(type, opts = {}) {
+        currentMeetingType = normalizeMeetingTypeKey(type)
+        meetingTypeSelect.value = currentMeetingType
+        localStorage.setItem('kanban-meeting-type', currentMeetingType)
+        if (meetingSession) {
+          meetingSession.meeting_type = currentMeetingType
+          storeMeetingSession(meetingSession)
+        }
+        if (ws && ws.readyState === WebSocket.OPEN && opts.broadcast) {
+          sendKanbanCommand('switch_meeting_type', { meeting_type: currentMeetingType })
+        }
+        if (authSession && meetingSession && opts.broadcast) {
+          updateMeetingStatusEndpoint({ meeting_type: currentMeetingType }).catch(err => console.warn('Meeting type update failed', err))
+          showToast(`Meeting type changed to ${MEETING_TYPES[currentMeetingType]}`)
+        }
+        if (!opts.silent) renderOperatorPanels()
+      }
+
+      async function ensureMeetingAccess(session) {
+        if (meetingRole === 'host') {
+          if (meetingSession?.role === 'host' && meetingSession.room_id && meetingSession.code) {
+            const status = await fetchMeetingStatusEndpoint(meetingSession).catch(() => null)
+            if (status?.meeting?.active && status.access_granted !== false) {
+              applyMeetingStatusPayload(status)
+              return meetingSession
+            }
+            storeMeetingSession(null)
+          }
+          return setupHostMeeting(session)
+        }
+        if (meetingSession?.role === 'participant' && meetingSession.room_id && meetingSession.code && session?.room_id) return meetingSession
+        return joinParticipantMeeting(session)
+      }
+
+      async function setupHostMeeting(session) {
+        const payload = {
+          role: 'host',
+          meeting_type: currentMeetingType,
+          host_identity: localIdentity,
+          board_id: session?.board_id || '',
+        }
+        const response = await callMeetingEndpoint('/meeting/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(payload),
+        })
+        const code = formatMeetingCode(response?.meeting_code || response?.join_code || response?.code || '')
+        if (!code || !response?.room_id) throw new Error('Meeting setup failed: server did not return a meeting code.')
+        const next = {
+          role: 'host',
+          code,
+          room_id: response.room_id,
+          board_id: response.board_id || session?.board_id || '',
+          meeting_type: normalizeMeetingTypeKey(response?.meeting_type || currentMeetingType),
+          host_identity: response?.host_identity || localIdentity,
+          created_at: response?.created_at || new Date().toISOString(),
+          source: 'server',
+        }
+        storeMeetingSession(next)
+        return next
+      }
+
+      async function joinParticipantMeeting(session) {
+        const code = formatMeetingCode(joinCodeInput.value || meetingSession?.code || '')
+        if (!code) throw new Error('Meeting code required')
+        const response = await callMeetingEndpoint('/meeting/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            role: 'participant',
+            meeting_code: code,
+            participant_identity: localIdentity,
+            board_id: session?.board_id || '',
+          }),
+        })
+        const next = {
+          role: 'participant',
+          code,
+          room_id: response?.room_id,
+          board_id: response?.board_id || session?.board_id || '',
+          meeting_type: normalizeMeetingTypeKey(response?.meeting_type || currentMeetingType),
+          participant_identity: response?.participant_identity || localIdentity,
+          joined_at: response?.joined_at || new Date().toISOString(),
+          expires_at: response?.expires_at || '',
+          source: 'server',
+        }
+        if (!next.room_id || !next.board_id) throw new Error('Meeting join failed: server did not return room access.')
+        storeMeetingSession(next)
+        return next
+      }
+
+      function authSessionFromMeetingAccess(access) {
+        if (!access) return authSession
+        return {
+          ...(authSession || {}),
+          participant_identity: access.participant_identity || access.host_identity || localIdentity,
+          room_id: access.room_id,
+          board_id: access.board_id,
+          expires_at: access.expires_at,
+        }
+      }
+
+      async function callMeetingEndpoint(path, options) {
+        const response = await fetch(path, options)
+        if (!response.ok) {
+          let detail = `${path} failed: ${response.status}`
+          try {
+            const payload = await response.json()
+            if (payload?.message || payload?.error) detail = payload.message || payload.error
+          } catch (_) {
+            const text = await response.text().catch(() => '')
+            if (text) detail = text.trim()
+          }
+          throw new Error(detail)
+        }
+        return response.status === 204 ? {} : response.json()
+      }
+
+      async function updateMeetingStatusEndpoint(patch) {
+        if (!meetingSession) return
+        await callMeetingEndpoint('/meeting/type', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ meeting_code: meetingSession.code, room_id: meetingSession.room_id, ...patch }),
+        })
+      }
+
+      async function refreshMeetingStatusEndpoint() {
+        if (!meetingSession) return
+        const data = await fetchMeetingStatusEndpoint(meetingSession)
+        if (data) applyMeetingStatusPayload(data)
+      }
+
+      async function fetchMeetingStatusEndpoint(session) {
+        const statusURL = new URL('/meeting/status', window.location.origin)
+        statusURL.searchParams.set('meeting_code', session.code || '')
+        statusURL.searchParams.set('room_id', session.room_id || '')
+        return callMeetingEndpoint(statusURL.toString(), { credentials: 'same-origin' })
+      }
+
+      function applyMeetingStatusPayload(data) {
+        const meeting = data?.meeting || data || {}
+        if (data?.access_granted === false) {
+          showFailureState('Meeting code required', 'This browser has not joined the active meeting. Enter the host code before joining.')
+        }
+        if (meeting.meeting_type || meeting.meetingType || meeting.mode) {
+          setMeetingType(normalizeMeetingTypeKey(meeting.meeting_type || meeting.meetingType || meeting.mode), { silent: true })
+        }
+        if (meeting.room_id || meeting.board_id || meeting.meeting_id || meeting.meetingId) {
+          const next = {
+            ...(meetingSession || {}),
+            role: data?.role || meetingSession?.role || meetingRole,
+            code: meetingSession?.code || formatMeetingCode(meeting.join_code || meeting.joinCode || meeting.meeting_code || ''),
+            room_id: meeting.room_id || meeting.roomId || meetingSession?.room_id || '',
+            board_id: meeting.board_id || meeting.boardId || meetingSession?.board_id || '',
+            meeting_id: meeting.meeting_id || meeting.meetingId || meetingSession?.meeting_id || '',
+            meeting_type: currentMeetingType,
+            source: 'server',
+          }
+          if (next.code || next.room_id) storeMeetingSession(next)
+        }
+        if (Array.isArray(meeting.participants)) {
+          meeting.participants.forEach(participant => {
+            const name = participantDisplayName(participant)
+            markParticipant(name, true)
+            if (participant.hasSpoken || participant.has_spoken) markSpoken(name)
+          })
+        }
+        if (Array.isArray(data.spoken)) data.spoken.forEach(name => markSpoken(name))
+        if (Array.isArray(data.blockers)) mergeIntelList('blockers', data.blockers)
+        if (Array.isArray(data.decisions)) mergeIntelList('decisions', data.decisions)
+        if (Array.isArray(data.action_items)) mergeIntelList('actionItems', data.action_items)
+        if (Array.isArray(data.jira_mutations)) mergeIntelList('jiraMutations', data.jira_mutations)
+        if (Array.isArray(data.pending_confirmations)) {
+          data.pending_confirmations.forEach(item => {
+            const id = item.confirmation_id || item.confirmationId || item.id
+            if (id) pendingConfirmations.set(id, normalizePendingConfirmation(item))
+          })
+        }
+        renderOperatorPanels()
+      }
+
+      function formatMeetingCode(value) {
+        const raw = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)
+        if (!raw) return ''
+        return raw.length > 3 ? `${raw.slice(0, 3)}-${raw.slice(3)}` : raw
+      }
+
+      function buildJoinLink() {
+        const active = activeMeetingSession()
+        if (!active?.code) return ''
+        const url = new URL(window.location.href)
+        url.searchParams.set('role', 'participant')
+        url.searchParams.set('meeting_code', active.code)
+        url.searchParams.set('meeting_type', active.meeting_type || currentMeetingType)
+        return url.toString()
+      }
+
+      function copyMeetingLink() { copyText(buildJoinLink()) }
+
+      async function copyText(text) {
+        if (!text) return
+        try {
+          await navigator.clipboard.writeText(text)
+          showToast('Copied')
+        } catch (_) {
+          window.prompt('Copy this value', text)
+        }
+      }
+
+      function startOperatorTimers() {
+        clearInterval(voiceStatusTimer)
+        clearInterval(silenceTimer)
+        voiceStatusTimer = setInterval(() => {
+          if (authSession) refreshVoiceStatus(true).catch(err => console.warn('Voice status refresh failed', err))
+          if (meetingSession && room) refreshMeetingStatusEndpoint().catch(err => console.warn('Meeting status refresh failed', err))
+        }, 5000)
+        silenceTimer = setInterval(() => {
+          if (!room || !meetingStartedAt) return
+          const last = lastTranscriptAt || meetingStartedAt
+          if (Date.now() - last > 45000) {
+            validationStateData.silence = true
+            refreshValidationPanel()
+          }
+        }, 5000)
+      }
+
+      function renderOperatorPanels() {
+        const active = activeMeetingSession()
+        const hasCode = Boolean(active?.code)
+        meetingCodeText.textContent = hasCode ? active.code : '------'
+        meetingCodeMeta.textContent = hasCode
+          ? `${MEETING_TYPES[active.meeting_type || currentMeetingType]} · server enforced`
+          : meetingRole === 'host' ? 'Create a meeting code before participants join.' : 'Enter the host meeting code to unlock the room.'
+        copyJoinLinkButton.disabled = !hasCode
+        copyJoinCodeButton.disabled = !hasCode
+        meetingAccessState.textContent = hasCode ? `${meetingRole === 'host' ? 'Hosting' : 'Joining'} ${active.code}` : 'Setup needed'
+        meetingAccessState.className = `state-pill ${hasCode ? 'ok' : 'warn'}`
+        const hasVisibleFailure = failurePanel.classList.contains('visible')
+        meetingConfigLabel.textContent = hasVisibleFailure ? 'Setup issue' : hasCode ? 'Meeting ready' : 'Meeting setup'
+        meetingConfigToggle.className = `meeting-config-toggle ${hasVisibleFailure ? 'bad' : hasCode ? 'ok' : 'warn'}`
+        meetingConfigToggle.title = hasVisibleFailure ? 'Meeting setup needs attention' : hasCode ? 'Meeting is configured' : 'Configure meeting access'
+        meetingConfigToggle.setAttribute('aria-label', meetingConfigToggle.title)
+        meetingTypeState.textContent = MEETING_TYPES[currentMeetingType] || 'Standup'
+        riskState.textContent = meetingIntel.confidence.label
+        riskState.className = `state-pill ${riskClass(meetingIntel.confidence.risk)}`
+        renderSimpleList(spokenList, currentHumanParticipants().filter(p => spokenParticipants.has(p)), 'No one has spoken yet.')
+        renderSimpleList(notSpokenList, currentHumanParticipants().filter(p => !spokenParticipants.has(p)), 'Everyone present has spoken.')
+        renderSimpleList(blockersList, meetingIntel.blockers, 'No blockers detected.')
+        renderSimpleList(decisionsList, meetingIntel.decisions, 'No decisions captured yet.')
+        renderSimpleList(actionItemsList, meetingIntel.actionItems, 'No action items captured yet.')
+        renderPendingConfirmations()
+        renderSimpleList(jiraMutationsList, meetingIntel.jiraMutations, 'No Jira mutations during this meeting.')
+        renderConfidence()
+        renderExecutiveRecap()
+      }
+
+      function renderSimpleList(target, items, emptyText) {
+        target.replaceChildren()
+        const list = uniqueStrings(items).slice(0, 12)
+        if (list.length === 0) {
+          const empty = document.createElement('div')
+          empty.className = 'operator-item muted'
+          empty.textContent = emptyText
+          target.appendChild(empty)
+          return
+        }
+        list.forEach(item => {
+          const row = document.createElement('div')
+          row.className = 'operator-item'
+          row.textContent = String(item)
+          target.appendChild(row)
+        })
+      }
+
+      function renderPendingConfirmations() {
+        pendingConfirmationsList.replaceChildren()
+        if (pendingConfirmations.size === 0) {
+          const empty = document.createElement('div')
+          empty.className = 'operator-item muted'
+          empty.textContent = 'No Jira actions are waiting for confirmation.'
+          pendingConfirmationsList.appendChild(empty)
+          return
+        }
+        for (const item of pendingConfirmations.values()) {
+          const row = document.createElement('div')
+          row.className = 'operator-item'
+          const title = document.createElement('strong')
+          title.textContent = item.title || 'Confirm Jira action'
+          const prompt = document.createElement('span')
+          prompt.textContent = item.prompt || 'Confirm this action?'
+          const meta = document.createElement('span')
+          meta.className = 'meeting-code-meta'
+          meta.textContent = `${item.riskLabel || 'Risk unknown'} · ${item.confidenceLabel || 'confidence unknown'}`
+          const actions = document.createElement('div')
+          actions.className = 'operator-actions'
+          const confirm = document.createElement('button')
+          confirm.className = 'compact-btn'
+          confirm.type = 'button'
+          confirm.textContent = item.type === 'conflict' ? 'Use Jira latest' : 'Confirm'
+          confirm.addEventListener('click', () => resolvePendingConfirmation(item.id, true))
+          const cancel = document.createElement('button')
+          cancel.className = 'compact-btn'
+          cancel.type = 'button'
+          cancel.textContent = item.type === 'conflict' ? 'Keep meeting update' : 'Cancel'
+          cancel.addEventListener('click', () => resolvePendingConfirmation(item.id, false))
+          actions.append(confirm, cancel)
+          row.append(title, prompt, meta, actions)
+          pendingConfirmationsList.appendChild(row)
+        }
+      }
+
+      function renderConfidence() {
+        const score = Math.max(0, Math.min(100, Math.round(Number(meetingIntel.confidence.score) || 0)))
+        confidenceFill.style.setProperty('--confidence', `${score}%`)
+        confidenceCopy.textContent = meetingIntel.confidence.summary || 'Waiting for the next agent action.'
+        renderSimpleList(confidenceReasons, meetingIntel.confidence.reasons || [], 'No confidence evidence yet.')
+      }
+
+      function renderExecutiveRecap() {
+        const participants = currentHumanParticipants()
+        const spoken = participants.filter(p => spokenParticipants.has(p))
+        const notSpoken = participants.filter(p => !spokenParticipants.has(p))
+        const lines = [
+          `*${MEETING_TYPES[currentMeetingType] || 'Meeting'} recap*`,
+          '',
+          `*Attendance:* ${participants.length || 0} participant${participants.length === 1 ? '' : 's'}${spoken.length ? `; spoken: ${spoken.join(', ')}` : ''}${notSpoken.length ? `; still need: ${notSpoken.join(', ')}` : ''}`,
+          '',
+          '*Jira changes during meeting:*',
+          ...bulletLines(meetingIntel.jiraMutations, 'No Jira changes captured yet.'),
+          '',
+          '*Blockers:*',
+          ...bulletLines(meetingIntel.blockers, 'No blockers detected.'),
+          '',
+          '*Action items by owner:*',
+          ...bulletLines(meetingIntel.actionItems, 'No action items captured yet.'),
+          '',
+          '*Decisions:*',
+          ...bulletLines(meetingIntel.decisions, 'No decisions captured yet.'),
+          '',
+          '*Unresolved questions:*',
+          ...bulletLines(meetingIntel.unresolved, 'No unresolved questions captured yet.'),
+          '',
+          '*Changed since meeting start:*',
+          ...bulletLines(meetingIntel.jiraMutations.slice(0, 8), 'No board changes since meeting start.'),
+        ]
+        executiveRecap.textContent = lines.join('\n')
+      }
+
+      function bulletLines(items, emptyText) {
+        const list = uniqueStrings(items).slice(0, 10)
+        return list.length ? list.map(item => `- ${item}`) : [`- ${emptyText}`]
+      }
+
+      function refreshVoiceHealthPanel() {
+        for (const [key, value] of Object.entries(voiceHealth)) {
+          const row = document.querySelector(`[data-health="${key}"]`)
+          if (!row) continue
+          row.className = `health-row ${value.state || 'warn'}`
+          row.querySelector('.health-label').textContent = value.label
+        }
+        const values = Object.values(voiceHealth)
+        const bad = values.some(v => v.state === 'bad')
+        const ok = values.every(v => v.state === 'ok')
+        voiceOverallState.textContent = ok ? 'Healthy' : bad ? 'Attention' : 'Warming up'
+        voiceOverallState.className = `state-pill ${ok ? 'ok' : bad ? 'bad' : 'warn'}`
+      }
+
+      function setVoiceHealth(key, state, label) {
+        if (!voiceHealth[key]) return
+        voiceHealth[key] = { state, label }
+        refreshVoiceHealthPanel()
+      }
+
+      function refreshValidationPanel() {
+        const participantCount = currentHumanParticipants().length
+        validationStateData.participants = participantCount >= 2 && participantCount <= 4
+        setValidationRow('participants', validationStateData.participants, validationStateData.participants ? `${participantCount} people connected` : `Need 2-4 people; ${participantCount} connected`)
+        setValidationRow('overlap', validationStateData.overlap, validationStateData.overlap ? 'Overlap observed' : 'Overlap not observed')
+        setValidationRow('silence', validationStateData.silence, validationStateData.silence ? 'Silence window observed' : 'Silence not tested')
+        setValidationRow('reconnect', validationStateData.reconnect, validationStateData.reconnect ? 'Reconnect observed' : 'Reconnect not observed')
+        setValidationRow('lateJoin', validationStateData.lateJoin, validationStateData.lateJoin ? 'Late join observed' : 'Late join not observed')
+        setValidationRow('confirmation', validationStateData.confirmation, validationStateData.confirmation ? 'Risky confirmation observed' : 'Risky confirmation not observed')
+        const done = Object.values(validationStateData).filter(Boolean).length
+        validationState.textContent = `${done}/6 proven`
+        validationState.className = `state-pill ${done === 6 ? 'ok' : done >= 3 ? 'warn' : 'bad'}`
+      }
+
+      function setValidationRow(key, ok, label) {
+        const row = document.querySelector(`[data-validation="${key}"]`)
+        if (!row) return
+        row.className = `validation-row ${ok ? 'ok' : 'warn'}`
+        row.querySelector('.validation-label').textContent = label
+      }
+
+      function currentHumanParticipants() {
+        const names = []
+        for (const [name, state] of participantPresence.entries()) {
+          if (state.present && !isAgentIdentity(name)) names.push(name)
+        }
+        if (room && localIdentity && !names.includes(localIdentity)) names.unshift(localIdentity)
+        return names.sort((a, b) => a.localeCompare(b))
+      }
+
+      function markParticipant(identity, present) {
+        if (!identity) return
+        const previous = participantPresence.get(identity)
+        participantPresence.set(identity, { present, firstSeenAt: previous?.firstSeenAt || Date.now() })
+        if (present && meetingStartedAt && Date.now() - meetingStartedAt > 15000 && !previous?.present && !isAgentIdentity(identity)) {
+          validationStateData.lateJoin = true
+        }
+        if (isAgentIdentity(identity)) {
+          setVoiceHealth('agent', present ? 'ok' : 'bad', present ? 'Agent participant present' : 'Agent participant missing')
+          if (present && /agent/i.test(failureTitle.textContent)) hideFailureState()
+        }
+        renderOperatorPanels()
+        refreshValidationPanel()
+      }
+
+      function markSpoken(name) {
+        const speaker = cleanSpeakerName(name)
+        if (!speaker || isAgentIdentity(speaker)) return
+        spokenParticipants.add(speaker)
+        if (!participantPresence.has(speaker)) participantPresence.set(speaker, { present: true, firstSeenAt: Date.now() })
+        renderOperatorPanels()
+      }
+
+      function cleanSpeakerName(name) {
+        const value = String(name || '').trim()
+        if (!value || /^user$/i.test(value)) return localIdentity
+        if (/assistant|nova/i.test(value)) return 'nova-sonic-agent'
+        return value
+      }
+
+      function isAgentIdentity(identity) {
+        return /nova|sonic|agent|assistant/i.test(String(identity || ''))
+      }
+
+      function mergeIntelList(key, values) {
+        const incoming = Array.isArray(values) ? values : [values]
+        const current = meetingIntel[key] || []
+        meetingIntel[key] = uniqueStrings([...incoming.map(describeIntelItem), ...current]).slice(0, 24)
+      }
+
+      function describeIntelItem(item) {
+        if (typeof item === 'string') return item
+        if (!item) return ''
+        return item.summary || item.text || item.title || item.description || JSON.stringify(item)
+      }
+
+      function uniqueStrings(values) {
+        const seen = new Set()
+        const out = []
+        for (const value of values) {
+          const text = String(value || '').trim()
+          if (!text || seen.has(text)) continue
+          seen.add(text)
+          out.push(text)
+        }
+        return out
+      }
+
+      function riskClass(risk) {
+        const value = String(risk || '').toLowerCase()
+        if (value.includes('high') || value.includes('blocked')) return 'bad'
+        if (value.includes('medium') || value.includes('review')) return 'warn'
+        if (value.includes('low') || value.includes('ok')) return 'ok'
+        return ''
+      }
+
+      function normalizePendingConfirmation(data) {
+        const id = data.confirmationId || data.confirmation_id || data.conflictId || data.conflict_id || data.id
+        const prompt = data.prompt || data.summary || 'Confirm this Jira action?'
+        const risk = data.risk || data.risk_level || inferRiskFromText(prompt)
+        const confidence = confidencePercent(data.confidence || data.confidence_score)
+        const reasons = normalizeReasons(data.reasons || data.evidence || data.explanation)
+        return {
+          id,
+          type: data.type || (data.conflictId || data.conflict_id ? 'conflict' : 'confirmation'),
+          title: data.title || (risk === 'high' ? 'High-risk Jira action' : 'Jira action confirmation'),
+          prompt,
+          risk,
+          riskLabel: `${titleCase(risk)} risk`,
+          confidence,
+          confidenceLabel: confidence ? `${confidence}% confidence` : 'confidence not provided',
+          reasons: reasons.length ? reasons : [`Needs confirmation because this looks like a ${risk}-risk Jira action.`],
+          raw: data,
+        }
+      }
+
+      function resolvePendingConfirmation(id, accepted) {
+        const item = pendingConfirmations.get(id)
+        if (!item) return
+        pendingConfirmations.delete(id)
+        if (item.type === 'conflict') {
+          sendKanbanCommand('resolve_jira_conflict', {
+            conflict_id: item.raw.conflictId || item.raw.conflict_id || id,
+            resolution: accepted ? 'use_jira' : 'keep_local',
+          })
+        } else {
+          sendKanbanCommand(accepted ? 'confirm_action' : 'cancel_confirmation', { confirmation_id: id })
+        }
+        mergeIntelList('decisions', `${accepted ? 'Approved' : 'Rejected'}: ${item.prompt}`)
+        recordConfidence({
+          score: item.confidence || 0,
+          label: accepted ? 'Confirmed' : 'Cancelled',
+          risk: item.risk,
+          summary: accepted ? `Confirmed Jira action: ${item.prompt}` : `Cancelled Jira action: ${item.prompt}`,
+          reasons: item.reasons,
+        })
+        renderOperatorPanels()
+      }
+
+      function recordConfidence(update) {
+        meetingIntel.confidence = {
+          score: confidencePercent(update.score ?? update.confidence),
+          label: update.label || titleCase(update.risk || 'Reviewed'),
+          risk: update.risk || 'review',
+          summary: update.summary || update.prompt || 'Agent action reviewed.',
+          reasons: normalizeReasons(update.reasons || update.reason || update.evidence),
+        }
+        renderOperatorPanels()
+      }
+
+      function inferRiskFromText(text) {
+        const value = String(text || '').toLowerCase()
+        if (/delete|close|resolve|done|sprint|rank|reporter|bulk/.test(value)) return 'high'
+        if (/assign|eta|due|priority|owner/.test(value)) return 'medium'
+        if (/comment|note|status|move/.test(value)) return 'low'
+        return 'medium'
+      }
+
+      function confidencePercent(value) {
+        if (value === undefined || value === null || value === '') return 0
+        const n = Number(value)
+        if (!Number.isFinite(n)) return 0
+        return n <= 1 ? Math.round(n * 100) : Math.round(n)
+      }
+
+      function normalizeReasons(value) {
+        if (Array.isArray(value)) return value.map(describeIntelItem).filter(Boolean)
+        if (!value) return []
+        return [describeIntelItem(value)]
+      }
+
+      function titleCase(value) {
+        const text = String(value || '')
+        return text ? text.charAt(0).toUpperCase() + text.slice(1) : ''
+      }
+
+      async function refreshVoiceStatus(silent = false) {
+        if (!authSession) return null
+        const statusURL = new URL('/voice/status', window.location.origin)
+        statusURL.searchParams.set('room_id', authSession.room_id || meetingSession?.room_id || '')
+        statusURL.searchParams.set('board_id', authSession.board_id || meetingSession?.board_id || '')
+        const response = await fetch(statusURL.toString(), { credentials: 'same-origin' })
+        if (!response.ok) {
+          setVoiceHealth('nova', 'bad', `Nova status failed: ${response.status}`)
+          if (!silent) showFailureState('Nova Sonic status unavailable', `Voice readiness returned ${response.status}.`)
+          return null
+        }
+        const status = await response.json()
+        applyVoiceStatus(status)
+        return status
+      }
+
+      function applyVoiceStatus(status) {
+        if (!status) return
+        const awsReady = status.aws_ready ?? status.awsReady ?? status.ready
+        const agentReady = status.agent_ready ?? status.agentReady ?? status.ready
+        const bedrockReady = status.bedrock_stream_active ?? status.bedrock_ready ?? status.bedrockReady
+        const jiraReady = status.jira_ready ?? status.jiraReachable
+        setVoiceHealth('nova', status.ready || agentReady ? 'ok' : 'bad', status.ready || agentReady ? 'Nova Sonic ready' : (status.message || 'Nova Sonic not ready'))
+        setVoiceHealth('agent', agentReady ? 'ok' : 'bad', agentReady ? 'Agent participant present' : 'Agent participant missing')
+        if (awsReady === false) setVoiceHealth('bedrock', 'bad', 'AWS credentials expired or missing')
+        else if (bedrockReady === true) setVoiceHealth('bedrock', 'ok', 'Bedrock stream active')
+        else if (bedrockReady === false) setVoiceHealth('bedrock', 'warn', 'Bedrock stream waiting for speech')
+        if (jiraReady === true) setVoiceHealth('jira', 'ok', 'Jira reachable')
+        else if (jiraReady === false) setVoiceHealth('jira', 'bad', 'Jira unreachable')
+        if (status.message && /credential|expired|unauthorized/i.test(status.message)) {
+          showFailureState('AWS credentials expired', status.message)
+        }
+      }
+
+      function showFailureFromError(error) {
+        const failure = classifyFailure(error)
+        showFailureState(failure.title, failure.detail)
+        setLog(failure.title)
+      }
+
+      function showFailureState(title, detail) {
+        failureTitle.textContent = title
+        failureDetail.textContent = detail || 'Resolve the issue, then try again.'
+        failurePanel.classList.add('visible')
+        setMeetingAccessDrawerOpen(true)
+        renderOperatorPanels()
+      }
+
+      function hideFailureState() {
+        failurePanel.classList.remove('visible')
+        renderOperatorPanels()
+      }
+
+      function classifyFailure(error) {
+        const message = String(error?.message || error || '')
+        const lower = message.toLowerCase()
+        if (/meeting code|required|invalid code|meeting\/join failed: 40[134]/.test(lower)) return { title: 'Meeting code required', detail: 'Participants must enter the exact meeting code from the host before joining.' }
+        if (/credential|aws|expired|unauthorized|sts/.test(lower)) return { title: 'AWS credentials expired', detail: `${message} Run scripts/local-up.sh, complete AWS auth, then join again.` }
+        if (/nova|agent/.test(lower)) return { title: 'Nova agent not in room', detail: message }
+        if (/microphone|permission|notallowed|audio capture/.test(lower)) return { title: 'Mic permission blocked', detail: 'Allow microphone access in the browser, then join again.' }
+        if (/jira/.test(lower) && /scope|forbidden|unauthorized|rejected|401|403/.test(lower)) return { title: 'Jira write rejected by scope', detail: message }
+        if (/livekit|token|connect/.test(lower)) return { title: 'LiveKit connection failed', detail: message }
+        if (/audio playback|start audio/.test(lower)) return { title: 'LiveKit connected but audio is blocked', detail: 'Click Start audio so the browser can play the agent voice.' }
+        return { title: 'Meeting setup failed', detail: message || 'The room could not be prepared.' }
+      }
+
+      function updateBoardIntel(changes) {
+        const blockers = cards
+          .filter(c => c.status === 'Blocked' || c.blockedReason)
+          .map(c => `${c.id || c.title}: ${c.blockedReason || 'Blocked with no reason recorded'}`)
+        const actionItems = cards
+          .filter(c => c.assignee || c.dueDate)
+          .map(c => `${cardOwner(c).name}: ${c.id || c.title}${c.dueDate ? ` due ${c.dueDate}` : ''}${c.status ? ` (${c.status})` : ''}`)
+        meetingIntel.blockers = uniqueStrings([...blockers, ...meetingIntel.blockers]).slice(0, 24)
+        meetingIntel.actionItems = uniqueStrings([...actionItems, ...meetingIntel.actionItems]).slice(0, 24)
+        if (changes?.messages?.length) mergeIntelList('jiraMutations', changes.messages)
+        renderOperatorPanels()
+      }
+
+      function handleStatusMessage(text) {
+        const message = String(text || '')
+        setLog(message)
+        if (/nova sonic/i.test(message)) setVoiceHealth('nova', 'ok', 'Nova Sonic active')
+        if (/bedrock|forwarding microphone audio|stream/i.test(message)) setVoiceHealth('bedrock', 'ok', 'Bedrock stream active')
+        if (/jira/i.test(message) && /rejected|unauthorized|forbidden|scope|401|403/i.test(message)) {
+          setVoiceHealth('jira', 'bad', 'Jira write rejected')
+          showFailureState('Jira write rejected by scope', message)
+        } else if (/jira/i.test(message)) {
+          setVoiceHealth('jira', 'ok', 'Jira reachable')
+        }
+        if (/prompt injection|guardrail|blocked instruction/i.test(message)) {
+          recordConfidence({
+            score: 100,
+            label: 'Guardrail',
+            risk: 'blocked',
+            summary: 'No Jira write because task text looked like instruction injection.',
+            reasons: [message],
+          })
+        }
+      }
+
+      function extractTranscriptIntel(data) {
+        const text = String(data?.text || '').trim()
+        if (!text) return
+        const lower = text.toLowerCase()
+        if (/\b(blocked|blocker|blocking|impediment)\b/.test(lower)) mergeIntelList('blockers', `${data.speaker || localIdentity}: ${text}`)
+        if (/\b(decision|decided|we will|we agreed)\b/.test(lower)) mergeIntelList('decisions', text)
+        if (/\b(action item|follow up|todo|to-do|owner|eta)\b/.test(lower)) mergeIntelList('actionItems', text)
+        if (/\b(unresolved|open question|parking lot|not sure|unknown)\b/.test(lower)) mergeIntelList('unresolved', text)
+      }
 
       /* ── Participant tiles ── */
 
@@ -950,20 +2375,27 @@
         if (tile) tile.remove()
         if (spotlightIdentity === identity) updateSpotlight()
         updateParticipantCount()
+        renderOperatorPanels()
       }
 
       function updateParticipantCount() {
         const count = videoStrip.children.length
         participantCountEl.textContent = count > 0 ? `${count} participant${count !== 1 ? 's' : ''} ·` : ''
+        refreshValidationPanel()
       }
 
       function updateSpeakerHighlights(speakers) {
         activeSpeakers.clear()
-        for (const sp of speakers) activeSpeakers.add(sp.identity)
+        if ((speakers || []).filter(sp => !isAgentIdentity(sp.identity)).length > 1) validationStateData.overlap = true
+        for (const sp of speakers) {
+          activeSpeakers.add(sp.identity)
+          if (!isAgentIdentity(sp.identity)) markSpoken(sp.identity)
+        }
         for (const tile of videoStrip.children) {
           tile.classList.toggle('speaking', activeSpeakers.has(tile.dataset.identity))
         }
         updateSpotlight()
+        refreshValidationPanel()
       }
 
       /* ── Spotlight logic ── */
@@ -1054,18 +2486,48 @@
       async function joinRoom() {
         joinButton.disabled = true
         setStatus('Authenticating')
-        localIdentity = prompt('Enter your name:', 'User') || 'User'
+        hideFailureState()
+        localIdentity = cleanIdentity(identityInput.value || localStorage.getItem('kanban-livekit-identity') || 'User')
+        intentionalLeave = false
+        meetingJoined = false
+        meetingLeaveNotified = false
+        if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
+        wsReconnectTimer = undefined
 
         try {
-          authSession = await ensureAuthenticated(localIdentity)
-          localIdentity = authSession.participant_identity || cleanIdentity(localIdentity)
+          if (meetingRole === 'host') {
+            authSession = await ensureAuthenticated(localIdentity)
+            localIdentity = authSession.participant_identity || cleanIdentity(localIdentity)
+          }
+          identityInput.value = localIdentity
+          localStorage.setItem('kanban-livekit-identity', localIdentity)
+          setStatus('Preparing meeting access...')
+          const access = await ensureMeetingAccess(authSession)
+          authSession = {
+            ...(authSession || {}),
+            participant_identity: access.participant_identity || access.host_identity || localIdentity,
+            room_id: access.room_id || authSession?.room_id,
+            board_id: access.board_id || authSession?.board_id,
+            expires_at: access.expires_at || authSession?.expires_at,
+          }
+          currentMeetingType = normalizeMeetingTypeKey(access.meeting_type || currentMeetingType)
+          setMeetingType(currentMeetingType, { silent: true })
+          setStatus('Checking voice agent...')
+          await ensureVoiceReady(authSession)
           setStatus('Connecting...')
           const tokenURL = new URL('/livekit-token', window.location.origin)
           tokenURL.searchParams.set('identity', localIdentity)
           tokenURL.searchParams.set('room_id', authSession.room_id)
           tokenURL.searchParams.set('board_id', authSession.board_id)
           const tokenResp = await fetch(tokenURL.toString(), { credentials: 'same-origin' })
-          if (!tokenResp.ok) throw new Error(`Token request failed: ${tokenResp.status}`)
+          if (!tokenResp.ok) {
+            let detail = `Token request failed: ${tokenResp.status}`
+            try {
+              const payload = await tokenResp.json()
+              if (payload?.message) detail = payload.message
+            } catch (_) {}
+            throw new Error(detail)
+          }
           const tokenData = await tokenResp.json()
           const token = tokenData.token || tokenData
           const livekitURL = tokenData.livekit_url || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:7880`
@@ -1073,10 +2535,17 @@
           room = new LivekitClient.Room({
             adaptiveStream: true, dynacast: true,
             videoCaptureDefaults: { resolution: LivekitClient.VideoPresets.h360.resolution },
+            publishDefaults: { red: false },
           })
 
           room.on(LivekitClient.RoomEvent.Connected, () => {
             setStatus(`Connected as ${localIdentity}`)
+            setMeetingAccessDrawerOpen(false)
+            meetingStartedAt = meetingStartedAt || Date.now()
+            meetingJoined = true
+            meetingLeaveNotified = false
+            markParticipant(localIdentity, true)
+            setVoiceHealth('livekit', 'ok', 'LiveKit connected')
             leaveButton.disabled = false
             undoLastButton.disabled = false
             auditLogButton.disabled = false
@@ -1086,19 +2555,48 @@
             liveDot.classList.add('live')
             videoStrip.appendChild(createParticipantTile(localIdentity, true))
             for (const p of room.remoteParticipants.values()) addRemoteParticipantTile(p)
+            setTimeout(() => {
+              if (room && ![...room.remoteParticipants.keys()].some(isAgentIdentity)) {
+                setVoiceHealth('agent', 'bad', 'Agent participant missing')
+                showFailureState('Nova agent not in room', 'You are connected, but the voice agent has not joined this LiveKit room yet.')
+              }
+            }, 3000)
             updateParticipantCount()
             updateSpotlight()
           })
 
-          room.on(LivekitClient.RoomEvent.Disconnected, () => leaveRoom())
+          room.on(LivekitClient.RoomEvent.Disconnected, () => {
+            setVoiceHealth('livekit', 'bad', 'LiveKit disconnected')
+            const shouldNotifyLeave = meetingJoined && !meetingLeaveNotified
+            leaveRoom({ notify: shouldNotifyLeave, clearMeetingSession: shouldNotifyLeave })
+          })
 
           room.on(LivekitClient.RoomEvent.ParticipantConnected, p => {
+            markParticipant(p.identity, true)
             addRemoteParticipantTile(p)
             updateParticipantCount()
             updateSpotlight()
           })
 
-          room.on(LivekitClient.RoomEvent.ParticipantDisconnected, p => removeTile(p.identity))
+          room.on(LivekitClient.RoomEvent.ParticipantDisconnected, p => {
+            markParticipant(p.identity, false)
+            removeTile(p.identity)
+          })
+
+          if (LivekitClient.RoomEvent.Reconnecting) {
+            room.on(LivekitClient.RoomEvent.Reconnecting, () => {
+              validationStateData.reconnect = true
+              setVoiceHealth('livekit', 'warn', 'LiveKit reconnecting')
+              refreshValidationPanel()
+            })
+          }
+
+          if (LivekitClient.RoomEvent.Reconnected) {
+            room.on(LivekitClient.RoomEvent.Reconnected, () => {
+              setVoiceHealth('livekit', 'ok', 'LiveKit reconnected')
+              refreshValidationPanel()
+            })
+          }
 
           room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
             const tile = getTile(participant.identity)
@@ -1106,10 +2604,21 @@
               if (tile) attachVideoToTile(tile, track)
               updateSpotlight()
             } else if (track.kind === LivekitClient.Track.Kind.Audio) {
+              if (isAgentIdentity(participant.identity)) {
+                setVoiceHealth('agent', 'ok', 'Agent participant present')
+                setVoiceHealth('bedrock', 'ok', 'Agent audio subscribed')
+              }
               const el = track.attach()
               el.id = `audio-${CSS.escape(participant.identity)}`
+              el.autoplay = true
+              el.playsInline = true
+              el.muted = false
               el.style.display = 'none'
               document.body.appendChild(el)
+              el.play().catch(err => {
+                console.warn('Audio playback blocked:', err)
+                ensureAudioPlayback()
+              })
             }
           })
 
@@ -1137,6 +2646,14 @@
 
           room.on(LivekitClient.RoomEvent.ActiveSpeakersChanged, speakers => updateSpeakerHighlights(speakers))
 
+          room.on(LivekitClient.RoomEvent.AudioPlaybackStatusChanged, () => {
+            if (!canRoomPlayAudio()) {
+              setLog('Audio playback blocked. Click Start audio.')
+              joinButton.disabled = false
+              joinButton.textContent = 'Start audio'
+            }
+          })
+
           room.on(LivekitClient.RoomEvent.LocalTrackPublished, (pub) => {
             if (pub.kind === LivekitClient.Track.Kind.Video ||
                 (pub.track && pub.track.kind === LivekitClient.Track.Kind.Video)) {
@@ -1157,8 +2674,16 @@
           })
 
           await room.connect(livekitURL, token)
-          await room.localParticipant.setMicrophoneEnabled(true)
-          micEnabled = true; toggleMicBtn.classList.remove('off')
+          await ensureAudioPlayback()
+          try {
+            await room.localParticipant.setMicrophoneEnabled(true)
+            micEnabled = true; toggleMicBtn.classList.remove('off')
+            setVoiceHealth('mic', 'ok', 'Mic publishing')
+          } catch (micErr) {
+            micEnabled = false; toggleMicBtn.classList.add('off')
+            setVoiceHealth('mic', 'bad', 'Mic permission blocked')
+            throw micErr
+          }
 
           try {
             await room.localParticipant.setCameraEnabled(true)
@@ -1169,23 +2694,35 @@
           }
           attachLocalVideoIfAvailable()
 
-          const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
-          const wsURL = new URL(window.__WS_URL__ || `${scheme}://${window.location.host}/websocket`)
-          wsURL.searchParams.set('room_id', authSession.room_id)
-          wsURL.searchParams.set('board_id', authSession.board_id)
-          ws = new WebSocket(wsURL.toString())
-          ws.onopen = () => setStatus(`Connected as ${localIdentity}`)
-          ws.onmessage = e => { try { handleSignal(JSON.parse(e.data)) } catch(err) { console.warn('Invalid WS message', err) } }
-          ws.onclose = () => leaveRoom()
-          ws.onerror = () => setLog('WebSocket error')
+          connectBoardWebSocket()
+          refreshVoiceStatus(true).catch(err => console.warn('Voice status refresh failed', err))
         } catch (error) {
-          setLog(error.message || String(error))
-          leaveRoom()
+          showFailureFromError(error)
+          const shouldNotifyFailedJoin = meetingJoined && !meetingLeaveNotified
+          leaveRoom({ notify: shouldNotifyFailedJoin, clearMeetingSession: shouldNotifyFailedJoin })
         }
+	      }
+
+      async function ensureVoiceReady(session) {
+        const statusURL = new URL('/voice/status', window.location.origin)
+        statusURL.searchParams.set('room_id', session.room_id)
+        statusURL.searchParams.set('board_id', session.board_id)
+        const response = await fetch(statusURL.toString(), { credentials: 'same-origin' })
+        if (!response.ok) throw new Error(`Voice readiness check failed: ${response.status}`)
+        const status = await response.json()
+        applyVoiceStatus(status)
+        if (status.ready) return status
+
+        const message = status.message || 'Voice agent is not ready.'
+        setLog(message)
+        throw new Error(message)
       }
 
       async function ensureAuthenticated(preferredIdentity) {
-        const current = await fetch('/auth/session', { credentials: 'same-origin' })
+        const sessionURL = new URL('/auth/session', window.location.origin)
+        sessionURL.searchParams.set('identity', cleanIdentity(preferredIdentity))
+        sessionURL.searchParams.set('role', meetingRole)
+        const current = await fetch(sessionURL.toString(), { credentials: 'same-origin' })
         if (current.ok) return current.json()
 
         const token = await getLocalClipboardToken() || prompt('Enter app access token:')
@@ -1219,6 +2756,7 @@
       }
 
       function addRemoteParticipantTile(participant) {
+        markParticipant(participant.identity, true)
         if (getTile(participant.identity)) return
         const tile = createParticipantTile(participant.identity, false)
         videoStrip.appendChild(tile)
@@ -1231,9 +2769,17 @@
       async function toggleMic() {
         if (!room) return
         micEnabled = !micEnabled
-        await room.localParticipant.setMicrophoneEnabled(micEnabled)
-        toggleMicBtn.classList.toggle('off', !micEnabled)
-        setTileMuted(localIdentity, !micEnabled)
+        try {
+          await room.localParticipant.setMicrophoneEnabled(micEnabled)
+          toggleMicBtn.classList.toggle('off', !micEnabled)
+          setTileMuted(localIdentity, !micEnabled)
+          setVoiceHealth('mic', micEnabled ? 'ok' : 'warn', micEnabled ? 'Mic publishing' : 'Mic muted')
+        } catch (error) {
+          micEnabled = false
+          toggleMicBtn.classList.add('off')
+          setVoiceHealth('mic', 'bad', 'Mic permission blocked')
+          showFailureFromError(error)
+        }
       }
 
       async function toggleCam() {
@@ -1263,8 +2809,31 @@
         }
       }
 
-      function leaveRoom() {
+      function notifyMeetingLeave(useBeacon = false) {
+        if (!meetingJoined || meetingLeaveNotified || !authSession?.room_id) return
+        meetingLeaveNotified = true
+        const url = '/meeting/leave'
+        if (useBeacon && navigator.sendBeacon) {
+          navigator.sendBeacon(url, new Blob(['{}'], { type: 'application/json' }))
+          return
+        }
+        fetch(url, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+          keepalive: true,
+        }).catch(err => console.warn('Meeting leave notification failed', err))
+      }
+
+      function leaveRoom(options = {}) {
+        const shouldNotify = Boolean(options.notify)
+        if (shouldNotify) notifyMeetingLeave(false)
+        intentionalLeave = true
+        if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
+        wsReconnectTimer = undefined
         joinButton.disabled = false
+        joinButton.textContent = 'Join room'
         leaveButton.disabled = true
         undoLastButton.disabled = true
         auditLogButton.disabled = true
@@ -1277,50 +2846,305 @@
         spotlightIdentity = null
         participantCountEl.textContent = ''
         activeSpeakers.clear()
-        if (ws && ws.readyState !== WebSocket.CLOSED) ws.close()
-        ws = undefined
+        for (const identity of participantPresence.keys()) markParticipant(identity, false)
+        setVoiceHealth('livekit', 'warn', 'LiveKit waiting')
+        setVoiceHealth('mic', 'warn', 'Mic not checked')
+        closeBoardWebSocket()
+        meetingJoined = false
         if (room) room.disconnect()
         room = undefined
+        if (options.clearMeetingSession) storeMeetingSession(null)
         document.querySelectorAll('audio[id^="audio-"]').forEach(el => el.remove())
         setStatus('Not connected')
       }
 
+      function canRoomPlayAudio() {
+        if (!room) return true
+        if (typeof room.canPlaybackAudio === 'boolean') return room.canPlaybackAudio
+        if (typeof room.canPlayAudio === 'boolean') return room.canPlayAudio
+        return true
+      }
+
+      async function ensureAudioPlayback() {
+        if (!room || typeof room.startAudio !== 'function') return true
+        try {
+          await room.startAudio()
+          joinButton.textContent = 'Join room'
+          if (room) joinButton.disabled = true
+          return true
+        } catch (err) {
+          console.warn('Unable to start audio playback:', err)
+          setLog('Audio playback blocked. Click Start audio.')
+          joinButton.disabled = false
+          joinButton.textContent = 'Start audio'
+          return false
+        }
+      }
+
       /* ── Signaling / Kanban ── */
 
-      function handleSignal(msg) { try { if (msg.event === 'kanban') handleKanbanMessage(JSON.parse(msg.data)) } catch(e) { console.warn('Invalid signal message', e) } }
+      function connectBoardWebSocket() {
+        if (!authSession || !room || intentionalLeave) return
+        if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
+        wsReconnectTimer = undefined
+        closeBoardWebSocket()
+
+        const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+        const wsURL = new URL(window.__WS_URL__ || `${scheme}://${window.location.host}/websocket`)
+        wsURL.searchParams.set('room_id', authSession.room_id)
+        wsURL.searchParams.set('board_id', authSession.board_id)
+        const socket = new WebSocket(wsURL.toString())
+        ws = socket
+        socket.onopen = () => {
+          setStatus(`Connected as ${localIdentity}`)
+          setVoiceHealth('jira', hasBoardSnapshot ? 'ok' : 'warn', hasBoardSnapshot ? 'Jira board syncing' : 'Board channel connected')
+        }
+        socket.onmessage = e => { try { handleSignal(JSON.parse(e.data)) } catch(err) { console.warn('Invalid WS message', err) } }
+        socket.onclose = () => {
+          if (ws === socket) ws = undefined
+          if (intentionalLeave || !room) return
+          validationStateData.reconnect = true
+          refreshValidationPanel()
+          setLog('Board connection interrupted. Reconnecting...')
+          wsReconnectTimer = setTimeout(connectBoardWebSocket, 1000)
+        }
+        socket.onerror = () => {
+          setVoiceHealth('jira', 'bad', 'Board WebSocket error')
+          setLog('Board connection error')
+        }
+      }
+
+      function closeBoardWebSocket() {
+        if (!ws) return
+        const socket = ws
+        ws = undefined
+        socket.onclose = null
+        if (socket.readyState !== WebSocket.CLOSED) socket.close()
+      }
+
+      function handleSignal(msg) {
+        try {
+          if (msg.event === 'kanban') handleKanbanMessage(JSON.parse(msg.data))
+          else if (msg.event) handleKanbanMessage(msg)
+        } catch(e) {
+          console.warn('Invalid signal message', e)
+        }
+      }
 
       function handleKanbanMessage(msg) {
         switch (msg.event) {
           case 'board':
-            cards = Array.isArray(msg.data?.cards) ? msg.data.cards : []
-            { const ch = cardChanges(cards); renderBoard(ch); ch.messages.forEach(showToast); ch.commentPreviews.forEach(showCommentPreview) }
+            {
+              const state = msg.data || {}
+              cards = Array.isArray(state.cards) ? state.cards : []
+              const ch = cardChanges(cards)
+              applyBoardSnapshot(state, ch)
+              renderBoard(ch)
+              ch.messages.forEach(showToast)
+              ch.commentPreviews.forEach(showCommentPreview)
+            }
             break
-          case 'status': setLog(String(msg.data || '')); break
+          case 'meeting_access': applyMeetingAccessEvent(msg.data || {}); break
+          case 'status': handleStatusMessage(String(msg.data || '')); break
+          case 'voice_status': applyVoiceStatus(msg.data); break
+          case 'meeting_status': applyMeetingStatusPayload(msg.data || {}); break
+          case 'confidence': recordConfidence(msg.data || {}); break
           case 'transcription': addTranscriptEntry(msg.data); break
           case 'confirmation': handleConfirmation(msg.data); break
           case 'confirmation_cancelled': showToast('Action cancelled'); break
           case 'conflict': handleConflict(msg.data); break
           case 'conflict_resolved': showToast('Jira conflict resolved'); break
-          case 'audit_events': showAuditPanel(msg.data?.events || []); break
+          case 'audit_events':
+            mergeIntelList('jiraMutations', (msg.data?.events || []).map(event => event.summary || event.toolName || event.eventId))
+            showAuditPanel(msg.data?.events || [])
+            break
           case 'replay_state': showReplayPanel(msg.data); break
           case 'undo_result': showToast(msg.data?.summary || 'Undo complete'); break
           case 'command_result':
-            if (msg.data?.ok === false && msg.data?.error) showToast(msg.data.error)
-            else if (msg.data?.undo_summary) showToast(msg.data.undo_summary)
+            if (msg.data?.ok === false && msg.data?.error) {
+              showToast(msg.data.error)
+              if (/prompt injection|guardrail|instruction/i.test(msg.data.error)) {
+                recordConfidence({
+                  score: 100,
+                  label: 'Guardrail',
+                  risk: 'blocked',
+                  summary: 'No Jira write because task text looked like instruction injection.',
+                  reasons: [msg.data.error],
+                })
+              }
+              if (/jira/i.test(msg.data.error)) showFailureState('Jira write rejected by scope', msg.data.error)
+            } else if (msg.data?.undo_summary) {
+              showToast(msg.data.undo_summary)
+              mergeIntelList('jiraMutations', msg.data.undo_summary)
+            }
             break
           case 'highlight': highlightCard(msg.data?.card_id); break
           case 'close_detail': closeCardDetail(); break
         }
       }
 
+      function applyBoardSnapshot(state, changes) {
+        hasBoardSnapshot = true
+        setVoiceHealth('jira', 'ok', 'Jira board syncing')
+        updateBoardIntel(changes)
+
+        const meeting = state.meeting || {}
+        if (meeting.active && !meetingStartedAt) meetingStartedAt = Date.now()
+        if (meeting.mode || meeting.meeting_type || meeting.meetingType) {
+          setMeetingType(normalizeMeetingTypeKey(meeting.meeting_type || meeting.meetingType || meeting.mode), { silent: true })
+        }
+        if (Array.isArray(meeting.participants)) {
+          meeting.participants.forEach(participant => {
+            const name = participantDisplayName(participant)
+            markParticipant(name, true)
+            if (participant.hasSpoken || participant.has_spoken) markSpoken(name)
+          })
+        }
+        if (Array.isArray(meeting.updates)) {
+          meeting.updates.forEach(update => {
+            if (update.participant) markSpoken(update.participant)
+            if (update.blocker) mergeIntelList('blockers', formatOwnerItem(update.participant, update.blocker, update.cardId || update.card_id))
+            if (update.followUp) mergeIntelList('actionItems', formatOwnerItem(update.participant, update.followUp, update.cardId || update.card_id))
+            if (Array.isArray(update.risks)) mergeIntelList('unresolved', update.risks.map(risk => formatOwnerItem(update.participant, risk, update.cardId || update.card_id)))
+          })
+        }
+        mergeIntelList('decisions', meeting.decisions || [])
+        mergeIntelList('blockers', [
+          ...(meeting.risks || []),
+          ...(meeting.unresolvedBlockers || meeting.unresolved_blockers || []).map(formatBlocker),
+        ])
+        mergeIntelList('actionItems', [
+          ...(meeting.actionItems || meeting.action_items || []),
+          ...(meeting.followUps || meeting.follow_ups || []).map(formatFollowUp),
+          ...(meeting.ownership || []).map(formatOwnership),
+        ])
+        mergeIntelList('unresolved', meeting.parkingLot || meeting.parking_lot || [])
+
+        if (Array.isArray(state.pendingConfirmations)) {
+          pendingConfirmations.clear()
+          state.pendingConfirmations.forEach(item => {
+            const id = item.confirmationId || item.confirmation_id || item.id
+            if (id) pendingConfirmations.set(id, normalizePendingConfirmation(item))
+          })
+        }
+        if (Array.isArray(state.conflicts)) {
+          state.conflicts.forEach(conflict => {
+            const id = conflict.conflictId || conflict.conflict_id || conflict.id
+            if (id && !pendingConfirmations.has(id)) handleConflict(conflict)
+          })
+        }
+        if (Array.isArray(state.recentMutations)) {
+          const mutations = state.recentMutations.map(mutationSummary)
+          mergeIntelList('jiraMutations', mutations)
+          const latest = state.recentMutations.find(m => !m.reverted)
+          if (latest) recordConfidenceFromMutation(latest)
+        }
+        renderOperatorPanels()
+        refreshValidationPanel()
+      }
+
+      function applyMeetingAccessEvent(data) {
+        if (!data) return
+        if (data.active === false) {
+          if (room) {
+            showToast('Host left. Meeting ended.')
+            leaveRoom({ notify: false, clearMeetingSession: true })
+          } else {
+            storeMeetingSession(null)
+          }
+          meetingStartedAt = 0
+          for (const identity of participantPresence.keys()) markParticipant(identity, false)
+          renderOperatorPanels()
+          return
+        }
+        if (data.meeting_type || data.meetingType) setMeetingType(normalizeMeetingTypeKey(data.meeting_type || data.meetingType), { silent: true })
+        if (data.room_id || data.roomId || data.board_id || data.boardId || data.meeting_id || data.meetingId) {
+          const next = {
+            ...(meetingSession || {}),
+            role: meetingSession?.role || meetingRole,
+            code: meetingSession?.code || formatMeetingCode(data.join_code || data.joinCode || data.meeting_code || ''),
+            room_id: data.room_id || data.roomId || meetingSession?.room_id || '',
+            board_id: data.board_id || data.boardId || meetingSession?.board_id || '',
+            meeting_id: data.meeting_id || data.meetingId || meetingSession?.meeting_id || '',
+            meeting_type: currentMeetingType,
+            source: 'server',
+          }
+          if (next.code || next.room_id) storeMeetingSession(next)
+        }
+        if (Array.isArray(data.participants)) {
+          const present = new Set()
+          data.participants.forEach(participant => {
+            const name = participantDisplayName(participant)
+            if (!name) return
+            present.add(name)
+            markParticipant(name, true)
+          })
+          for (const identity of participantPresence.keys()) {
+            if (!isAgentIdentity(identity) && !present.has(identity)) markParticipant(identity, false)
+          }
+        }
+        renderOperatorPanels()
+      }
+
+      function participantDisplayName(participant) {
+        if (typeof participant === 'string') return participant
+        return participant?.name || participant?.identity || participant?.displayName || participant?.participant_identity || participant?.participantId || ''
+      }
+
+      function formatOwnerItem(owner, text, cardId) {
+        const prefix = owner ? `${owner}: ` : ''
+        const suffix = cardId ? ` (${cardId})` : ''
+        return `${prefix}${text}${suffix}`
+      }
+
+      function formatBlocker(blocker) {
+        if (typeof blocker === 'string') return blocker
+        return formatOwnerItem(blocker?.owner, blocker?.text || blocker?.summary || 'Blocked', blocker?.cardId || blocker?.card_id)
+      }
+
+      function formatFollowUp(followUp) {
+        if (typeof followUp === 'string') return followUp
+        const due = followUp?.dueDate || followUp?.due_date
+        return `${formatOwnerItem(followUp?.owner, followUp?.text || followUp?.summary || 'Follow-up', followUp?.cardId || followUp?.card_id)}${due ? ` due ${due}` : ''}`
+      }
+
+      function formatOwnership(item) {
+        if (typeof item === 'string') return item
+        return formatOwnerItem(item?.owner, item?.responsibility || item?.text || 'owns follow-up', item?.cardId || item?.card_id)
+      }
+
+      function mutationSummary(mutation) {
+        if (typeof mutation === 'string') return mutation
+        return mutation?.summary || `${mutation?.toolName || mutation?.tool_name || 'Jira update'}${mutation?.eventId ? ` (${mutation.eventId})` : ''}`
+      }
+
+      function recordConfidenceFromMutation(mutation) {
+        const reasons = normalizeReasons(mutation.confidenceReasons || mutation.confidence_reasons)
+        const matched = mutation.matchedCardId || mutation.matched_card_id
+        const guardrail = mutation.guardrailDecision || mutation.guardrail_decision
+        if (matched) reasons.unshift(`Matched ${matched} from the live request and board state.`)
+        if (guardrail) reasons.unshift(`Guardrail decision: ${guardrail}.`)
+        recordConfidence({
+          score: mutation.confidence || mutation.confidence_score,
+          label: guardrail === 'blocked' ? 'Guardrail' : titleCase(mutation.riskLevel || mutation.risk_level || 'Reviewed'),
+          risk: guardrail === 'blocked' ? 'blocked' : (mutation.riskLevel || mutation.risk_level || 'review'),
+          summary: mutationSummary(mutation),
+          reasons,
+        })
+      }
+
       function highlightCard(cardId) { if (!cardId) return; const c = cards.find(c => c.id === cardId); if (c) showCardDetail(c) }
 
       function addTranscriptEntry(data) {
         if (!data) return
+        lastTranscriptAt = Date.now()
+        setVoiceHealth('transcription', 'ok', 'Transcription flowing')
         const entry = document.createElement('div'); entry.className = 'transcript-entry'
         const speaker = document.createElement('div'); speaker.className = 'speaker'
         const role = (data.role || '').toLowerCase()
         speaker.classList.add(role === 'assistant' ? 'assistant-speaker' : 'user-speaker')
+        if (role !== 'assistant') markSpoken(data.speaker || localIdentity)
+        extractTranscriptIntel(data)
         const now = new Date()
         const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
         const nameSpan = document.createElement('span')
@@ -1348,16 +3172,41 @@
       }
 
       function handleConfirmation(data) {
-        if (!data?.confirmationId) return
+        if (!(data?.confirmationId || data?.confirmation_id || data?.id)) return
+        const item = normalizePendingConfirmation(data)
+        pendingConfirmations.set(item.id, item)
+        validationStateData.confirmation = true
+        recordConfidence({
+          score: item.confidence,
+          label: 'Needs confirmation',
+          risk: item.risk,
+          summary: item.prompt || 'A Jira action needs host confirmation.',
+          reasons: item.reasons,
+        })
         showToast(data.prompt || 'Action requires confirmation')
-        const accepted = window.confirm(data.prompt || 'Confirm this Jira action?')
-        sendKanbanCommand(accepted ? 'confirm_action' : 'cancel_confirmation', { confirmation_id: data.confirmationId })
+        refreshValidationPanel()
+        renderOperatorPanels()
       }
 
       function handleConflict(conflict) {
-        if (!conflict?.conflictId) return
-        const useJira = window.confirm(`${conflict.summary || 'Jira changed this card.'}\n\nOK: use Jira latest\nCancel: keep local meeting update`)
-        sendKanbanCommand('resolve_jira_conflict', { conflict_id: conflict.conflictId, resolution: useJira ? 'use_jira' : 'keep_local' })
+        if (!(conflict?.conflictId || conflict?.conflict_id || conflict?.id)) return
+        const item = normalizePendingConfirmation({
+          ...conflict,
+          type: 'conflict',
+          title: 'Jira conflict',
+          prompt: conflict.summary || 'Jira changed this card while the meeting was running.',
+          risk: 'medium',
+          reasons: ['Jira changed this while the meeting was running. Choose Jira latest or the meeting update.'],
+        })
+        pendingConfirmations.set(item.id, item)
+        recordConfidence({
+          score: item.confidence || 80,
+          label: 'Conflict',
+          risk: 'medium',
+          summary: item.prompt,
+          reasons: item.reasons,
+        })
+        renderOperatorPanels()
       }
 
       function showAuditPanel(events) {

@@ -1,10 +1,10 @@
 # Living Kanban Board Progress
 
-Last updated: 2026-05-15
+Last updated: 2026-05-19
 
 ## Current Rule
 
-Scott has now asked to update docs, commit to `jira-scrum`, and push after local validation. Do not commit secrets, generated local state, or unrelated work.
+Do not commit or push until the current feature set has been locally validated and Scott explicitly asks for the git action.
 
 ## Implemented In This Pass
 
@@ -35,6 +35,10 @@ Scott has now asked to update docs, commit to `jira-scrum`, and push after local
 - Added structured scrum-master meeting state and tools:
   - `start_meeting`, `register_participant`, `record_participant_update`
   - `next_speaker`, `summarize_meeting`, `end_meeting`
+- Added host/participant meeting access:
+  - Hosts create an eight-character random meeting code through `POST /meeting/setup`.
+  - Participants join through `POST /meeting/join`; the server accepts display codes with separators, rejects wrong codes, sets the HttpOnly session cookie, and lets joined participants mint LiveKit tokens without the app access token.
+  - Hosts can set and switch meeting type across general meeting, standup, 1:1, sprint review, and open-ended modes through `/meeting/type`, the UI, or the `switch_meeting_type` tool.
 - Added meeting intelligence:
   - Meeting memory now tracks agenda, decisions, risks, action items, parking-lot topics, follow-ups, unresolved blockers, and ownership.
   - Meeting start generates a 60-second scrum-master briefing from recent board movement, ready-PR signals, blocked work, unassigned work, stale cards, and unresolved blockers.
@@ -84,10 +88,27 @@ Scott has now asked to update docs, commit to `jira-scrum`, and push after local
   - Nova Sonic receives a sanitized full-board context refresh after successful board mutations.
   - Board-context refreshes are sent as non-interactive user/application data instead of a second `SYSTEM` block, avoiding Bedrock's duplicate-system validation failure.
   - The Bedrock audio input stream sends periodic silent frames during meeting pauses to avoid idle input timeouts while the agent is still present.
+  - Browser join now runs a Nova Sonic readiness preflight before LiveKit entry: authenticated `/voice/status` validates AWS credentials with STS in `us-east-1`, ensures the server-side Nova participant is connected, and `/livekit-token` refuses room tokens while that preflight is failing.
 - Added macOS Keychain-backed local automation:
   - `scripts/local-up.sh` provisions missing local app/login/webhook secrets in Keychain, prompts once for the Jira token when missing, runs `assume test_AccountA/AdministratorAccess` in `us-east-1`, starts Docker Compose, and opens a local-only login URL.
   - `scripts/local-compose.sh`, `scripts/local-down.sh`, and `scripts/dc-up-keychain.sh` keep Docker commands Keychain-backed without a local `.env`.
   - `/auth/local-login` creates the browser session only when `APP_ENV=local`; production rejects `APP_LOCAL_LOGIN_TOKEN`.
+- Added validation/evaluation scaffolding under `evaluation/`:
+  - Fixture-driven Go tests cover host/participant generated-code access, meeting type switching, 2-4 participant meeting behaviors, risky Jira confirmations, prompt-injection no-op behavior, owner/ETA/blocker extraction, executive recap expectations, voice reliability signals, and beautiful failure states.
+  - Added a synthetic multi-participant audio timing manifest for interruption, overlap, silence, reconnect, and late-join validation without committing binary audio.
+  - Added an AWS LiveKit hardening proof checklist for UDP/TURN, reconnect, CloudWatch alarms, and the LiveKit Cloud Terraform switch.
+- Added LiveKit meeting operator UI:
+  - Meeting Control Center tracks who has spoken, who has not spoken, blockers, decisions, action items, pending confirmations, and Jira mutations.
+  - Voice Reliability Dashboard shows mic, LiveKit, Nova Sonic, Bedrock stream, transcription, Jira, and agent-participant health.
+  - Agent Confidence UI explains matched cards, risk/confirmation reasons, and prompt-injection guardrail decisions.
+  - Executive recap output includes Slack-ready summary sections for Jira changes, blockers, action items by owner, unresolved questions, and changes since meeting start.
+  - Beautiful failure states classify missing AWS credentials, missing agent participant, blocked mic permission, Jira scope rejections, LiveKit failures, and audio playback issues.
+- Added durable post-meeting intelligence:
+  - `GET /meeting/intelligence` returns the current meeting report with agenda, participants, decisions, risks, action items, parking lot, follow-ups, blockers, ownership, Jira changes, transcript evidence, sprint intelligence, GitHub/PR hints, setup readiness, observability, and Slack-ready recap text.
+  - Ending a meeting archives the report to SQLite when `BOARD_SQLITE_PATH` is enabled.
+  - `GET /meetings` lists archived report summaries, and `GET /meeting/intelligence?meeting_id=<id>` reloads an archived report.
+  - `web/post_meeting.html` provides the post-meeting intelligence page with report selection, Jira mutation timeline, sprint signals, GitHub/PR context, setup checks, observability, transcript evidence, and copyable Slack recap.
+  - Added admin/status endpoints for `/setup/status`, `/observability/status`, `/voice/providers`, and `/identity/status`.
 - Updated README and `.env.example` for Jira, audit, and rate-limit proxy behavior.
 - Added Terragrunt/Terraform AWS deployment shape:
   - Root Terragrunt config generates S3 state, DynamoDB locking, and AWS provider config in `us-east-1`.
@@ -112,9 +133,9 @@ Scott has now asked to update docs, commit to `jira-scrum`, and push after local
 | Phase 1 - OpenAI Realtime Baseline | Partial | OpenAI provider path, shared board tools, audio mixer, local quickstart, board regression tests, and seed failure inventory exist. | Manual voice validation, two-tab audio validation evidence, fork confirmation, and live replay results are not complete. |
 | Phase 2 - Jira Sync | Partial | Jira config/client/startup hydration/write-through/polling/webhook foundation is implemented. `get_board` freshness contract is implemented. Voice tools now cover assignment, reporter/watchers, notes, comments, ETA/due date, priority, tag removal, subtasks, story points, estimates, worklogs, issue links, sprint assignment, ranking, components, fix versions, custom fields, remote links, real Blocked workflow transitions, blocked flag fallback, metadata/transition discovery, project-key write safety, confirmation gates, undo, audit replay, and conflict resolution. Live read hydration and basic write-through passed against `EMAL`. | Live webhook delivery from Atlassian and live conflict drills are not complete. |
 | Phase 2.5 - Workflow Config | Partial | JSON config supports status mappings, transition IDs, required fields, delete transition, polling, advanced field IDs, custom field mappings, metadata discovery, and transition option discovery. | Needs validation against three real workflows and a published known-limitations matrix. |
-| Phase 3 - Nova Sonic 2 via LiveKit | Partial | Provider selection, LiveKit media path, Nova Sonic Bedrock path, tool handling, transcription broadcast, transcript evidence capture, stream lifecycle renewal foundation, duplicate-system-safe post-mutation board-context refresh, and silence keepalive exist. | LiveKit data-channel board events, full 8-minute renewal proof, VAD calibration, A/B provider comparison, and real end-to-end voice tests are not complete. |
+| Phase 3 - Nova Sonic 2 via LiveKit | Partial | Provider selection, LiveKit media path, Nova Sonic Bedrock path, tool handling, transcription broadcast, transcript evidence capture, stream lifecycle renewal foundation, duplicate-system-safe post-mutation board-context refresh, silence keepalive, authenticated voice readiness preflight, host-code meeting access, meeting-type switching, operator control center, reliability dashboard, confidence UI, executive recap, durable post-meeting intelligence page/API/archive, and evaluation fixtures for multi-participant/reconnect/silence/overlap cases exist. | LiveKit data-channel board events, full 8-minute renewal proof, VAD calibration, A/B provider comparison, and real end-to-end multi-participant voice tests are not complete. |
 | Phase 4 - Agent-First Task Execution | Missing / blocked | None beyond board tags and Jira foundation. | Requires persistent task/agent state, classifier, cold-start labels, cost caps, sandboxed runners, checkpoints, take_over, retry_with, typed escalations, standup summary, and metrics. |
-| Phase 5 - Auth, Hardening, AWS Deployment | Partial | Docker, non-root runtime, origin checks, headers, timeouts, read limits, max clients, HttpOnly session auth, local-only Keychain login bootstrap, board/room request authorization, rate limits, audit JSONL, SQLite board event history, Jira webhook secret injection, Terragrunt remote state, private-subnet ECS/Fargate app and optional self-hosted LiveKit services, ALB with WAF, LiveKit NLB, ECR immutable tags, CloudWatch logs/dashboard, Secrets Manager wiring, private VPC endpoints, fck-nat private egress, ElastiCache Redis for LiveKit routing, embedded TURN/UDP, optional TURN/TLS, EFS board persistence with IAM access-point auth, LiveKit Cloud mode switch, and narrowed Bedrock task-role permissions exist. | OIDC/Cognito auth, true multi-room agent orchestration, CloudWatch alarms, AWS-applied DNS/certificate validation, pinned fck-nat AMI selection for the target account, and validated LiveKit self-hosting are not complete. |
+| Phase 5 - Auth, Hardening, AWS Deployment | Partial | Docker, non-root runtime, origin checks, headers, timeouts, read limits, max clients, HttpOnly session auth, local-only Keychain login bootstrap, board/room request authorization, rate limits, audit JSONL, SQLite board event history, archived meeting reports, Jira webhook secret injection, Terragrunt remote state, private-subnet ECS/Fargate app and optional self-hosted LiveKit services, ALB with WAF, LiveKit NLB, ECR immutable tags, CloudWatch logs/dashboard, Secrets Manager wiring, private VPC endpoints, fck-nat private egress, ElastiCache Redis for LiveKit routing, embedded TURN/UDP, optional TURN/TLS, EFS board persistence with IAM access-point auth, LiveKit Cloud mode switch, and narrowed Bedrock task-role permissions exist. | OIDC/Cognito auth, true multi-room agent orchestration, CloudWatch alarms, AWS-applied DNS/certificate validation, pinned fck-nat AMI selection for the target account, and validated LiveKit self-hosting are not complete. |
 
 ## Jira Setup Needed From The New Account
 
@@ -160,6 +181,8 @@ scripts/local-up.sh
 - Run `go mod verify`. Last local result: pass.
 - Run `scripts/pre-commit`. Last local result: pass.
 - Run inline JavaScript syntax checks for both web clients. Last local result: pass via `node --check` on extracted inline scripts.
+- Run `go test ./evaluation`. Last local result: pass.
+- Run captured-result grading with `AUTO_BOT_EVAL_RESULTS_DIR=/absolute/path/to/results go test ./evaluation` after a real or simulated multi-participant run. Last local result: not run; no captured results have been generated yet.
 - Run Terraform/Terragrunt formatting and Terraform validation. Last local result: pass via Dockerized `hashicorp/terraform:1.14.0@sha256:3abcdb56739bf9c61a0290cfd1a2e41ef9c3799c0e6fa7f3c467f883367d3ecb` and `alpine/terragrunt:1.15.2@sha256:002defed150fa617710d6c5c208c1d54dd7ad60821d83f0408457d116e39f191`; module validation used `hashicorp/aws = 6.45.0` and `hashicorp/cloudinit = 2.4.0`; local `terraform` and `terragrunt` binaries are not installed.
 - Scan for forbidden `:latest` / `@latest` references in operational Docker/Terraform/script files. Last local result: pass.
 - Start without Jira and verify the local demo still renders. Last local result: pass with `APP_API_TOKEN=test-token` and no provider credentials.
@@ -167,8 +190,15 @@ scripts/local-up.sh
 - Verify served HTML does not contain `APP_API_TOKEN`, `window.__APP_TOKEN__`, or query-string token wiring. Last local unit-test result: pass.
 - Verify session cookies authenticate only the configured room/board and reject cross-board requests. Last local unit-test result: pass.
 - Verify local-only `/auth/local-login` sets a browser session from the Keychain login token and is rejected outside `APP_ENV=local`. Last local unit-test/curl result: pass.
+- Verify host creates a browser meeting code, wrong participant code is rejected, and correct participant code can mint a LiveKit token without the app access token. Last local browser/curl result: pass on 2026-05-19.
+- Verify meeting leave lifecycle: participant leave removes only that participant and keeps the host meeting active; host leave ends the meeting, revokes participant access, records the board meeting end, and broadcasts the inactive meeting snapshot. Last local unit/curl result: pass on 2026-05-19.
+- Verify local Docker browser-facing LiveKit URL uses IPv4 loopback when the server-internal LiveKit URL is `ws://livekit:7880`. Last local unit result: pass on 2026-05-19.
+- Verify the CSP allows LiveKit browser validation calls only for local loopback and the configured LiveKit browser/cloud origin, so `/rtc/v1/validate` is not blocked during room join. Last local unit/browser result: pass on 2026-05-19.
+- Verify Nova Sonic readiness blocks LiveKit token minting when AWS credentials are missing or expired. Last local unit-test result: pass.
 - Verify production mode rejects disabled auth and LiveKit `devkey`/`secret`. Last local unit-test result: pass.
 - Verify SQLite board snapshots and event history survive board reload. Last local unit-test result: pass.
+- Verify SQLite meeting intelligence reports archive on meeting end and can be listed/loaded. Last local unit-test result: pass.
+- Verify post-meeting report builder includes sprint intelligence, GitHub/PR hints, setup readiness, observability, Jira changes, and transcript evidence. Last local unit-test result: pass.
 - Run `docker compose config`. Last local result: pass; Compose warns if AWS credential env vars are unset.
 - Run `docker build -t auto-bot:local .`. Last local result: pass.
 - Run app container smoke test and curl `/`. Last local result: pass.
@@ -200,6 +230,8 @@ scripts/local-up.sh
 - Agent execution is not implemented. Phase 4 needs a separate state model and sandbox runner before any real dispatch should be trusted.
 - AWS deployment is scaffolded but not applied. A real AWS deploy still needs AWS credentials, a reviewed/pinned `FCK_NAT_AMI_ID`, DNS/cert inputs if using TLS/TURN/TLS, and LiveKit network validation; local `terraform` and `terragrunt` binaries are not installed in this environment.
 - LiveKit on Fargate is implemented as a testable self-host path with Redis and TURN hooks, but WebRTC UDP/TURN reachability must be validated in AWS before treating it as production-ready. LiveKit Cloud mode is available as a Terraform input switch.
+- Evaluation scaffolding now defines the required host-code, meeting-type, multi-participant, prompt-injection, recap, and AWS LiveKit proof cases, but it does not yet drive real browsers or compare against captured production meeting outputs.
+- Post-meeting intelligence now has backend/API/UI/persistence coverage, but it still needs a live meeting with real participants to verify the report quality, transcript evidence, and Slack-ready recap in a realistic room.
 - Jira Software board configuration reads are not wired into startup sync; the diagnostic script is available for token/scope verification if we decide to consume `/rest/agile/1.0/board/{boardId}/configuration`.
 
 ## Useful Next Build Steps

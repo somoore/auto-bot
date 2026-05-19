@@ -37,14 +37,18 @@ type pendingConfirmation struct {
 }
 
 type pendingConfirmationView struct {
-	ConfirmationID string        `json:"confirmationId"`
-	ToolName       string        `json:"toolName"`
-	RiskLevel      toolRiskLevel `json:"riskLevel"`
-	Prompt         string        `json:"prompt"`
-	Source         string        `json:"source,omitempty"`
-	Actor          string        `json:"actor,omitempty"`
-	CreatedAt      string        `json:"createdAt"`
-	ExpiresAt      string        `json:"expiresAt"`
+	ConfirmationID    string        `json:"confirmationId"`
+	ToolName          string        `json:"toolName"`
+	RiskLevel         toolRiskLevel `json:"riskLevel"`
+	Prompt            string        `json:"prompt"`
+	Source            string        `json:"source,omitempty"`
+	Actor             string        `json:"actor,omitempty"`
+	Confidence        float64       `json:"confidence,omitempty"`
+	ConfidenceReasons []string      `json:"confidenceReasons,omitempty"`
+	MatchedCardID     string        `json:"matchedCardId,omitempty"`
+	GuardrailDecision string        `json:"guardrailDecision,omitempty"`
+	CreatedAt         string        `json:"createdAt"`
+	ExpiresAt         string        `json:"expiresAt"`
 }
 
 type transcriptEntry struct {
@@ -83,19 +87,23 @@ type boardMutationRecord struct {
 }
 
 type boardMutationView struct {
-	EventID      string             `json:"eventId"`
-	OccurredAt   string             `json:"occurredAt"`
-	Source       string             `json:"source"`
-	Actor        string             `json:"actor,omitempty"`
-	ToolName     string             `json:"toolName"`
-	RiskLevel    toolRiskLevel      `json:"riskLevel"`
-	Confirmation string             `json:"confirmationId,omitempty"`
-	CardIDs      []string           `json:"cardIds,omitempty"`
-	Summary      string             `json:"summary"`
-	Transcript   transcriptEvidence `json:"transcript,omitempty"`
-	Sequence     int64              `json:"sequenceNumber"`
-	Reverted     bool               `json:"reverted,omitempty"`
-	UndoOf       string             `json:"undoOf,omitempty"`
+	EventID           string             `json:"eventId"`
+	OccurredAt        string             `json:"occurredAt"`
+	Source            string             `json:"source"`
+	Actor             string             `json:"actor,omitempty"`
+	ToolName          string             `json:"toolName"`
+	RiskLevel         toolRiskLevel      `json:"riskLevel"`
+	Confirmation      string             `json:"confirmationId,omitempty"`
+	CardIDs           []string           `json:"cardIds,omitempty"`
+	Summary           string             `json:"summary"`
+	Confidence        float64            `json:"confidence,omitempty"`
+	ConfidenceReasons []string           `json:"confidenceReasons,omitempty"`
+	MatchedCardID     string             `json:"matchedCardId,omitempty"`
+	GuardrailDecision string             `json:"guardrailDecision,omitempty"`
+	Transcript        transcriptEvidence `json:"transcript,omitempty"`
+	Sequence          int64              `json:"sequenceNumber"`
+	Reverted          bool               `json:"reverted,omitempty"`
+	UndoOf            string             `json:"undoOf,omitempty"`
 }
 
 type scrumFollowUp struct {
@@ -469,6 +477,15 @@ func (board *kanbanBoard) RecordTranscript(role, speaker, text string) {
 	}
 }
 
+func (board *kanbanBoard) LastTranscriptAt() string {
+	board.mu.Lock()
+	defer board.mu.Unlock()
+	if len(board.lastTranscripts) == 0 {
+		return ""
+	}
+	return board.lastTranscripts[len(board.lastTranscripts)-1].CreatedAt
+}
+
 func (board *kanbanBoard) undoLastMutation(args map[string]any, meta toolCallMeta) (map[string]any, bool, error) {
 	eventID := asString(args["event_id"])
 	board.mu.Lock()
@@ -821,34 +838,86 @@ func (board *kanbanBoard) nextOperationIDLocked(prefix string) string {
 }
 
 func pendingConfirmationToView(confirmation pendingConfirmation) pendingConfirmationView {
+	confidence, reasons := confidenceForToolAction(confirmation.ToolName, confirmation.Arguments, confirmation.RiskLevel, true)
 	return pendingConfirmationView{
-		ConfirmationID: confirmation.ConfirmationID,
-		ToolName:       confirmation.ToolName,
-		RiskLevel:      confirmation.RiskLevel,
-		Prompt:         confirmation.Prompt,
-		Source:         confirmation.Source,
-		Actor:          confirmation.Actor,
-		CreatedAt:      confirmation.CreatedAt,
-		ExpiresAt:      confirmation.ExpiresAt,
+		ConfirmationID:    confirmation.ConfirmationID,
+		ToolName:          confirmation.ToolName,
+		RiskLevel:         confirmation.RiskLevel,
+		Prompt:            confirmation.Prompt,
+		Source:            confirmation.Source,
+		Actor:             confirmation.Actor,
+		Confidence:        confidence,
+		ConfidenceReasons: reasons,
+		MatchedCardID:     firstNonEmptyString(confirmation.Arguments, "card_id", "source_card_id", "parent_id"),
+		GuardrailDecision: "awaiting human confirmation",
+		CreatedAt:         confirmation.CreatedAt,
+		ExpiresAt:         confirmation.ExpiresAt,
 	}
 }
 
 func boardMutationToView(record boardMutationRecord) boardMutationView {
+	confidence, reasons := confidenceForToolAction(record.ToolName, record.Arguments, record.RiskLevel, record.Confirmation != "")
 	return boardMutationView{
-		EventID:      record.EventID,
-		OccurredAt:   record.OccurredAt,
-		Source:       record.Source,
-		Actor:        record.Actor,
-		ToolName:     record.ToolName,
-		RiskLevel:    record.RiskLevel,
-		Confirmation: record.Confirmation,
-		CardIDs:      append([]string(nil), record.CardIDs...),
-		Summary:      record.Summary,
-		Transcript:   record.Transcript,
-		Sequence:     record.Sequence,
-		Reverted:     record.Reverted,
-		UndoOf:       record.UndoOf,
+		EventID:           record.EventID,
+		OccurredAt:        record.OccurredAt,
+		Source:            record.Source,
+		Actor:             record.Actor,
+		ToolName:          record.ToolName,
+		RiskLevel:         record.RiskLevel,
+		Confirmation:      record.Confirmation,
+		CardIDs:           append([]string(nil), record.CardIDs...),
+		Summary:           record.Summary,
+		Confidence:        confidence,
+		ConfidenceReasons: reasons,
+		MatchedCardID:     firstNonEmpty(record.CardIDs...),
+		GuardrailDecision: guardrailDecisionForMutation(record),
+		Transcript:        record.Transcript,
+		Sequence:          record.Sequence,
+		Reverted:          record.Reverted,
+		UndoOf:            record.UndoOf,
 	}
+}
+
+func confidenceForToolAction(toolName string, args map[string]any, risk toolRiskLevel, confirmed bool) (float64, []string) {
+	reasons := []string{fmt.Sprintf("Server selected %s with %s risk.", toolName, risk)}
+	score := 0.9
+	if cardID := firstNonEmptyString(args, "card_id", "source_card_id", "parent_id"); cardID != "" {
+		reasons = append(reasons, "Matched explicit card id "+cardID+".")
+	} else {
+		score -= 0.08
+		reasons = append(reasons, "No explicit card id was present.")
+	}
+	switch risk {
+	case toolRiskHigh:
+		score -= 0.18
+		reasons = append(reasons, "High-risk Jira action needs explicit confirmation.")
+	case toolRiskMedium:
+		score -= 0.1
+		reasons = append(reasons, "Medium-risk Jira action needs explicit confirmation.")
+	default:
+		reasons = append(reasons, "Low-risk action can proceed without confirmation.")
+	}
+	if confirmed {
+		score += 0.05
+		reasons = append(reasons, "A human confirmation gate was satisfied.")
+	}
+	if score < 0.35 {
+		score = 0.35
+	}
+	if score > 0.98 {
+		score = 0.98
+	}
+	return score, reasons
+}
+
+func guardrailDecisionForMutation(record boardMutationRecord) string {
+	if record.Confirmation != "" {
+		return "confirmed before Jira mutation"
+	}
+	if record.RiskLevel == toolRiskLow {
+		return "allowed as low-risk meeting action"
+	}
+	return "allowed by server policy"
 }
 
 func (board *kanbanBoard) mutationViewsLocked(limit int) []boardMutationView {

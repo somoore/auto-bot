@@ -53,3 +53,74 @@ func TestSQLiteBoardStorePersistsSnapshotsAndEvents(t *testing.T) {
 		t.Fatalf("eventCount = %d, want at least initial snapshot and create event", eventCount)
 	}
 }
+
+func TestSQLiteBoardStorePersistsMeetingReports(t *testing.T) {
+	store, err := newSQLiteBoardStore(filepath.Join(t.TempDir(), "board.sqlite"))
+	if err != nil {
+		t.Fatalf("newSQLiteBoardStore returned error: %v", err)
+	}
+	defer store.Close()
+
+	board, err := newPersistentKanbanBoard("team-board", store)
+	if err != nil {
+		t.Fatalf("newPersistentKanbanBoard returned error: %v", err)
+	}
+	previousSharedBoard := sharedBoard
+	sharedBoard = board
+	t.Cleanup(func() { sharedBoard = previousSharedBoard })
+
+	if _, changed, err := board.ApplyToolCallWithMeta("start_meeting", `{"meeting_id":"standup-report-1","meeting_type":"standup","participants":["Scott","Sarah"],"agenda":["blockers","owners"]}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("start_meeting returned error: %v", err)
+	} else if !changed {
+		t.Fatal("start_meeting should mutate")
+	}
+
+	createResult, changed, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Report persistence work","notes":"Need archived intelligence","status":"In Progress","tags":["reporting"]}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("create_ticket should mutate")
+	}
+	card := createResult["card"].(kanbanCard)
+
+	if _, changed, err := board.ApplyToolCallWithMeta("record_participant_update", `{"participant":"Sarah","card_id":"`+card.ID+`","spoken_text":"I will finish the report page today.","follow_up":"Sarah to validate post-meeting report","eta":"2026-05-20"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("record_participant_update returned error: %v", err)
+	} else if !changed {
+		t.Fatal("record_participant_update should mutate")
+	}
+
+	if _, changed, err := board.ApplyToolCallWithMeta("end_meeting", `{"decision":"Ship the report archive.","action_items":["Scott to review the recap"]}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("end_meeting returned error: %v", err)
+	} else if !changed {
+		t.Fatal("end_meeting should mutate")
+	}
+
+	summaries, err := store.ListMeetingReports(context.Background(), "team-board", 10)
+	if err != nil {
+		t.Fatalf("ListMeetingReports returned error: %v", err)
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("summaries length = %d, want 1", len(summaries))
+	}
+	if summaries[0].MeetingID != "standup-report-1" {
+		t.Fatalf("MeetingID = %q, want standup-report-1", summaries[0].MeetingID)
+	}
+	if summaries[0].JiraChangeCnt == 0 || summaries[0].ActionItemCnt == 0 {
+		t.Fatalf("summary counts = %#v, want Jira changes and action items", summaries[0])
+	}
+
+	report, found, err := store.LoadMeetingReport(context.Background(), "team-board", "standup-report-1")
+	if err != nil {
+		t.Fatalf("LoadMeetingReport returned error: %v", err)
+	}
+	if !found {
+		t.Fatal("meeting report not found")
+	}
+	if report.Active {
+		t.Fatal("archived report should not be active")
+	}
+	if report.SlackSummary == "" || len(report.JiraChanges) == 0 {
+		t.Fatalf("report missing recap or mutations: %#v", report.SummaryView())
+	}
+}

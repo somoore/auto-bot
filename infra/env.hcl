@@ -15,6 +15,6 @@ locals {
     livekit_turn_udp_enabled = true
     livekit_turn_tls_enabled = false
     log_retention_days       = 14
-    bedrock_model_arns       = ["arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-sonic-v1:0"]
+    bedrock_model_arns       = ["arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-sonic-v1:0"]
   }
 }

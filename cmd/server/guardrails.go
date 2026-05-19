@@ -515,7 +515,7 @@ func promptInjectionRisk(value string) (string, bool) {
 		"delete_ticket", "move_ticket", "create_ticket", "create_subtask", "assign_ticket", "unassign_ticket",
 		"set_priority", "set_blocked", "set_story_points", "set_estimate", "add_worklog", "link_issues",
 		"set_sprint", "rank_issue", "set_components", "set_fix_versions", "set_custom_field", "add_remote_link",
-		"set_reporter", "add_watcher", "start_meeting", "record_participant_update", "end_meeting",
+		"set_reporter", "add_watcher", "start_meeting", "switch_meeting_type", "set_meeting_type", "record_participant_update", "end_meeting",
 	):
 		return "mentions internal tool names", true
 	case containsAll("exfiltrate", "token"), containsAll("exfiltrate", "secret"):

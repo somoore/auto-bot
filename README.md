@@ -92,7 +92,9 @@ export AWS_PROFILE=test_AccountA/AdministratorAccess
 ./scripts/local-up.sh
 ```
 
-Open [http://localhost:3001](http://localhost:3001), click **Join room**, grant microphone access, and start talking. The LiveKit SFU runs on port 7880, the app on port 3001.
+Open [http://localhost:3001](http://localhost:3001). As host, select **Host**, choose the meeting type, click **Create meeting code**, then click **Join room** and grant microphone access. Participants select **Participant**, enter the generated meeting code, and click **Join room**. Participant browsers do not need the app access token; the server creates their session only after the meeting code is accepted. The LiveKit SFU runs on port 7880, the app on port 3001.
+
+The **Join room** button performs a server-side voice readiness preflight before entering LiveKit. For Nova Sonic it validates AWS credentials with STS in `us-east-1` and makes sure the server-side Nova participant has joined the room. If credentials are missing or expired, the browser will stay out of the room and show the `scripts/local-up.sh` recovery command instead of leaving you alone in an empty meeting.
 
 The Docker Compose stack is explicitly `APP_ENV=local`. `APP_API_TOKEN` is required and should come from Keychain through `scripts/dc-up-keychain.sh`; the app token is not baked into the image or served to the browser. `scripts/local-up.sh` also provisions a separate local-only `APP_LOCAL_LOGIN_TOKEN` and opens `/auth/local-login` to set the HttpOnly session cookie without prompting. That endpoint only exists in local mode; production rejects `APP_LOCAL_LOGIN_TOKEN`.
 
@@ -103,6 +105,8 @@ To run the UI, board, and Jira control plane without AWS voice credentials:
 ```bash
 AUTO_BOT_SKIP_AWS=1 ./scripts/dc-up-keychain.sh --build -d
 ```
+
+That mode is for board/Jira testing only. Nova Sonic meeting join is intentionally blocked until the stack is restarted with fresh AWS credentials.
 
 ### Option C: Nova Sonic 2 (local, no Docker)
 
@@ -194,11 +198,43 @@ The scrum master agent understands natural language commands:
 
 The agent also responds to implicit status updates during standup — if someone says "I finished X", it moves the matching card to Done automatically. In structured meetings it can start/end meetings, deliver a 60-second opening briefing, track participants, move to the next speaker, record blockers/risks/decisions/action items/follow-ups/parking-lot topics, track ownership, summarize the meeting, and keep Jira synchronized.
 
+Meeting types are explicit. The host can start as a general meeting, standup, 1:1, sprint review, or open-ended meeting, and can switch modes in the UI or by asking the agent during the meeting. The agent is instructed to switch modes only from live host/facilitator speech or after host confirmation.
+
 Medium-risk Jira actions such as assignment, ETA, priority, and reporter changes create a pending confirmation before they write. High-risk actions such as delete/close, sprint moves, and ranking changes also require explicit confirmation. The UI exposes **Undo** and **Audit** controls; audit replay shows the mutation, before/after context, and captured transcript evidence when available.
 
 ## Multi-Party Video & Layout Modes
 
 The Nova Sonic frontend (LiveKit) supports multi-party video conferencing. All participants see each other's webcam feeds, hear each other, and interact with the shared AI agent. Active speakers are highlighted in real time.
+
+The right-side operator panel includes the meeting code, Meeting Control Center, Voice Reliability Dashboard, agent confidence evidence, validation checklist, and a Slack-ready executive recap. It surfaces who has and has not spoken, blockers, decisions, action items, pending confirmations, Jira mutations, mic/LiveKit/Nova/Bedrock/transcription/Jira health, and precise failure states such as expired AWS credentials, missing agent participant, blocked mic permission, rejected Jira scope, or LiveKit audio-track problems.
+
+## Meeting Intelligence
+
+The scrum-master layer now has a durable post-meeting intelligence path. During and after a meeting the backend can generate a report with agenda, participants, decisions, risks, action items, parking-lot items, follow-ups, unresolved blockers, ownership, transcript evidence, Jira mutations, sprint risk signals, GitHub/PR hints, setup readiness, and voice/LiveKit/Jira observability.
+
+Open [http://localhost:3001/post-meeting](http://localhost:3001/post-meeting) after a local meeting, or click **Intelligence** in the LiveKit operator panel. The page includes:
+
+- Slack-ready executive recap
+- Jira changes summary and audit evidence
+- Blockers, risks, action items by owner, and unresolved questions
+- Sprint intelligence for blocked, unassigned, missing-ETA, stale, PR-ready, and scope-change signals
+- GitHub/PR context from Jira remote links, card tags/comments, or optional `GITHUB_CONTEXT_JSON`
+- Setup readiness for auth, identity, Jira, persistence, LiveKit, and speech providers
+- Observability for voice provider readiness, LiveKit mode, Jira configuration, storage, agent presence, Bedrock stream, and board sequence
+
+Useful authenticated endpoints:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /meeting/intelligence` | Current meeting intelligence report |
+| `GET /meeting/intelligence?meeting_id=<id>` | Archived report loaded from SQLite |
+| `GET /meetings?limit=50` | Archived report summaries plus current summary |
+| `GET /setup/status` | Setup/admin readiness checks |
+| `GET /observability/status` | Current voice/Jira/storage/meeting observability |
+| `GET /voice/providers` | Active and available full-duplex speech provider options |
+| `GET /identity/status` | Current identity, role, and meeting permissions |
+
+When `BOARD_SQLITE_PATH` is set, ending a meeting archives the intelligence report into SQLite. Docker Compose uses `/srv/data/board.sqlite`; AWS mounts `/srv/data` on EFS for the Fargate app task.
 
 ### Layout Modes
 
@@ -218,6 +254,8 @@ All panels between video, board, and transcription are **resizable** — drag th
 - **Mic toggle** — mute/unmute microphone
 - **Camera toggle** — enable/disable webcam
 - **Leave room** — disconnect from the meeting
+- **Meeting type** — switch facilitation between general meeting, standup, 1:1, sprint review, and open-ended modes
+- **Undo/Audit** — reverse the latest voice-driven mutation or inspect replay evidence
 
 The app is fully responsive: desktop, tablet, and mobile. On smaller screens, layouts collapse to stacked views, resize handles are hidden, and controls remain accessible without scrolling. The transcription panel auto-scrolls in place within a fixed viewport — the page itself never scrolls.
 
@@ -243,12 +281,12 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `AWS_SESSION_TOKEN` | _unset_ | Nova Sonic | Session token for assumed roles |
 | `AWS_PROFILE` | `test_AccountA/AdministratorAccess` | Nova Sonic | AWS shared config profile (used when explicit keys not set) |
 | `AWS_REGION` | `us-east-1` | Nova Sonic | Bedrock region |
-| `NOVA_SONIC_MODEL` | `amazon.nova-sonic-v1:0` | Nova Sonic | Bedrock model ID |
+| `NOVA_SONIC_MODEL` | `amazon.nova-2-sonic-v1:0` | Nova Sonic | Bedrock model ID |
 | `NOVA_SONIC_VOICE` | `matthew` | Nova Sonic | TTS voice ID |
 | `LIVEKIT_DEPLOYMENT_MODE` | `self-hosted` | Nova Sonic/AWS | Terraform media-plane switch: `self-hosted` deploys LiveKit, `cloud` uses LiveKit Cloud with `LIVEKIT_CLOUD_URL`. |
 | `LIVEKIT_CLOUD_URL` | _unset_ | Nova Sonic/AWS | LiveKit Cloud URL, for example `wss://project.livekit.cloud`, used when `LIVEKIT_DEPLOYMENT_MODE=cloud`. |
 | `LIVEKIT_URL` | `ws://localhost:7880` | Nova Sonic | LiveKit server WebSocket URL |
-| `LIVEKIT_BROWSER_URL` | _derived_ | Nova Sonic | Browser-facing LiveKit URL returned by `/livekit-token`; useful when server-internal `LIVEKIT_URL` is not browser reachable. |
+| `LIVEKIT_BROWSER_URL` | _derived_ | Nova Sonic | Browser-facing LiveKit URL returned by `/livekit-token`; local Docker defaults this to `ws://127.0.0.1:7880` because LiveKit is bound to IPv4 loopback. |
 | `LIVEKIT_API_KEY` | _(required)_ | Nova Sonic | LiveKit API key (no default — must be set) |
 | `LIVEKIT_API_SECRET` | _(required)_ | Nova Sonic | LiveKit API secret (no default — must be set) |
 | `JIRA_CONFIG_PATH` | _unset_ | Both | Optional Jira Cloud sync configuration JSON |
@@ -294,6 +332,9 @@ cmd/
     main.go             Entry point, provider switch, HTTP/WebSocket server
     board.go            Shared Kanban board state, card CRUD, tools, instructions
     scrum_tools.go      Scrum-master meeting tools and advanced local Jira metadata actions
+    meeting_reports.go  Post-meeting intelligence report builder
+    meeting_report_handlers.go
+                        Intelligence, setup, observability, provider, and identity endpoints
     jira.go             Jira config, hydration, core issue write-through
     jira_ext.go         Advanced Jira metadata, Agile, worklog, link, and custom-field calls
     auth.go             HttpOnly session and Bearer auth
@@ -310,6 +351,7 @@ cmd/
 web/
   index.html            OpenAI frontend (Pion WebRTC)
   index_livekit.html    Nova Sonic frontend (LiveKit SDK, multi-party video, layout modes, transcription)
+  post_meeting.html     Post-meeting intelligence dashboard
 scripts/
   local-up.sh           One-command local startup: Keychain, assume, Docker Compose, browser
   local-compose.sh      Docker Compose wrapper that injects Keychain-backed local env
@@ -347,6 +389,8 @@ plan.md                 Project roadmap
 | --- | --- |
 | `cmd/server/board.go` | Shared Kanban board state, card/task model, tool definitions, session instructions, WebSocket broadcast |
 | `cmd/server/scrum_tools.go` | Scrum-master meeting state plus advanced task actions: subtasks, estimates, worklogs, links, sprint/rank, components, fix versions, custom fields, remote links, reporter/watchers |
+| `cmd/server/meeting_reports.go` | Meeting intelligence report builder: recap, transcript evidence, sprint signals, GitHub/PR hints, setup readiness, and observability |
+| `cmd/server/meeting_report_handlers.go` | HTTP handlers for `/post-meeting`, report archives, setup status, observability, provider options, and identity status |
 | `cmd/server/jira.go` | Optional Jira Cloud REST API v3 sync, config loading, core issue mapping, and write-through mutations |
 | `cmd/server/jira_ext.go` | Advanced Jira Platform/Agile calls for metadata, transition discovery, worklogs, issue links, sprint assignment, ranking, custom fields, remote links, reporter, and watchers |
 | `cmd/server/auth.go` | Token-backed HttpOnly browser sessions and non-browser Bearer auth |
@@ -449,6 +493,7 @@ This application includes several hardening measures:
 - **Room/board authorization**: Requests are bound to configured `APP_ROOM_ID` and `APP_BOARD_ID`; LiveKit grants are minted only for that room and WebSocket broadcasts are scoped by board ID.
 - **LiveKit secret safety**: Production mode refuses missing LiveKit credentials and refuses the `devkey`/`secret` development pair.
 - **Durable board state**: Set `BOARD_SQLITE_PATH` to persist board snapshots and event history. Docker Compose mounts `/srv/data`; AWS mounts that path on EFS for Fargate.
+- **Durable meeting reports**: Ended meetings archive post-meeting intelligence reports when the board store supports report persistence.
 - **WebSocket origin validation**: Same-origin by default; configurable via `--allowed-origins` flag.
 - **HTTP security headers**: CSP, X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy.
 - **HTTP server timeouts**: Read, write, idle, and header timeouts are all set to prevent slowloris attacks.

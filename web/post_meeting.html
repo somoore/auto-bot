@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Post-Meeting Intelligence</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101316;
+        --panel: #171c20;
+        --panel-2: #1e252b;
+        --line: #2f3942;
+        --text: #f1f5f8;
+        --muted: #9aa8b4;
+        --accent: #54c6a8;
+        --warn: #f3c969;
+        --bad: #f27676;
+        --ok: #69d39a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 18px;
+        align-items: end;
+        padding: 28px 32px 18px;
+        border-bottom: 1px solid var(--line);
+        background: #11161a;
+      }
+      h1, h2, h3, p { margin: 0; }
+      h1 { font-size: 28px; line-height: 1.1; letter-spacing: 0; }
+      h2 { font-size: 16px; margin-bottom: 12px; }
+      h3 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+      .subtle { color: var(--muted); margin-top: 8px; line-height: 1.45; }
+      .toolbar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+      button, select, a.button {
+        min-height: 36px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        border-radius: 7px;
+        padding: 0 12px;
+        font: inherit;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+      }
+      button.primary, a.button.primary { background: var(--accent); color: #071512; border-color: var(--accent); font-weight: 700; }
+      main { padding: 24px 32px 40px; display: grid; gap: 18px; }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .metric, section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .metric { padding: 14px; min-width: 0; }
+      .metric strong { display: block; font-size: 26px; line-height: 1; }
+      .metric span { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+      section { padding: 16px; min-width: 0; }
+      .wide { grid-column: 1 / -1; }
+      .list { display: grid; gap: 8px; }
+      .item {
+        padding: 10px 12px;
+        background: #12171b;
+        border: 1px solid #27313a;
+        border-radius: 7px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+      .muted { color: var(--muted); }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 0 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+        margin-right: 6px;
+      }
+      .pill.ok { color: var(--ok); border-color: rgba(105,211,154,.45); }
+      .pill.warn { color: var(--warn); border-color: rgba(243,201,105,.45); }
+      .pill.bad { color: var(--bad); border-color: rgba(242,118,118,.45); }
+      pre {
+        white-space: pre-wrap;
+        margin: 0;
+        color: #d7e2e8;
+        line-height: 1.45;
+        font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .timeline { display: grid; gap: 10px; }
+      .timeline .item strong { display: block; margin-bottom: 4px; }
+      .evidence { margin-top: 8px; color: var(--muted); font-size: 12px; }
+      .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .check { display: flex; gap: 8px; align-items: flex-start; }
+      .dot { width: 9px; height: 9px; border-radius: 999px; background: var(--warn); margin-top: 5px; flex: 0 0 auto; }
+      .dot.ok { background: var(--ok); }
+      .dot.bad { background: var(--bad); }
+      .error {
+        display: none;
+        border: 1px solid rgba(242,118,118,.45);
+        background: rgba(242,118,118,.12);
+        padding: 12px;
+        border-radius: 8px;
+      }
+      @media (max-width: 980px) {
+        header { grid-template-columns: 1fr; padding: 22px 18px 14px; }
+        .toolbar { justify-content: flex-start; }
+        main { padding: 18px; }
+        .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid { grid-template-columns: 1fr; }
+        .checks { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Post-Meeting Intelligence</h1>
+        <p id="subtitle" class="subtle">Loading meeting report...</p>
+      </div>
+      <div class="toolbar">
+        <select id="meetingSelect" aria-label="Meeting report"></select>
+        <button id="refresh" type="button">Refresh</button>
+        <button id="copySlack" type="button">Copy Slack recap</button>
+        <a class="button primary" href="/">Live meeting</a>
+      </div>
+    </header>
+
+    <main>
+      <div id="error" class="error"></div>
+      <section class="wide">
+        <h2 id="summary">Meeting intelligence</h2>
+        <p id="meta" class="subtle"></p>
+      </section>
+
+      <div class="metrics">
+        <div class="metric"><strong id="metricParticipants">0</strong><span>Participants</span></div>
+        <div class="metric"><strong id="metricChanges">0</strong><span>Jira changes</span></div>
+        <div class="metric"><strong id="metricBlockers">0</strong><span>Blockers</span></div>
+        <div class="metric"><strong id="metricActions">0</strong><span>Action items</span></div>
+        <div class="metric"><strong id="metricRisk">0</strong><span>Sprint risk</span></div>
+      </div>
+
+      <div class="grid">
+        <section>
+          <h2>Decisions</h2>
+          <div id="decisions" class="list"></div>
+        </section>
+        <section>
+          <h2>Action Items</h2>
+          <div id="actions" class="list"></div>
+        </section>
+        <section>
+          <h2>Blockers And Risks</h2>
+          <div id="blockers" class="list"></div>
+        </section>
+        <section>
+          <h2>Participants</h2>
+          <div id="participants" class="list"></div>
+        </section>
+        <section class="wide">
+          <h2>Jira Mutation Timeline</h2>
+          <div id="timeline" class="timeline"></div>
+        </section>
+        <section>
+          <h2>Sprint Intelligence</h2>
+          <div id="sprint" class="list"></div>
+        </section>
+        <section>
+          <h2>GitHub / PR Context</h2>
+          <div id="github" class="list"></div>
+        </section>
+        <section>
+          <h2>Setup Readiness</h2>
+          <div id="setup" class="checks"></div>
+        </section>
+        <section>
+          <h2>Observability</h2>
+          <div id="observability" class="list"></div>
+        </section>
+        <section class="wide">
+          <h2>Slack-Ready Recap</h2>
+          <pre id="slack"></pre>
+        </section>
+        <section class="wide">
+          <h2>Transcript Evidence</h2>
+          <div id="transcript" class="list"></div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const qs = new URLSearchParams(window.location.search)
+      let currentMeetingID = qs.get('meeting_id') || ''
+      let latestReport
+
+      const $ = id => document.getElementById(id)
+      const els = {
+        meetingSelect: $('meetingSelect'),
+        refresh: $('refresh'),
+        copySlack: $('copySlack'),
+        error: $('error'),
+        subtitle: $('subtitle'),
+        summary: $('summary'),
+        meta: $('meta'),
+        participants: $('participants'),
+        decisions: $('decisions'),
+        actions: $('actions'),
+        blockers: $('blockers'),
+        timeline: $('timeline'),
+        sprint: $('sprint'),
+        github: $('github'),
+        setup: $('setup'),
+        observability: $('observability'),
+        slack: $('slack'),
+        transcript: $('transcript'),
+      }
+
+      els.refresh.addEventListener('click', () => loadAll())
+      els.copySlack.addEventListener('click', async () => {
+        if (!latestReport?.slack_summary) return
+        await navigator.clipboard.writeText(latestReport.slack_summary).catch(() => {})
+      })
+      els.meetingSelect.addEventListener('change', () => {
+        currentMeetingID = els.meetingSelect.value
+        const url = new URL(window.location.href)
+        if (currentMeetingID) url.searchParams.set('meeting_id', currentMeetingID)
+        else url.searchParams.delete('meeting_id')
+        window.history.replaceState({}, '', url)
+        loadReport()
+      })
+
+      loadAll()
+
+      async function loadAll() {
+        hideError()
+        await Promise.all([loadMeetingList(), loadReport()])
+      }
+
+      async function loadMeetingList() {
+        const data = await fetchJSON('/meetings?limit=50')
+        const reports = data.reports || []
+        els.meetingSelect.replaceChildren()
+        const current = document.createElement('option')
+        current.value = ''
+        current.textContent = 'Current meeting intelligence'
+        els.meetingSelect.appendChild(current)
+        reports.forEach(report => {
+          const option = document.createElement('option')
+          option.value = report.meeting_id
+          option.textContent = `${report.meeting_id} (${report.ended_at || report.generated_at || 'current'})`
+          els.meetingSelect.appendChild(option)
+        })
+        els.meetingSelect.value = currentMeetingID
+      }
+
+      async function loadReport() {
+        try {
+          const path = currentMeetingID ? `/meeting/intelligence?meeting_id=${encodeURIComponent(currentMeetingID)}` : '/meeting/intelligence'
+          latestReport = await fetchJSON(path)
+          renderReport(latestReport)
+        } catch (err) {
+          showError(err.message || String(err))
+        }
+      }
+
+      async function fetchJSON(path) {
+        const response = await fetch(path, { credentials: 'same-origin' })
+        if (!response.ok) {
+          const text = await response.text().catch(() => '')
+          throw new Error(text || `${path} failed with ${response.status}`)
+        }
+        return response.json()
+      }
+
+      function renderReport(report) {
+        hideError()
+        els.subtitle.textContent = `${report.meeting_id || 'Current meeting'} · ${report.meeting_type || report.mode || 'meeting'}`
+        els.summary.textContent = report.summary || 'Meeting report'
+        els.meta.textContent = `Started ${formatTime(report.started_at)} · Ended ${formatTime(report.ended_at)} · Generated ${formatTime(report.generated_at)}`
+        $('metricParticipants').textContent = String((report.participants || []).length)
+        $('metricChanges').textContent = String((report.jira_changes || []).length)
+        $('metricBlockers').textContent = String((report.unresolved_blockers || []).length + (report.sprint_intelligence?.blocked_cards || []).length)
+        $('metricActions').textContent = String((report.action_items || []).length + (report.follow_ups || []).length)
+        $('metricRisk').textContent = String(report.sprint_intelligence?.risk_score || 0)
+        renderList(els.decisions, report.decisions, 'No decisions captured.')
+        renderList(els.actions, actionItems(report), 'No action items captured.')
+        renderList(els.blockers, blockers(report), 'No blockers or risks detected.')
+        renderParticipants(report.participants || [])
+        renderTimeline(report.jira_changes || [])
+        renderSprint(report.sprint_intelligence || {})
+        renderGitHub(report.github_context || {})
+        renderSetup(report.setup?.checks || [])
+        renderObservability(report.observability || {})
+        els.slack.textContent = report.slack_summary || ''
+        renderTranscript(report.transcript || [], report.transcript_evidence || [])
+      }
+
+      function actionItems(report) {
+        const items = [...(report.action_items || [])]
+        ;(report.follow_ups || []).forEach(item => {
+          items.push(`${item.owner || 'Unassigned'} - ${item.cardId ? item.cardId + ': ' : ''}${item.text || 'Follow-up'}${item.dueDate ? ' due ' + item.dueDate : ''}`)
+        })
+        ;(report.ownership || []).forEach(item => {
+          items.push(`${item.owner || 'Unassigned'} owns ${item.cardId ? item.cardId + ': ' : ''}${item.responsibility || 'follow-up'}`)
+        })
+        return items
+      }
+
+      function blockers(report) {
+        const items = [...(report.risks || [])]
+        ;(report.unresolved_blockers || []).forEach(item => {
+          items.push(`${item.owner || 'Unassigned'} - ${item.cardId ? item.cardId + ': ' : ''}${item.text || 'Blocked'}`)
+        })
+        ;(report.sprint_intelligence?.blocked_cards || []).forEach(item => items.push(item))
+        return items
+      }
+
+      function renderParticipants(items) {
+        els.participants.replaceChildren()
+        if (!items.length) return appendEmpty(els.participants, 'No participants captured.')
+        items.forEach(item => {
+          appendItem(els.participants, `${item.identity || 'Unknown'}${item.role ? ' · ' + item.role : ''}${item.has_spoken ? ' · spoken' : ''}${item.present ? ' · present' : ''}${item.last_update ? ' · ' + item.last_update : ''}`)
+        })
+      }
+
+      function renderTimeline(items) {
+        els.timeline.replaceChildren()
+        if (!items.length) return appendEmpty(els.timeline, 'No Jira or board mutations captured.')
+        items.forEach(item => {
+          const row = document.createElement('div')
+          row.className = 'item'
+          const title = document.createElement('strong')
+          title.textContent = item.summary || item.toolName || item.tool_name || item.eventId || 'Mutation'
+          const meta = document.createElement('div')
+          meta.className = 'muted'
+          meta.textContent = `${formatTime(item.occurredAt || item.occurred_at)} · ${item.riskLevel || item.risk_level || 'risk unknown'} · ${item.source || 'source unknown'}`
+          row.append(title, meta)
+          const evidence = item.transcript?.summary
+          if (evidence) {
+            const ev = document.createElement('div')
+            ev.className = 'evidence'
+            ev.textContent = `Evidence: ${evidence}`
+            row.appendChild(ev)
+          }
+          els.timeline.appendChild(row)
+        })
+      }
+
+      function renderSprint(intel) {
+        els.sprint.replaceChildren()
+        const groups = [
+          ['Blocked', intel.blocked_cards],
+          ['Unassigned', intel.unassigned_cards],
+          ['Missing ETA', intel.missing_eta_cards],
+          ['Stale', intel.stale_cards],
+          ['Scope added', intel.scope_changes],
+          ['Moved backward', intel.moved_backward],
+          ['PR ready', intel.pr_ready_cards],
+          ['Questions', intel.recommended_questions],
+        ]
+        groups.forEach(([label, values]) => {
+          if (!values || !values.length) return
+          appendItem(els.sprint, `${label}: ${values.join('; ')}`)
+        })
+        if (!els.sprint.children.length) appendEmpty(els.sprint, 'No sprint risks detected.')
+      }
+
+      function renderGitHub(context) {
+        els.github.replaceChildren()
+        appendItem(els.github, context.message || 'GitHub context not configured.')
+        ;(context.signals || []).forEach(signal => {
+          appendItem(els.github, `${signal.card_id ? signal.card_id + ': ' : ''}${signal.title || signal.url || 'Pull request'}${signal.state ? ' · ' + signal.state : ''}`)
+        })
+      }
+
+      function renderSetup(checks) {
+        els.setup.replaceChildren()
+        if (!checks.length) return appendEmpty(els.setup, 'No setup checks returned.')
+        checks.forEach(check => {
+          const row = document.createElement('div')
+          row.className = 'item check'
+          const dot = document.createElement('span')
+          dot.className = `dot ${check.ok ? 'ok' : check.required ? 'bad' : ''}`
+          const body = document.createElement('div')
+          body.textContent = `${check.name}: ${check.status}${check.ok ? '' : check.remedy ? ' - ' + check.remedy : ''}`
+          row.append(dot, body)
+          els.setup.appendChild(row)
+        })
+      }
+
+      function renderObservability(obs) {
+        const items = [
+          `Voice provider: ${obs.voice_provider || 'unknown'}${obs.voice_provider_ready ? ' ready' : ' not ready'}`,
+          `LiveKit mode: ${obs.livekit_deployment_mode || 'self-hosted'}`,
+          `Jira: ${obs.jira_configured ? 'configured' : 'not configured'}`,
+          `Storage: ${obs.storage_persistent ? 'persistent' : 'in memory'}`,
+          `Agent present: ${obs.agent_participant_present ? 'yes' : 'no'}`,
+          `Bedrock stream: ${obs.bedrock_stream_active ? 'active' : 'waiting'}`,
+          `Board sequence: ${obs.board_sequence_number || 0}`,
+        ]
+        renderList(els.observability, items, 'No observability data returned.')
+      }
+
+      function renderTranscript(entries, evidence) {
+        els.transcript.replaceChildren()
+        const lines = []
+        entries.forEach(entry => lines.push(`${formatTime(entry.createdAt || entry.created_at)} ${entry.speaker || entry.role || 'speaker'}: ${entry.text}`))
+        evidence.forEach(item => {
+          if (item.summary) lines.push(`Evidence: ${item.summary}`)
+        })
+        renderList(els.transcript, lines, 'No transcript evidence captured.')
+      }
+
+      function renderList(target, items, emptyText) {
+        target.replaceChildren()
+        const clean = unique(items || []).filter(Boolean)
+        if (!clean.length) return appendEmpty(target, emptyText)
+        clean.slice(0, 30).forEach(item => appendItem(target, item))
+      }
+
+      function appendEmpty(target, text) {
+        const row = document.createElement('div')
+        row.className = 'item muted'
+        row.textContent = text
+        target.appendChild(row)
+      }
+
+      function appendItem(target, text) {
+        const row = document.createElement('div')
+        row.className = 'item'
+        row.textContent = String(text)
+        target.appendChild(row)
+      }
+
+      function unique(items) {
+        const seen = new Set()
+        return items.filter(item => {
+          const key = String(item)
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+      }
+
+      function formatTime(value) {
+        if (!value) return 'not recorded'
+        const date = new Date(value)
+        return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+      }
+
+      function showError(message) {
+        els.error.style.display = 'block'
+        els.error.textContent = message
+      }
+
+      function hideError() {
+        els.error.style.display = 'none'
+        els.error.textContent = ''
+      }
+    </script>
+  </body>
+</html>

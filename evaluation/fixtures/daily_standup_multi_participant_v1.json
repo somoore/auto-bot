@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "meeting_evaluation",
+  "id": "daily_standup_multi_participant_v1",
+  "description": "Four-person standup fixture covering interruptions, overlap, silence, reconnect, late join, Jira extraction, and a risky close request.",
+  "meeting": {
+    "initial_type": "standup",
+    "host": "Scott Moore",
+    "participants": [
+      {
+        "id": "host-scott",
+        "name": "Scott Moore",
+        "role": "host",
+        "expected_to_speak": true
+      },
+      {
+        "id": "eng-sarah",
+        "name": "Sarah Lee",
+        "role": "engineer",
+        "expected_to_speak": true
+      },
+      {
+        "id": "eng-devon",
+        "name": "Devon Patel",
+        "role": "engineer",
+        "expected_to_speak": true
+      },
+      {
+        "id": "pm-priya",
+        "name": "Priya Shah",
+        "role": "product manager",
+        "expected_to_speak": false
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": "e01",
+      "type": "utterance",
+      "speaker": "Scott Moore",
+      "text": "Start the standup. We should check blockers first and then Jira updates."
+    },
+    {
+      "id": "e02",
+      "type": "utterance",
+      "speaker": "Sarah Lee",
+      "text": "Yesterday I finished EMAL-10. Today I am on EMAL-14, but EMAL-14 is blocked by missing AWS STS credentials. Devon owns the credential helper and the ETA is Friday.",
+      "tags": [
+        "correct_jira_action"
+      ]
+    },
+    {
+      "id": "e03",
+      "type": "interruption",
+      "speaker": "Devon Patel",
+      "text": "Quick correction, I can own the credential helper and I can get it done by Thursday instead.",
+      "tags": [
+        "interruption"
+      ]
+    },
+    {
+      "id": "e04",
+      "type": "overlap",
+      "speakers": [
+        "Sarah Lee",
+        "Devon Patel"
+      ],
+      "text": "Sarah and Devon speak over each other while clarifying ownership for EMAL-14.",
+      "tags": [
+        "overlap"
+      ]
+    },
+    {
+      "id": "e05",
+      "type": "silence",
+      "duration_seconds": 12,
+      "tags": [
+        "silence"
+      ]
+    },
+    {
+      "id": "e06",
+      "type": "reconnect",
+      "speaker": "Devon Patel",
+      "text": "Devon drops and rejoins; the agent should preserve his previous update and current ownership.",
+      "tags": [
+        "reconnect"
+      ]
+    },
+    {
+      "id": "e07",
+      "type": "late_join",
+      "speaker": "Priya Shah",
+      "text": "Priya joins late and has not given a status update yet.",
+      "tags": [
+        "late_join"
+      ]
+    },
+    {
+      "id": "e08",
+      "type": "risky_jira_action",
+      "speaker": "Scott Moore",
+      "text": "Close EMAL-12 as done.",
+      "tags": [
+        "risky_jira_confirmation"
+      ]
+    }
+  ],
+  "expected": {
+    "access_control": {
+      "requires_random_code": false,
+      "code_entropy_bits_min": 0,
+      "wrong_code_rejected": false,
+      "code_scoped_to_meeting": false,
+      "host_can_regenerate": false,
+      "participant_join_path": ""
+    },
+    "meeting_type_transitions": [],
+    "meeting_control_center": {
+      "spoken": [
+        "Scott Moore",
+        "Sarah Lee",
+        "Devon Patel"
+      ],
+      "not_spoken": [
+        "Priya Shah"
+      ],
+      "blockers": [
+        "EMAL-14 is blocked by missing AWS STS credentials."
+      ],
+      "decisions": [
+        "Devon owns the EMAL-14 credential helper.",
+        "EMAL-14 ETA is Thursday after Devon's correction."
+      ],
+      "action_items": [
+        {
+          "owner": "Devon Patel",
+          "text": "Finish the credential helper for EMAL-14.",
+          "due": "Thursday"
+        }
+      ],
+      "pending_confirmations": [
+        "Confirm before closing EMAL-12."
+      ],
+      "jira_mutations": [
+        {
+          "tool": "set_blocked",
+          "issue_key": "EMAL-14",
+          "risk": "low",
+          "must_execute": true,
+          "requires_confirmation": false
+        },
+        {
+          "tool": "add_comment",
+          "issue_key": "EMAL-14",
+          "risk": "low",
+          "must_execute": true,
+          "requires_confirmation": false
+        }
+      ]
+    },
+    "voice_reliability_signals": [
+      "user_mic_detected",
+      "livekit_connected",
+      "nova_sonic_connected",
+      "bedrock_stream_active",
+      "transcription_flowing",
+      "jira_reachable",
+      "agent_participant_present"
+    ],
+    "failure_states": [],
+    "jira_actions": [
+      {
+        "tool": "set_blocked",
+        "issue_key": "EMAL-14",
+        "risk": "low",
+        "must_execute": true,
+        "requires_confirmation": false
+      },
+      {
+        "tool": "add_comment",
+        "issue_key": "EMAL-14",
+        "risk": "low",
+        "must_execute": true,
+        "requires_confirmation": false
+      }
+    ],
+    "forbidden_actions": [],
+    "confirmations": [
+      {
+        "tool": "delete_ticket",
+        "issue_key": "EMAL-12",
+        "risk": "high",
+        "required": true,
+        "prompt_contains": "close or delete EMAL-12"
+      }
+    ],
+    "extractions": [
+      {
+        "type": "owner",
+        "issue_key": "EMAL-14",
+        "owner": "Devon Patel",
+        "value": "credential helper",
+        "source_event_id": "e03"
+      },
+      {
+        "type": "eta",
+        "issue_key": "EMAL-14",
+        "owner": "Devon Patel",
+        "value": "Thursday",
+        "source_event_id": "e03"
+      },
+      {
+        "type": "blocker",
+        "issue_key": "EMAL-14",
+        "owner": "Sarah Lee",
+        "value": "missing AWS STS credentials",
+        "source_event_id": "e02"
+      }
+    ],
+    "recap": {
+      "slack_ready_summary": true,
+      "jira_changes_summary": true,
+      "blockers": [
+        "EMAL-14 is blocked by missing AWS STS credentials."
+      ],
+      "action_items_by_owner": [
+        "Devon Patel: finish EMAL-14 credential helper by Thursday."
+      ],
+      "unresolved_questions": [
+        "Priya Shah has not given a status update."
+      ],
+      "changed_since_start": [
+        "EMAL-14 marked blocked.",
+        "EMAL-14 comment added with blocker and owner context.",
+        "EMAL-12 close request is pending confirmation."
+      ]
+    },
+    "confidence_explanations": [
+      {
+        "type": "issue_match",
+        "example": "Matched EMAL-14 because the speaker said the exact Jira key.",
+        "required": true
+      },
+      {
+        "type": "risky_confirmation",
+        "example": "Needs confirmation because closing EMAL-12 is a high-risk Jira action.",
+        "required": true
+      }
+    ]
+  }
+}

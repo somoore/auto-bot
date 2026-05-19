@@ -811,7 +811,9 @@
       }
 
       async function ensureAuthenticated(preferredIdentity) {
-        const current = await fetch('/auth/session', { credentials: 'same-origin' })
+        const sessionURL = new URL('/auth/session', window.location.origin)
+        sessionURL.searchParams.set('identity', cleanIdentity(preferredIdentity))
+        const current = await fetch(sessionURL.toString(), { credentials: 'same-origin' })
         if (current.ok) return current.json()
 
         const token = await getLocalClipboardToken() || prompt('Enter app access token:')

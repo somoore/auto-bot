@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "audio_manifest",
+  "id": "multi_participant_audio_manifest_v1",
+  "fixture_id": "daily_standup_multi_participant_v1",
+  "description": "Synthetic timing manifest for future mixed-audio generation; validates overlap, interruption, silence, reconnect, and late join timing without committing binary audio.",
+  "sample_rate_hz": 16000,
+  "channels": 1,
+  "required_behaviors": [
+    "interruption",
+    "overlap",
+    "silence",
+    "reconnect",
+    "late_join"
+  ],
+  "required_silence_ms": 10000,
+  "tracks": [
+    {
+      "participant_id": "host-scott",
+      "segments": [
+        {
+          "id": "scott-001",
+          "start_ms": 0,
+          "end_ms": 4200,
+          "text": "Start the standup. We should check blockers first and then Jira updates."
+        },
+        {
+          "id": "scott-002",
+          "start_ms": 68000,
+          "end_ms": 72000,
+          "text": "Close EMAL-12 as done."
+        }
+      ]
+    },
+    {
+      "participant_id": "eng-sarah",
+      "segments": [
+        {
+          "id": "sarah-001",
+          "start_ms": 6200,
+          "end_ms": 18800,
+          "text": "Yesterday I finished EMAL-10. Today I am on EMAL-14, but EMAL-14 is blocked by missing AWS STS credentials."
+        }
+      ]
+    },
+    {
+      "participant_id": "eng-devon",
+      "segments": [
+        {
+          "id": "devon-001",
+          "start_ms": 14200,
+          "end_ms": 22100,
+          "text": "Quick correction, I can own the credential helper and I can get it done by Thursday instead.",
+          "interrupts_segment_id": "sarah-001"
+        },
+        {
+          "id": "devon-002",
+          "start_ms": 35000,
+          "end_ms": 39200,
+          "text": "I am back. The credential helper ownership is still mine."
+        }
+      ]
+    },
+    {
+      "participant_id": "pm-priya",
+      "segments": [
+        {
+          "id": "priya-001",
+          "start_ms": 61000,
+          "end_ms": 63500,
+          "text": "Sorry, I joined late. I need the quick recap."
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "type": "reconnect",
+      "participant_id": "eng-devon",
+      "at_ms": 33000
+    },
+    {
+      "type": "late_join",
+      "participant_id": "pm-priya",
+      "at_ms": 60000
+    }
+  ]
+}

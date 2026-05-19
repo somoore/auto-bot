@@ -821,7 +821,12 @@ func fallbackJiraMetadata() map[string]any {
 }
 
 func normalizeScrumMeetingMode(value string) scrumMeetingMode {
+	if meetingType, err := normalizeMeetingType(value); err == nil {
+		return meetingTypeToScrumMode(meetingType)
+	}
 	switch scrumMeetingMode(strings.ToLower(strings.TrimSpace(value))) {
+	case scrumMeetingModeGeneral:
+		return scrumMeetingModeGeneral
 	case scrumMeetingModePlanning:
 		return scrumMeetingModePlanning
 	case scrumMeetingModeGrooming, "refinement", "backlog_refinement":
@@ -830,6 +835,10 @@ func normalizeScrumMeetingMode(value string) scrumMeetingMode {
 		return scrumMeetingModeReview
 	case scrumMeetingModeRetro:
 		return scrumMeetingModeRetro
+	case scrumMeetingModeOneOnOne:
+		return scrumMeetingModeOneOnOne
+	case scrumMeetingModeOpenEnded:
+		return scrumMeetingModeOpenEnded
 	default:
 		return scrumMeetingModeStandup
 	}

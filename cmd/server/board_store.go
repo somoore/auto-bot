@@ -20,6 +20,12 @@ type boardStore interface {
 	Close() error
 }
 
+type meetingReportStore interface {
+	SaveMeetingReport(ctx context.Context, report meetingIntelligenceReport) error
+	LoadMeetingReport(ctx context.Context, boardID string, meetingID string) (meetingIntelligenceReport, bool, error)
+	ListMeetingReports(ctx context.Context, boardID string, limit int) ([]meetingReportSummary, error)
+}
+
 type boardEventRecord struct {
 	BoardID        string         `json:"board_id"`
 	EventID        string         `json:"event_id,omitempty"`
@@ -87,6 +93,15 @@ func (store *sqliteBoardStore) init(ctx context.Context) error {
 			sequence_number INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS board_events_board_id_id ON board_events(board_id, id)`,
+		`CREATE TABLE IF NOT EXISTS meeting_reports (
+				board_id TEXT NOT NULL,
+				meeting_id TEXT NOT NULL,
+				ended_at TEXT NOT NULL,
+				generated_at TEXT NOT NULL,
+				report_json TEXT NOT NULL,
+				PRIMARY KEY(board_id, meeting_id)
+			)`,
+		`CREATE INDEX IF NOT EXISTS meeting_reports_board_id_ended_at ON meeting_reports(board_id, ended_at DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
@@ -147,6 +162,83 @@ func (store *sqliteBoardStore) AppendEvent(ctx context.Context, boardID string, 
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, boardID, event.OccurredAt, event.ToolName, string(eventJSON), string(stateJSON), state.SequenceNumber)
 	return err
+}
+
+func (store *sqliteBoardStore) SaveMeetingReport(ctx context.Context, report meetingIntelligenceReport) error {
+	if report.BoardID == "" || report.MeetingID == "" {
+		return fmt.Errorf("meeting report requires board_id and meeting_id")
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		return err
+	}
+	endedAt := report.EndedAt
+	if endedAt == "" {
+		endedAt = report.GeneratedAt
+	}
+	_, err = store.db.ExecContext(ctx, `
+		INSERT INTO meeting_reports(board_id, meeting_id, ended_at, generated_at, report_json)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(board_id, meeting_id) DO UPDATE SET
+			ended_at = excluded.ended_at,
+			generated_at = excluded.generated_at,
+			report_json = excluded.report_json
+	`, report.BoardID, report.MeetingID, endedAt, report.GeneratedAt, string(raw))
+	return err
+}
+
+func (store *sqliteBoardStore) LoadMeetingReport(ctx context.Context, boardID string, meetingID string) (meetingIntelligenceReport, bool, error) {
+	var raw string
+	err := store.db.QueryRowContext(ctx, `
+		SELECT report_json
+		FROM meeting_reports
+		WHERE board_id = ? AND meeting_id = ?
+	`, boardID, meetingID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return meetingIntelligenceReport{}, false, nil
+	}
+	if err != nil {
+		return meetingIntelligenceReport{}, false, err
+	}
+	var report meetingIntelligenceReport
+	if err := json.Unmarshal([]byte(raw), &report); err != nil {
+		return meetingIntelligenceReport{}, false, fmt.Errorf("decode meeting report: %w", err)
+	}
+	return report, true, nil
+}
+
+func (store *sqliteBoardStore) ListMeetingReports(ctx context.Context, boardID string, limit int) ([]meetingReportSummary, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT report_json
+		FROM meeting_reports
+		WHERE board_id = ?
+		ORDER BY ended_at DESC, generated_at DESC
+		LIMIT ?
+	`, boardID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	summaries := make([]meetingReportSummary, 0)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var report meetingIntelligenceReport
+		if err := json.Unmarshal([]byte(raw), &report); err != nil {
+			return nil, fmt.Errorf("decode meeting report summary: %w", err)
+		}
+		summaries = append(summaries, report.SummaryView())
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return summaries, nil
 }
 
 func (store *sqliteBoardStore) Close() error {

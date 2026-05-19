@@ -166,6 +166,147 @@ func TestLocalLoginCreatesSessionOnlyWithLocalToken(t *testing.T) {
 	}
 }
 
+func TestSessionStatusCreatesLocalBrowserSessionForLocalhost(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	appEnvironment = "local"
+	appAuthMode = "token"
+	appLocalLoginToken = "local-login-token"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:3001/auth/session?identity=Scott_1", nil)
+	rec := httptest.NewRecorder()
+	sessionStatusHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sessionStatusHandler status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].HttpOnly {
+		t.Fatalf("local session cookies = %#v", cookies)
+	}
+
+	var response requestAuthContext
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Identity != "Scott_1" || response.RoomID != "team-room" || response.BoardID != "team-board" {
+		t.Fatalf("local session response = %+v", response)
+	}
+
+	authorizedReq := httptest.NewRequest(http.MethodGet, "/livekit-token?room_id=team-room&board_id=team-board", nil)
+	authorizedReq.AddCookie(cookies[0])
+	ctx, ok := authorizeRequest(authorizedReq)
+	if !ok {
+		t.Fatal("auto-created local session cookie did not authenticate request")
+	}
+	if ctx.Identity != "Scott_1" {
+		t.Fatalf("identity = %q, want Scott_1", ctx.Identity)
+	}
+}
+
+func TestSessionStatusRecoversLocalHostSessionDuringActiveMeeting(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	appEnvironment = "local"
+	appAuthMode = "token"
+	appLocalLoginToken = "local-login-token"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+	meetingAccess = newMeetingAccessManager()
+
+	originalHost, err := authStore.create("Original_Host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := meetingAccess.setup(sessionAuthContext(originalHost), meetingTypeStandup); err != nil {
+		t.Fatal(err)
+	}
+
+	staleSession, err := authStore.create("Scott_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:3001/auth/session?identity=Scott_1&role=host", nil)
+	req.AddCookie(&http.Cookie{Name: authCookieName, Value: staleSession.ID})
+	rec := httptest.NewRecorder()
+	sessionStatusHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sessionStatusHandler status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].HttpOnly {
+		t.Fatalf("local host recovery cookies = %#v", cookies)
+	}
+
+	authorizedReq := httptest.NewRequest(http.MethodGet, "/livekit-token?room_id=team-room&board_id=team-board", nil)
+	authorizedReq.AddCookie(cookies[0])
+	ctx, ok := authorizeRequest(authorizedReq)
+	if !ok {
+		t.Fatal("recovered local host session did not authenticate active meeting request")
+	}
+	if ctx.Role != meetingRoleHost || ctx.MeetingType != meetingTypeStandup {
+		t.Fatalf("recovered auth context = %+v", ctx)
+	}
+}
+
+func TestSessionStatusDoesNotCreateLocalParticipantSessionDuringActiveMeeting(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	appEnvironment = "local"
+	appAuthMode = "token"
+	appLocalLoginToken = "local-login-token"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+	meetingAccess = newMeetingAccessManager()
+
+	hostSession, err := authStore.create("Original_Host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := meetingAccess.setup(sessionAuthContext(hostSession), meetingTypeStandup); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:3001/auth/session?identity=Participant_1&role=participant", nil)
+	rec := httptest.NewRecorder()
+	sessionStatusHandler(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("sessionStatusHandler participant status = %d, want 401", rec.Code)
+	}
+	if cookies := rec.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("participant local session cookies = %#v, want none", cookies)
+	}
+}
+
+func TestSessionStatusDoesNotAutoCreateLocalSessionForNonLocalhost(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	appEnvironment = "local"
+	appAuthMode = "token"
+	appLocalLoginToken = "local-login-token"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+
+	req := httptest.NewRequest(http.MethodGet, "http://192.0.2.10:3001/auth/session?identity=Scott_1", nil)
+	rec := httptest.NewRecorder()
+	sessionStatusHandler(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("sessionStatusHandler non-localhost status = %d, want 401", rec.Code)
+	}
+	if cookies := rec.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("non-localhost session cookies = %#v, want none", cookies)
+	}
+}
+
 func TestFrontendDoesNotReferenceBrowserVisibleAppToken(t *testing.T) {
 	for _, path := range []string{"../../web/index.html", "../../web/index_livekit.html"} {
 		raw, err := os.ReadFile(path)
@@ -190,6 +331,10 @@ func snapshotAuthGlobals() func() {
 	oldLocalLoginToken := appLocalLoginToken
 	oldAuthStore := authStore
 	oldVoiceProvider := voiceProvider
+	oldNovaSonic := novaSonic
+	oldValidateAWSRuntimeCredentials := validateAWSRuntimeCredentials
+	oldMeetingAccess := meetingAccess
+	oldSharedBoard := sharedBoard
 	return func() {
 		apiToken = oldAPIToken
 		appAuthMode = oldAuthMode
@@ -199,5 +344,9 @@ func snapshotAuthGlobals() func() {
 		appLocalLoginToken = oldLocalLoginToken
 		authStore = oldAuthStore
 		voiceProvider = oldVoiceProvider
+		novaSonic = oldNovaSonic
+		validateAWSRuntimeCredentials = oldValidateAWSRuntimeCredentials
+		meetingAccess = oldMeetingAccess
+		sharedBoard = oldSharedBoard
 	}
 }

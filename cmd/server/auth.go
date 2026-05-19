@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -31,11 +32,14 @@ var (
 )
 
 type requestAuthContext struct {
-	SessionID string `json:"-"`
-	Identity  string `json:"participant_identity"`
-	RoomID    string `json:"room_id"`
-	BoardID   string `json:"board_id"`
-	AuthMode  string `json:"auth_mode,omitempty"`
+	SessionID   string `json:"-"`
+	Identity    string `json:"participant_identity"`
+	RoomID      string `json:"room_id"`
+	BoardID     string `json:"board_id"`
+	AuthMode    string `json:"auth_mode,omitempty"`
+	Role        string `json:"role,omitempty"`
+	MeetingID   string `json:"meeting_id,omitempty"`
+	MeetingType string `json:"meeting_type,omitempty"`
 }
 
 type webSession struct {
@@ -161,6 +165,17 @@ func normalizeParticipantIdentity(identity string) string {
 }
 
 func authorizeRequest(r *http.Request) (requestAuthContext, bool) {
+	ctx, ok := authorizeBaseRequest(r)
+	if !ok {
+		return requestAuthContext{}, false
+	}
+	if meetingAccess == nil {
+		return ctx, true
+	}
+	return meetingAccess.authorize(ctx)
+}
+
+func authorizeBaseRequest(r *http.Request) (requestAuthContext, bool) {
 	if appAuthMode == "disabled" {
 		ctx := defaultAuthContext("local-user")
 		return ctx, requestMatchesAuthorizedRoomBoard(r, ctx)
@@ -297,16 +312,156 @@ func sessionStatusHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	ctx, ok := authorizeRequest(r)
+	ctx, ok := authorizeBaseRequest(r)
 	if !ok {
+		if localCtx, localOK := createLocalBrowserSession(w, r); localOK {
+			writeSessionResponse(w, localCtx, "")
+			return
+		}
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	if meetingAccess != nil {
+		if meetingCtx, meetingOK := meetingAccess.authorize(ctx); meetingOK {
+			ctx = meetingCtx
+		} else {
+			if localCtx, localOK := createLocalBrowserSession(w, r); localOK {
+				writeSessionResponse(w, localCtx, "")
+				return
+			}
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"ok":                      false,
+				"meeting_access_required": true,
+				"meeting":                 meetingAccess.snapshot(false),
+			})
+			return
+		}
+	}
+	writeSessionResponse(w, ctx, "")
+}
+
+func writeSessionResponse(w http.ResponseWriter, ctx requestAuthContext, expiresAt string) {
+	response := map[string]any{
 		"ok":                   true,
 		"participant_identity": ctx.Identity,
 		"room_id":              ctx.RoomID,
 		"board_id":             ctx.BoardID,
+	}
+	if ctx.Role != "" {
+		response["role"] = ctx.Role
+	}
+	if ctx.MeetingID != "" {
+		response["meeting_id"] = ctx.MeetingID
+	}
+	if ctx.MeetingType != "" {
+		response["meeting_type"] = ctx.MeetingType
+	}
+	if expiresAt != "" {
+		response["expires_at"] = expiresAt
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func createLocalBrowserSession(w http.ResponseWriter, r *http.Request) (requestAuthContext, bool) {
+	if !allowLocalBrowserSession(r) {
+		return requestAuthContext{}, false
+	}
+	identity := normalizeParticipantIdentity(r.URL.Query().Get("identity"))
+	if identity == "" {
+		identity = normalizeParticipantIdentity(r.Header.Get("X-Participant-Identity"))
+	}
+	if identity == "" {
+		identity = "local-user"
+	}
+	session, err := authStore.create(identity)
+	if err != nil {
+		log.Errorf("Failed to create local browser auth session: %v", err)
+		return requestAuthContext{}, false
+	}
+	ctx := sessionAuthContext(session)
+	if meetingAccess != nil && meetingAccess.isActive() && strings.EqualFold(r.URL.Query().Get("role"), meetingRoleHost) {
+		snapshot, err := meetingAccess.joinSession(session, meetingRoleHost)
+		if err != nil {
+			authStore.delete(session.ID)
+			log.Errorf("Failed to attach local host session to active meeting: %v", err)
+			return requestAuthContext{}, false
+		}
+		ctx.Role = meetingRoleHost
+		ctx.MeetingID = snapshot.MeetingID
+		ctx.MeetingType = snapshot.MeetingType
+	}
+	setSessionCookie(w, r, session)
+	return ctx, true
+}
+
+func allowLocalBrowserSession(r *http.Request) bool {
+	if appEnvironment != "local" || appAuthMode != "token" || appLocalLoginToken == "" {
+		return false
+	}
+	if meetingAccess != nil && meetingAccess.isActive() && !strings.EqualFold(r.URL.Query().Get("role"), meetingRoleHost) {
+		return false
+	}
+	return requestHostIsLocalhost(r)
+}
+
+func requestHostIsLocalhost(r *http.Request) bool {
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		return false
+	}
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func setSessionCookie(w http.ResponseWriter, r *http.Request, session webSession) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     authCookieName,
+		Value:    session.ID,
+		Path:     "/",
+		Expires:  session.ExpiresAt,
+		MaxAge:   int(authStore.ttl.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsHTTPS(r),
+	})
+}
+
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     authCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsHTTPS(r),
+	})
+}
+
+func sessionAuthContext(session webSession) requestAuthContext {
+	return requestAuthContext{
+		SessionID: session.ID,
+		Identity:  session.Identity,
+		RoomID:    session.RoomID,
+		BoardID:   session.BoardID,
+		AuthMode:  appAuthMode,
+	}
+}
+
+func sessionResponseExpiresAt(session webSession) string {
+	return session.ExpiresAt.Format(time.RFC3339)
+}
+
+func writeCreatedSessionResponse(w http.ResponseWriter, session webSession) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                   true,
+		"participant_identity": session.Identity,
+		"room_id":              session.RoomID,
+		"board_id":             session.BoardID,
+		"expires_at":           sessionResponseExpiresAt(session),
 	})
 }
 
@@ -347,23 +502,8 @@ func createSessionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     authCookieName,
-		Value:    session.ID,
-		Path:     "/",
-		Expires:  session.ExpiresAt,
-		MaxAge:   int(authStore.ttl.Seconds()),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   requestIsHTTPS(r),
-	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                   true,
-		"participant_identity": session.Identity,
-		"room_id":              session.RoomID,
-		"board_id":             session.BoardID,
-		"expires_at":           session.ExpiresAt.Format(time.RFC3339),
-	})
+	setSessionCookie(w, r, session)
+	writeCreatedSessionResponse(w, session)
 }
 
 func localLoginHandler(w http.ResponseWriter, r *http.Request) {
@@ -390,16 +530,7 @@ func localLoginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     authCookieName,
-		Value:    session.ID,
-		Path:     "/",
-		Expires:  session.ExpiresAt,
-		MaxAge:   int(authStore.ttl.Seconds()),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   requestIsHTTPS(r),
-	})
+	setSessionCookie(w, r, session)
 	next := cleanLocalLoginRedirect(r.URL.Query().Get("next"))
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
@@ -421,15 +552,7 @@ func deleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(authCookieName); err == nil {
 		authStore.delete(cookie.Value)
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     authCookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   requestIsHTTPS(r),
-	})
+	clearSessionCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

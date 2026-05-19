@@ -70,7 +70,7 @@ variable "openai_realtime_model" {
 variable "nova_sonic_model" {
   description = "Amazon Bedrock Nova Sonic model ID."
   type        = string
-  default     = "amazon.nova-sonic-v1:0"
+  default     = "amazon.nova-2-sonic-v1:0"
 }
 
 variable "nova_sonic_voice" {
@@ -362,7 +362,7 @@ variable "jira_webhook_secret_secret_arn" {
 variable "bedrock_model_arns" {
   description = "Bedrock model ARNs the app task may invoke."
   type        = list(string)
-  default     = ["arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-sonic-v1:0"]
+  default     = ["arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-sonic-v1:0"]
 
   validation {
     condition     = !contains(var.bedrock_model_arns, "*")
