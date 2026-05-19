@@ -1244,6 +1244,10 @@
                 <span class="operator-eyebrow">Jira mutations</span>
                 <div id="jiraMutationsList" class="operator-list tall"></div>
               </div>
+              <div class="operator-stack">
+                <span class="operator-eyebrow">Agent runs</span>
+                <div id="agentRunsList" class="operator-list tall"></div>
+              </div>
             </section>
 
             <section id="voiceDashboardSection" class="operator-section" aria-label="Voice reliability dashboard">
@@ -1400,6 +1404,7 @@
       const actionItemsList = document.getElementById('actionItemsList')
       const pendingConfirmationsList = document.getElementById('pendingConfirmationsList')
       const jiraMutationsList = document.getElementById('jiraMutationsList')
+      const agentRunsList = document.getElementById('agentRunsList')
       const confidenceFill = document.getElementById('confidenceFill')
       const confidenceCopy = document.getElementById('confidenceCopy')
       const confidenceReasons = document.getElementById('confidenceReasons')
@@ -1438,6 +1443,7 @@
         decisions: [],
         actionItems: [],
         jiraMutations: [],
+        agentRuns: [],
         auditEvents: [],
         unresolved: [],
         confidence: {
@@ -1834,6 +1840,7 @@
         if (Array.isArray(data.decisions)) mergeIntelList('decisions', data.decisions)
         if (Array.isArray(data.action_items)) mergeIntelList('actionItems', data.action_items)
         if (Array.isArray(data.jira_mutations)) mergeIntelList('jiraMutations', data.jira_mutations)
+        if (Array.isArray(data.agent_runs)) mergeAgentRuns(data.agent_runs)
         if (Array.isArray(data.pending_confirmations)) {
           data.pending_confirmations.forEach(item => {
             const id = item.confirmation_id || item.confirmationId || item.id
@@ -1916,6 +1923,7 @@
         renderSimpleList(actionItemsList, meetingIntel.actionItems, 'No action items captured yet.')
         renderPendingConfirmations()
         renderSimpleList(jiraMutationsList, meetingIntel.jiraMutations, 'No Jira mutations during this meeting.')
+        renderAgentRuns()
         renderConfidence()
         renderExecutiveRecap()
       }
@@ -1973,6 +1981,32 @@
           row.append(title, prompt, meta, actions)
           pendingConfirmationsList.appendChild(row)
         }
+      }
+
+      function renderAgentRuns() {
+        agentRunsList.replaceChildren()
+        const runs = (meetingIntel.agentRuns || []).slice(0, 8)
+        if (runs.length === 0) {
+          const empty = document.createElement('div')
+          empty.className = 'operator-item muted'
+          empty.textContent = 'No autonomous agent runs yet.'
+          agentRunsList.appendChild(empty)
+          return
+        }
+        runs.forEach(run => {
+          const row = document.createElement('div')
+          row.className = 'operator-item'
+          const title = document.createElement('strong')
+          const pr = run.pull_request_number || run.pullRequestNumber
+          title.textContent = `${run.card_id || run.cardId || 'Ticket'} · ${run.specialist || 'agent'}`
+          const status = document.createElement('span')
+          status.textContent = `${run.status || 'queued'}${pr ? ' · PR #' + pr : ''}`
+          const meta = document.createElement('span')
+          meta.className = 'meeting-code-meta'
+          meta.textContent = run.summary || run.error || run.current_step || run.currentStep || run.repo || 'Waiting for checkpoint.'
+          row.append(title, status, meta)
+          agentRunsList.appendChild(row)
+        })
       }
 
       function renderConfidence() {
@@ -2106,6 +2140,31 @@
         const incoming = Array.isArray(values) ? values : [values]
         const current = meetingIntel[key] || []
         meetingIntel[key] = uniqueStrings([...incoming.map(describeIntelItem), ...current]).slice(0, 24)
+      }
+
+      function mergeAgentRuns(values) {
+        const incoming = (Array.isArray(values) ? values : [values]).filter(Boolean)
+        if (!incoming.length) return
+        const byId = new Map((meetingIntel.agentRuns || []).map(run => [run.run_id || run.runId, run]))
+        incoming.forEach(run => {
+          const id = run.run_id || run.runId
+          if (id) byId.set(id, run)
+        })
+        meetingIntel.agentRuns = Array.from(byId.values()).sort((a, b) => String(b.updated_at || b.updatedAt || '').localeCompare(String(a.updated_at || a.updatedAt || ''))).slice(0, 24)
+        const latest = meetingIntel.agentRuns[0]
+        if (latest) {
+          recordConfidence({
+            score: latest.status === 'failed' ? 35 : latest.status === 'completed' ? 90 : 70,
+            label: latest.status || 'Agent',
+            risk: latest.status === 'failed' ? 'high' : 'medium',
+            summary: latest.summary || latest.error || latest.current_step || latest.currentStep || 'Agent run updated.',
+            reasons: [
+              latest.specialist ? `Specialist: ${latest.specialist}` : '',
+              latest.repo ? `Repo: ${latest.repo}` : '',
+              latest.finding_count || latest.findingCount ? `${latest.finding_count || latest.findingCount} findings` : '',
+            ].filter(Boolean),
+          })
+        }
       }
 
       function describeIntelItem(item) {
@@ -2968,6 +3027,7 @@
           case 'confirmation': handleConfirmation(msg.data); break
           case 'confirmation_cancelled': showToast('Action cancelled'); break
           case 'conflict': handleConflict(msg.data); break
+          case 'agent_run': mergeAgentRuns([msg.data]); break
           case 'conflict_resolved': showToast('Jira conflict resolved'); break
           case 'audit_events':
             mergeIntelList('jiraMutations', (msg.data?.events || []).map(event => event.summary || event.toolName || event.eventId))
@@ -3054,6 +3114,7 @@
           const latest = state.recentMutations.find(m => !m.reverted)
           if (latest) recordConfidenceFromMutation(latest)
         }
+        if (Array.isArray(state.agentRuns)) mergeAgentRuns(state.agentRuns)
         renderOperatorPanels()
         refreshValidationPanel()
       }

@@ -177,6 +177,10 @@
           <h2>Jira Mutation Timeline</h2>
           <div id="timeline" class="timeline"></div>
         </section>
+        <section class="wide">
+          <h2>Agent Run Timeline</h2>
+          <div id="agentRuns" class="timeline"></div>
+        </section>
         <section>
           <h2>Sprint Intelligence</h2>
           <div id="sprint" class="list"></div>
@@ -223,6 +227,7 @@
         actions: $('actions'),
         blockers: $('blockers'),
         timeline: $('timeline'),
+        agentRuns: $('agentRuns'),
         sprint: $('sprint'),
         github: $('github'),
         setup: $('setup'),
@@ -303,6 +308,7 @@
         renderList(els.blockers, blockers(report), 'No blockers or risks detected.')
         renderParticipants(report.participants || [])
         renderTimeline(report.jira_changes || [])
+        renderAgentRuns(report.agent_runs || [])
         renderSprint(report.sprint_intelligence || {})
         renderGitHub(report.github_context || {})
         renderSetup(report.setup?.checks || [])
@@ -359,6 +365,36 @@
             row.appendChild(ev)
           }
           els.timeline.appendChild(row)
+        })
+      }
+
+      function renderAgentRuns(items) {
+        els.agentRuns.replaceChildren()
+        if (!items.length) return appendEmpty(els.agentRuns, 'No autonomous agent runs captured.')
+        items.forEach(item => {
+          const row = document.createElement('div')
+          row.className = 'item'
+          const title = document.createElement('strong')
+          const pr = item.pull_request_number || item.pullRequestNumber
+          title.textContent = `${item.card_id || item.cardId || 'Ticket'} · ${item.specialist || 'agent'} · ${item.status || 'unknown'}${pr ? ' · PR #' + pr : ''}`
+          const meta = document.createElement('div')
+          meta.className = 'muted'
+          meta.textContent = `${item.repo || 'repo not set'} · ${item.request_type || item.requestType || 'unclassified'} · updated ${formatTime(item.updated_at || item.updatedAt)}`
+          row.append(title, meta)
+          if (item.summary || item.error || item.current_step || item.currentStep) {
+            const summary = document.createElement('div')
+            summary.className = 'evidence'
+            summary.textContent = item.summary || item.error || item.current_step || item.currentStep
+            row.appendChild(summary)
+          }
+          const findings = item.findings || []
+          if (findings.length) {
+            const findingBox = document.createElement('div')
+            findingBox.className = 'evidence'
+            findingBox.textContent = findings.slice(0, 5).map(f => `[${f.severity || 'medium'}] ${f.title || 'Finding'}${f.file ? ' - ' + f.file : ''}`).join('\n')
+            row.appendChild(findingBox)
+          }
+          els.agentRuns.appendChild(row)
         })
       }
 

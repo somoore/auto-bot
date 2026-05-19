@@ -123,6 +123,7 @@ func main() {
 	} else {
 		jiraSync = configuredJiraSync
 	}
+	agentOrchestrator = setupAgentRunOrchestrator(appContext, sharedBoard, jiraSync)
 
 	switch voiceProvider {
 	case "openai":

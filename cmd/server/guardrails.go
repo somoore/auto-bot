@@ -11,6 +11,7 @@ const redactedPromptInjectionText = "[redacted possible prompt-injection text]"
 type modelSafeKanbanBoardState struct {
 	Cards                []modelSafeKanbanCard     `json:"cards"`
 	Meeting              *modelSafeMeetingState    `json:"meeting,omitempty"`
+	AgentRuns            []agentRunView            `json:"agentRuns,omitempty"`
 	PendingConfirmations []pendingConfirmationView `json:"pendingConfirmations,omitempty"`
 	Conflicts            []modelSafeJiraConflict   `json:"conflicts,omitempty"`
 	UpdatedAt            string                    `json:"updatedAt,omitempty"`
@@ -105,6 +106,7 @@ func modelSafeBoardState(state kanbanBoardState) modelSafeKanbanBoardState {
 	}
 	safe := modelSafeKanbanBoardState{
 		Cards:                cards,
+		AgentRuns:            state.AgentRuns,
 		PendingConfirmations: state.PendingConfirmations,
 		Conflicts:            modelSafeConflicts(state.Conflicts),
 		UpdatedAt:            state.UpdatedAt,

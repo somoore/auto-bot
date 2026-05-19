@@ -10,7 +10,8 @@ This module deploys the production-shaped runtime:
 - EFS-backed `/srv/data` mount for the app's SQLite board snapshot/event store.
 - Task execution role with Secrets Manager access.
 - App task role with Bedrock invoke permission.
-- Secrets Manager wiring for OpenAI, LiveKit, Jira API token, Jira webhook secret, and inline Jira sync config.
+- Secrets Manager wiring for OpenAI, LiveKit, Jira API token, Jira webhook secret, inline Jira sync config, and GitHub App credentials.
+- Autonomous Jira/GitHub agents use AWS Bedrock only. The PM classifier defaults to Claude Haiku 4.5 and the code-review specialist defaults to Claude Sonnet 4.6 through Bedrock US inference-profile IDs and explicit Bedrock IAM resources, not the Anthropic API. Opus should be configured only for escalation-grade reviews.
 - Production runtime variables for room/board authorization and durable board state.
 
 The module is production-shaped and should not set `APP_LOCAL_LOGIN_TOKEN`; the local Keychain one-click login path is intentionally excluded from AWS.

@@ -48,6 +48,9 @@ Recommended Keychain service names:
 | OpenAI API key | `auto-bot/openai-api-key` | your macOS user |
 | Jira API token | `auto-bot/jira-api-token` | your Jira email |
 | Jira webhook secret | `auto-bot/jira-webhook-secret` | your macOS user |
+| GitHub App ID | `auto-bot/github-app-id` | your macOS user |
+| GitHub App installation ID | `auto-bot/github-app-installation-id` | your macOS user |
+| GitHub App private key PEM | `auto-bot/github-app-private-key` | your macOS user |
 
 Store secrets with:
 
@@ -60,6 +63,11 @@ scripts/keychain-store-secret.sh auto-bot/openai-api-key "$USER"
 
 # Optional, for local webhook testing:
 scripts/keychain-store-secret.sh auto-bot/jira-webhook-secret "$USER"
+
+# Optional, for autonomous Jira-to-GitHub agent runs:
+scripts/keychain-store-secret.sh auto-bot/github-app-id "$USER"
+scripts/keychain-store-secret.sh auto-bot/github-app-installation-id "$USER"
+scripts/keychain-store-secret.sh auto-bot/github-app-private-key "$USER"
 ```
 
 Read the fallback app access token when you need to enter it manually:
@@ -99,6 +107,18 @@ The **Join room** button performs a server-side voice readiness preflight before
 The Docker Compose stack is explicitly `APP_ENV=local`. `APP_API_TOKEN` is required and should come from Keychain through `scripts/dc-up-keychain.sh`; the app token is not baked into the image or served to the browser. `scripts/local-up.sh` also provisions a separate local-only `APP_LOCAL_LOGIN_TOKEN` and opens `/auth/local-login` to set the HttpOnly session cookie without prompting. That endpoint only exists in local mode; production rejects `APP_LOCAL_LOGIN_TOKEN`.
 
 For a local end-to-end stack with Jira sync, use [config/jira.local.json](config/jira.local.json) and store the Jira token in Keychain as `auto-bot/jira-api-token` for account `somoore2025@gmail.com`. The Keychain launcher sets `JIRA_CONFIG_PATH=/srv/config/jira.local.json` automatically when that token is present. The app container mounts `./config` read-only at `/srv/config`.
+
+For autonomous code-review agent runs, create a GitHub App and install it only on the repository you want the agents to inspect. Minimum analyzer permissions are `Contents: read`, `Metadata: read`, and `Pull requests: read`; enable `Pull requests: write` only if you want the app to leave PR review comments. Store the app id, installation id, and private key in Keychain using the service names above. The app mints short-lived GitHub App installation tokens per run, scopes them to the requested repo, and refuses repos outside `GITHUB_ALLOWED_REPOS` when that allowlist is set.
+
+Use the helper when setting this up locally:
+
+```bash
+GITHUB_DEFAULT_REPO=somoore/auto-bot scripts/github-app-setup.sh
+```
+
+The helper uses GitHub's manifest flow, stores the App ID, installation ID, and private key in macOS Keychain, and creates no `.env` file. If GitHub returns the PEM key as Keychain hex data, the server decodes it before use.
+
+Agent models run through AWS Bedrock only. The project-manager classifier defaults to Claude Haiku 4.5 on the Bedrock US inference profile and the code-review specialist defaults to Claude Sonnet 4.6 on the Bedrock US inference profile. Sonnet 4.6 is the normal cost/capability default; use Opus 4.7 or Opus 4.6 by setting `AGENT_REVIEW_MODEL` only for escalation-grade reviews on large or high-risk changes. There is no direct Anthropic API key path for these agents, and an autonomous run fails visibly instead of dispatching if the Bedrock client cannot be initialized.
 
 To run the UI, board, and Jira control plane without AWS voice credentials:
 
@@ -210,12 +230,13 @@ The right-side operator panel includes the meeting code, Meeting Control Center,
 
 ## Meeting Intelligence
 
-The scrum-master layer now has a durable post-meeting intelligence path. During and after a meeting the backend can generate a report with agenda, participants, decisions, risks, action items, parking-lot items, follow-ups, unresolved blockers, ownership, transcript evidence, Jira mutations, sprint risk signals, GitHub/PR hints, setup readiness, and voice/LiveKit/Jira observability.
+The scrum-master layer now has a durable post-meeting intelligence path. During and after a meeting the backend can generate a report with agenda, participants, decisions, risks, action items, parking-lot items, follow-ups, unresolved blockers, ownership, transcript evidence, Jira mutations, autonomous agent runs, sprint risk signals, GitHub/PR hints, setup readiness, and voice/LiveKit/Jira observability.
 
 Open [http://localhost:3001/post-meeting](http://localhost:3001/post-meeting) after a local meeting, or click **Intelligence** in the LiveKit operator panel. The page includes:
 
 - Slack-ready executive recap
 - Jira changes summary and audit evidence
+- Autonomous agent-run timeline with PM classification, specialist, repo/PR, checkpoints, findings, and Jira/PR publish state
 - Blockers, risks, action items by owner, and unresolved questions
 - Sprint intelligence for blocked, unassigned, missing-ETA, stale, PR-ready, and scope-change signals
 - GitHub/PR context from Jira remote links, card tags/comments, or optional `GITHUB_CONTEXT_JSON`
@@ -283,6 +304,14 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `AWS_REGION` | `us-east-1` | Nova Sonic | Bedrock region |
 | `NOVA_SONIC_MODEL` | `amazon.nova-2-sonic-v1:0` | Nova Sonic | Bedrock model ID |
 | `NOVA_SONIC_VOICE` | `matthew` | Nova Sonic | TTS voice ID |
+| `AGENT_PM_MODEL` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Agents/AWS | Bedrock US inference-profile ID for PM classification |
+| `AGENT_REVIEW_MODEL` | `us.anthropic.claude-sonnet-4-6` | Agents/AWS | Bedrock US inference-profile ID for code-review specialists |
+| `GITHUB_APP_ID` | _unset_ | Agents/GitHub | GitHub App id for short-lived installation tokens |
+| `GITHUB_APP_INSTALLATION_ID` | _unset_ | Agents/GitHub | GitHub App installation id for the allowed repo/account |
+| `GITHUB_APP_PRIVATE_KEY` | _unset_ | Agents/GitHub | PEM private key injected from Keychain or Secrets Manager; never shown to the model |
+| `GITHUB_DEFAULT_REPO` | _unset_ | Agents/GitHub | Optional default repo in `owner/name` form |
+| `GITHUB_ALLOWED_REPOS` | _unset_ | Agents/GitHub | Comma-separated repo allowlist; agent GitHub access refuses anything else |
+| `GITHUB_PR_COMMENTS_ENABLED` | `false` | Agents/GitHub | When `true`, post PR review comments using `Pull requests: write`; Jira comments still work without it |
 | `LIVEKIT_DEPLOYMENT_MODE` | `self-hosted` | Nova Sonic/AWS | Terraform media-plane switch: `self-hosted` deploys LiveKit, `cloud` uses LiveKit Cloud with `LIVEKIT_CLOUD_URL`. |
 | `LIVEKIT_CLOUD_URL` | _unset_ | Nova Sonic/AWS | LiveKit Cloud URL, for example `wss://project.livekit.cloud`, used when `LIVEKIT_DEPLOYMENT_MODE=cloud`. |
 | `LIVEKIT_URL` | `ws://localhost:7880` | Nova Sonic | LiveKit server WebSocket URL |
@@ -335,6 +364,9 @@ cmd/
     meeting_reports.go  Post-meeting intelligence report builder
     meeting_report_handlers.go
                         Intelligence, setup, observability, provider, and identity endpoints
+    agent_runs.go       Bedrock PM/specialist agent-run lifecycle and Jira publish path
+    bedrock_agents.go   Bedrock Claude Messages invoke client for PM/review agents
+    github_app.go       GitHub App JWT, installation tokens, PR diff reads, optional PR reviews
     jira.go             Jira config, hydration, core issue write-through
     jira_ext.go         Advanced Jira metadata, Agile, worklog, link, and custom-field calls
     auth.go             HttpOnly session and Bearer auth
@@ -391,6 +423,9 @@ plan.md                 Project roadmap
 | `cmd/server/scrum_tools.go` | Scrum-master meeting state plus advanced task actions: subtasks, estimates, worklogs, links, sprint/rank, components, fix versions, custom fields, remote links, reporter/watchers |
 | `cmd/server/meeting_reports.go` | Meeting intelligence report builder: recap, transcript evidence, sprint signals, GitHub/PR hints, setup readiness, and observability |
 | `cmd/server/meeting_report_handlers.go` | HTTP handlers for `/post-meeting`, report archives, setup status, observability, provider options, and identity status |
+| `cmd/server/agent_runs.go` | Autonomous agent-run model, voice tool, Bedrock PM routing, code-review specialist, Jira result publishing |
+| `cmd/server/bedrock_agents.go` | AWS Bedrock Claude Messages invocation used by PM and code-review agents |
+| `cmd/server/github_app.go` | GitHub App JWT authentication, short-lived installation tokens, read-only PR diff fetch, optional PR review comments |
 | `cmd/server/jira.go` | Optional Jira Cloud REST API v3 sync, config loading, core issue mapping, and write-through mutations |
 | `cmd/server/jira_ext.go` | Advanced Jira Platform/Agile calls for metadata, transition discovery, worklogs, issue links, sprint assignment, ranking, custom fields, remote links, reporter, and watchers |
 | `cmd/server/auth.go` | Token-backed HttpOnly browser sessions and non-browser Bearer auth |

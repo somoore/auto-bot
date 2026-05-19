@@ -124,3 +124,55 @@ func TestSQLiteBoardStorePersistsMeetingReports(t *testing.T) {
 		t.Fatalf("report missing recap or mutations: %#v", report.SummaryView())
 	}
 }
+
+func TestSQLiteBoardStorePersistsAgentRuns(t *testing.T) {
+	store, err := newSQLiteBoardStore(filepath.Join(t.TempDir(), "board.sqlite"))
+	if err != nil {
+		t.Fatalf("newSQLiteBoardStore returned error: %v", err)
+	}
+	defer store.Close()
+
+	board, err := newPersistentKanbanBoard("team-board", store)
+	if err != nil {
+		t.Fatalf("newPersistentKanbanBoard returned error: %v", err)
+	}
+	previousOrchestrator := agentOrchestrator
+	agentOrchestrator = nil
+	t.Cleanup(func() { agentOrchestrator = previousOrchestrator })
+
+	createResult, changed, err := board.ApplyToolCall("create_ticket", `{"title":"Review persistence PR","notes":"Agent should review this.","tags":["pr-7"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("create_ticket should mutate")
+	}
+	card := createResult["card"].(kanbanCard)
+	runResult, changed, err := board.ApplyToolCall("assign_ticket_to_agent", `{"card_id":"`+card.ID+`","objective":"conduct a code review","repo":"scottmoore/auto-bot","pull_request_number":7}`)
+	if err != nil {
+		t.Fatalf("assign_ticket_to_agent returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("assign_ticket_to_agent should mutate")
+	}
+	run := runResult["agent_run"].(agentRunView)
+
+	stored, found, err := store.LoadAgentRun(context.Background(), "team-board", run.RunID)
+	if err != nil {
+		t.Fatalf("LoadAgentRun returned error: %v", err)
+	}
+	if !found {
+		t.Fatal("agent run not found")
+	}
+	if stored.CardID != card.ID || stored.PullRequestNumber != 7 {
+		t.Fatalf("stored run = %#v, want card/pr", stored)
+	}
+
+	reloaded, err := newPersistentKanbanBoard("team-board", store)
+	if err != nil {
+		t.Fatalf("reload board returned error: %v", err)
+	}
+	if got := reloaded.SnapshotState().AgentRuns; len(got) != 1 || got[0].RunID != run.RunID {
+		t.Fatalf("reloaded agent runs = %#v, want persisted run", got)
+	}
+}

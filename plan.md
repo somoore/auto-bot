@@ -162,6 +162,8 @@ Measure weekly. If a phase doesn't move the number, diagnose before proceeding.
 
 **Goal:** When a task lands on the board, an agent picks it up and does the work. Humans are the escalation path, not the default.
 
+**Current implementation slice:** Voice can now call `assign_ticket_to_agent` on a Jira-backed card. That creates a durable `agent_run`, stores checkpoints in SQLite, shows the run in the live Meeting Settings drawer and post-meeting intelligence page, uses AWS Bedrock Claude Haiku through the US inference profile for PM classification, routes normal code-review requests to AWS Bedrock Claude Sonnet 4.6 through the US inference profile, reads PR diffs through a short-lived least-privilege GitHub App installation token, writes findings back to the Jira ticket, and optionally posts a PR review comment when `GITHUB_PR_COMMENTS_ENABLED=true`. There is no direct Anthropic API path; Claude usage is through Bedrock IAM only, and runs fail visibly instead of continuing if the Bedrock client is unavailable. Live smoke tests passed against Jira issues `EMAL-22` and `EMAL-23` and GitHub PR `somoore/auto-bot#1`; `EMAL-23` used the cost-balanced Haiku + Sonnet 4.6 model pairing.
+
 **Headline Deliverable:** The 60-second agent standup summary. At meeting start, the voice agent delivers an overnight activity report — completed PRs, blocked items, escalations awaiting human input. Humans only discuss what's flagged. Standup becomes triage, not status recitation.
 
 **Success criterion:** Three engineers on the team prefer the agent's morning summary to the human-run standup, blind-rated. That's a real, measurable, defendable claim — and it's the demo for the landing page.
@@ -176,11 +178,12 @@ Measure weekly. If a phase doesn't move the number, diagnose before proceeding.
   - This gives labeled data — agent-type, classifier confidence, human-confirmed correct — without spending agent money on bad dispatches
   - Once you have a few dozen labeled rows, you have an actual threshold. Set it empirically, not by guessing
 - **Classifier (post cold-start):**
-  - Haiku-class model classifies work type from ticket metadata (labels, title, description)
+  - AWS Bedrock Haiku-class model classifies work type from ticket metadata (labels, title, description)
   - **Confidence threshold** set from cold-start data: below threshold, skip the guess and route straight to `needs-human`
   - **Cost cap per ticket, not per agent run.** A bad classifier can dispatch the same ticket three times in an hour. Track total spend per issue key and hard-stop at the cap
 - **Agent dispatch (above threshold):**
-  - `bug` / `fix` → **Code Agent** (Claude Code): pull repo, reproduce, fix, open PR
+  - `code review` → **Code Review Agent** (Bedrock Opus): read pull request diff through GitHub App read-only access, post findings to Jira, optionally post a PR review comment
+  - `bug` / `fix` → **Code Agent** (future): pull repo in sandbox, reproduce, propose diff, open PR only after explicit trust gates
   - `research` / `investigate` → **Research Agent**: deep research, write findings back to ticket notes
   - `security` / `audit` → **Security Agent**: run ffsec toolchain, scan infrastructure, report findings
   - `documentation` / `docs` → **Docs Agent**: generate or update documentation
@@ -191,7 +194,7 @@ Measure weekly. If a phase doesn't move the number, diagnose before proceeding.
   - Saves you from premature trust: a bad PR is worse than no PR because it creates review burden
 - **Agent execution environment:**
   - Sandboxed execution per agent run (container-per-task or isolated workspace)
-  - Each agent gets scoped credentials: repo access, Jira write-back, relevant MCP servers
+  - Each agent gets scoped credentials: GitHub App installation tokens scoped to the requested repo, Jira write-back through the server-side broker, relevant MCP servers
   - Timeout and cost budget per task — kill runaway agents
   - **Transactional checkpoints:** every agent reports progress at defined checkpoints (e.g., Code Agent: "cloned repo," "created branch," "committed fix," "pushed"). This standardizes partial work before you need it for `take_over`
   - Execution log attached to the Jira ticket as a comment

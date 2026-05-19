@@ -26,6 +26,12 @@ type meetingReportStore interface {
 	ListMeetingReports(ctx context.Context, boardID string, limit int) ([]meetingReportSummary, error)
 }
 
+type agentRunStore interface {
+	SaveAgentRun(ctx context.Context, boardID string, run agentRun) error
+	LoadAgentRun(ctx context.Context, boardID string, runID string) (agentRun, bool, error)
+	ListAgentRuns(ctx context.Context, boardID string, limit int) ([]agentRun, error)
+}
+
 type boardEventRecord struct {
 	BoardID        string         `json:"board_id"`
 	EventID        string         `json:"event_id,omitempty"`
@@ -102,6 +108,19 @@ func (store *sqliteBoardStore) init(ctx context.Context) error {
 				PRIMARY KEY(board_id, meeting_id)
 			)`,
 		`CREATE INDEX IF NOT EXISTS meeting_reports_board_id_ended_at ON meeting_reports(board_id, ended_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS agent_runs (
+				board_id TEXT NOT NULL,
+				run_id TEXT NOT NULL,
+				card_id TEXT NOT NULL,
+				status TEXT NOT NULL,
+				specialist TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				run_json TEXT NOT NULL,
+				PRIMARY KEY(board_id, run_id)
+			)`,
+		`CREATE INDEX IF NOT EXISTS agent_runs_board_id_updated_at ON agent_runs(board_id, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS agent_runs_board_id_card_id ON agent_runs(board_id, card_id)`,
 	}
 	for _, statement := range statements {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
@@ -239,6 +258,89 @@ func (store *sqliteBoardStore) ListMeetingReports(ctx context.Context, boardID s
 		return nil, err
 	}
 	return summaries, nil
+}
+
+func (store *sqliteBoardStore) SaveAgentRun(ctx context.Context, boardID string, run agentRun) error {
+	if run.RunID == "" {
+		return fmt.Errorf("agent run requires run_id")
+	}
+	raw, err := json.Marshal(run)
+	if err != nil {
+		return err
+	}
+	updatedAt := run.UpdatedAt
+	if updatedAt == "" {
+		updatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	createdAt := run.CreatedAt
+	if createdAt == "" {
+		createdAt = updatedAt
+	}
+	_, err = store.db.ExecContext(ctx, `
+		INSERT INTO agent_runs(board_id, run_id, card_id, status, specialist, created_at, updated_at, run_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(board_id, run_id) DO UPDATE SET
+			card_id = excluded.card_id,
+			status = excluded.status,
+			specialist = excluded.specialist,
+			updated_at = excluded.updated_at,
+			run_json = excluded.run_json
+	`, boardID, run.RunID, run.CardID, string(run.Status), run.Specialist, createdAt, updatedAt, string(raw))
+	return err
+}
+
+func (store *sqliteBoardStore) LoadAgentRun(ctx context.Context, boardID string, runID string) (agentRun, bool, error) {
+	var raw string
+	err := store.db.QueryRowContext(ctx, `
+		SELECT run_json
+		FROM agent_runs
+		WHERE board_id = ? AND run_id = ?
+	`, boardID, runID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return agentRun{}, false, nil
+	}
+	if err != nil {
+		return agentRun{}, false, err
+	}
+	var run agentRun
+	if err := json.Unmarshal([]byte(raw), &run); err != nil {
+		return agentRun{}, false, fmt.Errorf("decode agent run: %w", err)
+	}
+	return run, true, nil
+}
+
+func (store *sqliteBoardStore) ListAgentRuns(ctx context.Context, boardID string, limit int) ([]agentRun, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT run_json
+		FROM agent_runs
+		WHERE board_id = ?
+		ORDER BY updated_at DESC
+		LIMIT ?
+	`, boardID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	runs := make([]agentRun, 0)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var run agentRun
+		if err := json.Unmarshal([]byte(raw), &run); err != nil {
+			return nil, fmt.Errorf("decode agent run: %w", err)
+		}
+		runs = append(runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return runs, nil
 }
 
 func (store *sqliteBoardStore) Close() error {

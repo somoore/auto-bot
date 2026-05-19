@@ -43,5 +43,13 @@ if [ -n "$WEBHOOK_SECRET" ]; then
   export JIRA_WEBHOOK_SECRET="$WEBHOOK_SECRET"
 fi
 
+GITHUB_ACCOUNT="${AUTO_BOT_GITHUB_APP_ACCOUNT:-$USER}"
+GITHUB_APP_ID_VALUE="$(keychain_get_optional "${AUTO_BOT_GITHUB_APP_ID_SERVICE:-auto-bot/github-app-id}" "$GITHUB_ACCOUNT")"
+GITHUB_APP_INSTALLATION_ID_VALUE="$(keychain_get_optional "${AUTO_BOT_GITHUB_APP_INSTALLATION_ID_SERVICE:-auto-bot/github-app-installation-id}" "$GITHUB_ACCOUNT")"
+GITHUB_APP_PRIVATE_KEY_VALUE="$(keychain_get_optional "${AUTO_BOT_GITHUB_APP_PRIVATE_KEY_SERVICE:-auto-bot/github-app-private-key}" "$GITHUB_ACCOUNT")"
+if [ -n "$GITHUB_APP_ID_VALUE" ]; then export GITHUB_APP_ID="$GITHUB_APP_ID_VALUE"; fi
+if [ -n "$GITHUB_APP_INSTALLATION_ID_VALUE" ]; then export GITHUB_APP_INSTALLATION_ID="$GITHUB_APP_INSTALLATION_ID_VALUE"; fi
+if [ -n "$GITHUB_APP_PRIVATE_KEY_VALUE" ]; then export GITHUB_APP_PRIVATE_KEY="$GITHUB_APP_PRIVATE_KEY_VALUE"; fi
+
 cd "$ROOT_DIR"
 exec docker compose "$@"

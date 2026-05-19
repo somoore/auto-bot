@@ -173,7 +173,7 @@ func normalizeToolCallMeta(meta toolCallMeta) toolCallMeta {
 
 func riskForTool(toolName string) toolRiskLevel {
 	switch toolName {
-	case "assign_ticket", "unassign_ticket", "set_eta", "set_priority", "set_reporter":
+	case "assign_ticket", "unassign_ticket", "assign_ticket_to_agent", "set_eta", "set_priority", "set_reporter":
 		return toolRiskMedium
 	case "delete_ticket", "set_sprint", "rank_issue":
 		return toolRiskHigh
@@ -232,6 +232,12 @@ func confirmationPrompt(toolName string, args map[string]any) string {
 		return fmt.Sprintf("I heard you want to assign %s to %s. Confirm?", target, assignee)
 	case "unassign_ticket":
 		return fmt.Sprintf("I heard you want to unassign %s. Confirm?", target)
+	case "assign_ticket_to_agent":
+		objective := asString(args["objective"])
+		if objective == "" {
+			objective = "work this task"
+		}
+		return fmt.Sprintf("I heard you want to start autonomous agents on %s to %s. Confirm?", target, objective)
 	case "set_eta":
 		return fmt.Sprintf("I heard you want to set the ETA for %s to %s. Confirm?", target, asString(args["eta"]))
 	case "set_priority":

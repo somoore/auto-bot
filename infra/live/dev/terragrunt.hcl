@@ -34,6 +34,15 @@ inputs = merge(local.env.locals.inputs, {
   jira_config_json_secret_arn    = get_env("JIRA_CONFIG_JSON_SECRET_ARN", "")
   jira_webhook_secret_secret_arn = get_env("JIRA_WEBHOOK_SECRET_SECRET_ARN", "")
 
+  github_app_id_secret_arn              = get_env("GITHUB_APP_ID_SECRET_ARN", "")
+  github_app_installation_id_secret_arn = get_env("GITHUB_APP_INSTALLATION_ID_SECRET_ARN", "")
+  github_app_private_key_secret_arn     = get_env("GITHUB_APP_PRIVATE_KEY_SECRET_ARN", "")
+  github_default_repo                   = get_env("GITHUB_DEFAULT_REPO", "")
+  github_allowed_repos                  = get_env("GITHUB_ALLOWED_REPOS", "")
+  github_pr_comments_enabled            = get_env("GITHUB_PR_COMMENTS_ENABLED", "false") == "true"
+  agent_pm_model                        = get_env("AGENT_PM_MODEL", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+  agent_review_model                    = get_env("AGENT_REVIEW_MODEL", "us.anthropic.claude-sonnet-4-6")
+
   app_base_url                 = get_env("APP_BASE_URL", "")
   app_certificate_arn          = get_env("APP_CERTIFICATE_ARN", "")
   livekit_certificate_arn      = get_env("LIVEKIT_CERTIFICATE_ARN", "")

@@ -269,6 +269,7 @@ func meetingStatusHandler(w http.ResponseWriter, r *http.Request) {
 		"meeting_id":     authorizedCtx.MeetingID,
 		"meeting_type":   authorizedCtx.MeetingType,
 		"meeting":        snapshot,
+		"agent_runs":     recentAgentRunViews(sharedBoard, 20),
 	})
 }
 

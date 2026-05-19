@@ -261,6 +261,9 @@ func TestExpandedScrumMasterToolDefinitions(t *testing.T) {
 		"set_custom_field":          {"card_id", "field_id", "value"},
 		"get_jira_metadata":         {},
 		"get_transition_options":    {"card_id"},
+		"assign_ticket_to_agent":    {"card_id", "objective", "repo", "pull_request_number"},
+		"list_agent_runs":           {},
+		"get_agent_run":             {"run_id"},
 	}
 
 	for name, properties := range expectedNewTools {

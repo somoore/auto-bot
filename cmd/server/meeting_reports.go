@@ -34,6 +34,7 @@ type meetingIntelligenceReport struct {
 	Ownership            []scrumOwnership           `json:"ownership,omitempty"`
 	Briefing             *scrumBriefing             `json:"briefing,omitempty"`
 	JiraChanges          []boardMutationView        `json:"jira_changes,omitempty"`
+	AgentRuns            []agentRunView             `json:"agent_runs,omitempty"`
 	Transcript           []transcriptEntry          `json:"transcript,omitempty"`
 	TranscriptEvidence   []transcriptEvidence       `json:"transcript_evidence,omitempty"`
 	SprintIntelligence   sprintIntelligence         `json:"sprint_intelligence"`
@@ -60,6 +61,7 @@ type meetingReportSummary struct {
 	Summary        string           `json:"summary"`
 	ParticipantCnt int              `json:"participant_count"`
 	JiraChangeCnt  int              `json:"jira_change_count"`
+	AgentRunCnt    int              `json:"agent_run_count"`
 	BlockerCnt     int              `json:"blocker_count"`
 	ActionItemCnt  int              `json:"action_item_count"`
 }
@@ -148,6 +150,7 @@ func (board *kanbanBoard) BuildMeetingIntelligenceReport(source string) meetingI
 	meeting := cloneScrumMeetingStatePointerValue(state.Meeting)
 	cards := cloneKanbanCards(board.cards)
 	mutations := append([]boardMutationRecord(nil), board.mutationHistory...)
+	agentRuns := board.agentRunViewsLocked(50)
 	transcripts := append([]transcriptEntry(nil), board.lastTranscripts...)
 	pending := board.pendingConfirmationViewsLocked()
 	conflicts := append([]jiraConflict(nil), board.conflicts...)
@@ -200,6 +203,7 @@ func (board *kanbanBoard) BuildMeetingIntelligenceReport(source string) meetingI
 		Ownership:            append([]scrumOwnership(nil), meeting.Ownership...),
 		Briefing:             cloneScrumBriefing(meeting.LastBriefing),
 		JiraChanges:          jiraChanges,
+		AgentRuns:            agentRuns,
 		Transcript:           transcript,
 		TranscriptEvidence:   transcriptEvidenceFromMutations(jiraChanges),
 		SprintIntelligence:   buildSprintIntelligence(cards, mutations, since),
@@ -238,6 +242,7 @@ func (report meetingIntelligenceReport) SummaryView() meetingReportSummary {
 		Summary:        report.Summary,
 		ParticipantCnt: len(report.Participants),
 		JiraChangeCnt:  len(report.JiraChanges),
+		AgentRunCnt:    len(report.AgentRuns),
 		BlockerCnt:     len(report.UnresolvedBlockers) + len(report.SprintIntelligence.BlockedCards),
 		ActionItemCnt:  len(report.ActionItems) + len(report.FollowUps),
 	}
@@ -591,10 +596,17 @@ func buildSetupReadinessReport() setupReadinessReport {
 			Required: true,
 		},
 		{
-			Name:     "GitHub/PR context",
-			OK:       os.Getenv("GITHUB_TOKEN") != "" || os.Getenv("GITHUB_CONTEXT_JSON") != "",
-			Status:   boolStatus(os.Getenv("GITHUB_TOKEN") != "" || os.Getenv("GITHUB_CONTEXT_JSON") != "", "configured", "using card-derived PR hints"),
-			Remedy:   "Connect GitHub or provide GITHUB_CONTEXT_JSON for PR-ready briefing context.",
+			Name:     "GitHub App agent access",
+			OK:       githubSetupConfigured(),
+			Status:   boolStatus(githubSetupConfigured(), "configured", "not configured"),
+			Remedy:   "Create a least-privilege GitHub App, install it only on the target repo, and inject app id, installation id, and private key through Keychain or Secrets Manager.",
+			Required: false,
+		},
+		{
+			Name:     "Bedrock agent models",
+			OK:       agentPMModel() != "" && agentReviewModel() != "",
+			Status:   fmt.Sprintf("pm=%s review=%s", agentPMModel(), agentReviewModel()),
+			Remedy:   "Keep agent models on AWS Bedrock; defaults are Claude Haiku 4.5 for PM classification and Claude Opus 4.5 for code review.",
 			Required: false,
 		},
 		{

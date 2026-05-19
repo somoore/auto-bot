@@ -359,10 +359,75 @@ variable "jira_webhook_secret_secret_arn" {
   default     = ""
 }
 
+variable "github_app_id_secret_arn" {
+  description = "Optional Secrets Manager ARN containing GITHUB_APP_ID for autonomous agent GitHub App access."
+  type        = string
+  default     = ""
+}
+
+variable "github_app_installation_id_secret_arn" {
+  description = "Optional Secrets Manager ARN containing GITHUB_APP_INSTALLATION_ID for autonomous agent GitHub App access."
+  type        = string
+  default     = ""
+}
+
+variable "github_app_private_key_secret_arn" {
+  description = "Optional Secrets Manager ARN containing the PEM GITHUB_APP_PRIVATE_KEY for autonomous agent GitHub App access."
+  type        = string
+  default     = ""
+}
+
+variable "github_default_repo" {
+  description = "Optional default GitHub repo in owner/name form for autonomous agent runs."
+  type        = string
+  default     = ""
+}
+
+variable "github_allowed_repos" {
+  description = "Comma-separated allowlist of GitHub repos in owner/name form. Agent GitHub access refuses repos outside this list."
+  type        = string
+  default     = ""
+}
+
+variable "github_pr_comments_enabled" {
+  description = "Enable autonomous PR review comments. Requires the GitHub App to have Pull requests: write."
+  type        = bool
+  default     = false
+}
+
+variable "agent_pm_model" {
+  description = "AWS Bedrock model ID used by the project-manager agent for classification."
+  type        = string
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
+variable "agent_review_model" {
+  description = "AWS Bedrock model ID used by the code-review specialist."
+  type        = string
+  default     = "us.anthropic.claude-sonnet-4-6"
+}
+
 variable "bedrock_model_arns" {
   description = "Bedrock model ARNs the app task may invoke."
   type        = list(string)
-  default     = ["arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-sonic-v1:0"]
+  default = [
+    "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-sonic-v1:0",
+    "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+    "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+    "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+    "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6",
+    "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6",
+    "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-6",
+    "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-4-5-20251101-v1:0",
+    "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-opus-4-5-20251101-v1:0",
+    "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-opus-4-5-20251101-v1:0",
+    "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-4-6-v1",
+    "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-opus-4-6-v1",
+    "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-opus-4-6-v1",
+    "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-4-7",
+    "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-opus-4-7",
+    "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-opus-4-7",
+  ]
 
   validation {
     condition     = !contains(var.bedrock_model_arns, "*")

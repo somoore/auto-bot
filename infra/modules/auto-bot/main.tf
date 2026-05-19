@@ -34,9 +34,14 @@ locals {
     "OPENAI_REALTIME_MODEL=${var.openai_realtime_model}",
     "NOVA_SONIC_MODEL=${var.nova_sonic_model}",
     "NOVA_SONIC_VOICE=${var.nova_sonic_voice}",
+    "AGENT_PM_MODEL=${var.agent_pm_model}",
+    "AGENT_REVIEW_MODEL=${var.agent_review_model}",
     "LIVEKIT_URL=${local.livekit_public_url}",
     "LIVEKIT_BROWSER_URL=${local.livekit_public_url}",
     "TRUST_PROXY_HEADERS=1",
+    var.github_default_repo != "" ? "GITHUB_DEFAULT_REPO=${var.github_default_repo}" : "",
+    var.github_allowed_repos != "" ? "GITHUB_ALLOWED_REPOS=${var.github_allowed_repos}" : "",
+    "GITHUB_PR_COMMENTS_ENABLED=${var.github_pr_comments_enabled}",
     var.audit_log_path != "" ? "AUDIT_LOG_PATH=${var.audit_log_path}" : "",
     var.app_base_url != "" ? "APP_BASE_URL=${var.app_base_url}" : "",
   ])
@@ -49,12 +54,23 @@ locals {
     var.jira_api_token_secret_arn,
     var.jira_config_json_secret_arn,
     var.jira_webhook_secret_secret_arn,
+    var.github_app_id_secret_arn,
+    var.github_app_installation_id_secret_arn,
+    var.github_app_private_key_secret_arn,
   ])
 
   task_execution_secret_arns = distinct(compact(concat(
     local.app_secret_arns,
     local.self_hosted_livekit ? [var.livekit_keys_secret_arn, var.livekit_config_secret_arn] : []
   )))
+
+  bedrock_inference_profile_arns = [
+    for model_id in distinct([var.agent_pm_model, var.agent_review_model]) :
+    "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${model_id}"
+    if startswith(model_id, "us.") || startswith(model_id, "eu.") || startswith(model_id, "apac.") || startswith(model_id, "global.")
+  ]
+
+  bedrock_policy_resource_arns = distinct(concat(var.bedrock_model_arns, local.bedrock_inference_profile_arns))
 
   app_secrets = concat(
     [
@@ -93,6 +109,24 @@ locals {
       {
         name      = "JIRA_WEBHOOK_SECRET"
         valueFrom = var.jira_webhook_secret_secret_arn
+      }
+    ],
+    var.github_app_id_secret_arn == "" ? [] : [
+      {
+        name      = "GITHUB_APP_ID"
+        valueFrom = var.github_app_id_secret_arn
+      }
+    ],
+    var.github_app_installation_id_secret_arn == "" ? [] : [
+      {
+        name      = "GITHUB_APP_INSTALLATION_ID"
+        valueFrom = var.github_app_installation_id_secret_arn
+      }
+    ],
+    var.github_app_private_key_secret_arn == "" ? [] : [
+      {
+        name      = "GITHUB_APP_PRIVATE_KEY"
+        valueFrom = var.github_app_private_key_secret_arn
       }
     ]
   )
@@ -186,6 +220,8 @@ EOT
     ]
   )
 }
+
+data "aws_caller_identity" "current" {}
 
 data "aws_availability_zones" "available" {
   state = "available"
@@ -1224,7 +1260,7 @@ resource "aws_iam_role_policy" "app_bedrock" {
           "bedrock:InvokeModelWithBidirectionalStream",
           "bedrock:InvokeModelWithResponseStream",
         ]
-        Resource = var.bedrock_model_arns
+        Resource = local.bedrock_policy_resource_arns
       }
     ]
   })

@@ -194,6 +194,46 @@ func TestRiskyVoiceToolsRequireConfirmationAndCanBeConfirmed(t *testing.T) {
 	}
 }
 
+func TestAssignTicketToAgentCreatesPersistentRunState(t *testing.T) {
+	previousOrchestrator := agentOrchestrator
+	agentOrchestrator = nil
+	t.Cleanup(func() { agentOrchestrator = previousOrchestrator })
+
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"Review auth PR","notes":"Run code review on the pull request.","tags":["pr-42"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	runResult, changed, err := board.ApplyToolCall("assign_ticket_to_agent", `{
+		"card_id":"`+card.ID+`",
+		"objective":"conduct a code review",
+		"repo":"scottmoore/auto-bot",
+		"pull_request_number":42
+	}`)
+	if err != nil {
+		t.Fatalf("assign_ticket_to_agent returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("assign_ticket_to_agent should mutate board agent-run state")
+	}
+	if ok, _ := runResult["ok"].(bool); !ok {
+		t.Fatalf("run result = %#v, want ok", runResult)
+	}
+	run := runResult["agent_run"].(agentRunView)
+	if run.CardID != card.ID || run.Repo != "scottmoore/auto-bot" || run.PullRequestNumber != 42 {
+		t.Fatalf("agent run = %#v, want linked card/repo/pr", run)
+	}
+	state := board.SnapshotState()
+	if len(state.AgentRuns) != 1 {
+		t.Fatalf("state agent runs = %d, want 1", len(state.AgentRuns))
+	}
+	if state.AgentRuns[0].Status != agentRunQueued {
+		t.Fatalf("agent run status = %q, want queued", state.AgentRuns[0].Status)
+	}
+}
+
 func TestMeetingMemoryBriefingAuditReplayAndUndo(t *testing.T) {
 	board := newKanbanBoard()
 	board.RecordTranscript("user", "Scott", "I finished the LiveKit work and EMAL-14 is blocked by DNS.")

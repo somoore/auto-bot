@@ -1,6 +1,6 @@
 # Evaluation Harness
 
-This directory contains repeatable validation scaffolding for meeting behavior, Jira action safety, voice reliability, and AWS LiveKit hardening proof.
+This directory contains repeatable validation scaffolding for meeting behavior, Jira action safety, autonomous agent runs, voice reliability, and AWS LiveKit hardening proof.
 
 Run the fixture validation tests:
 
@@ -18,6 +18,7 @@ The tests validate that the committed fixtures cover:
 - Owner, ETA, and blocker extraction.
 - Executive recap expectations.
 - Post-meeting intelligence expectations: Jira change summary, blockers, action items by owner, unresolved questions, setup/observability signals, and transcript evidence.
+- Agent-run visibility expectations: PM classification, Bedrock Opus/Haiku model use, GitHub App setup readiness, code-review findings, Jira write-back, optional PR review comment state, and checkpoint trail.
 - Voice reliability signals and user-facing failure states.
 - AWS LiveKit hardening proof areas for UDP/TURN, reconnect, CloudWatch alarms, and LiveKit Cloud switching.
 

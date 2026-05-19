@@ -42,7 +42,7 @@ The version was verified against the HashiCorp releases index on 2026-05-15.
 - Egress: private subnet default routes point at fck-nat, not AWS NAT Gateway
 - App edge: AWS WAF is attached to the ALB with AWS managed rule groups and a rate limit
 - LiveKit: `LIVEKIT_DEPLOYMENT_MODE=self-hosted` deploys private ECS LiveKit tasks, NLB listeners, ElastiCache Redis distributed routing, embedded TURN/UDP, optional TURN/TLS, and metrics. `LIVEKIT_DEPLOYMENT_MODE=cloud` skips the self-hosted media plane and points the app at `LIVEKIT_CLOUD_URL`.
-- Secrets: app token, LiveKit API key/secret, self-hosted `LIVEKIT_KEYS`, optional custom LiveKit config, Jira token/config, and OpenAI key are injected from AWS Secrets Manager
+- Secrets: app token, LiveKit API key/secret, self-hosted `LIVEKIT_KEYS`, optional custom LiveKit config, Jira token/config, OpenAI key, and GitHub App agent credentials are injected from AWS Secrets Manager
 - IAM: ECS execution and task policies are inline/resource-scoped; Bedrock is narrowed to the configured model ARNs
 
 ## Dev Deploy Flow
@@ -81,6 +81,7 @@ The version was verified against the HashiCorp releases index on 2026-05-15.
    ```
 
    To enable Jira in ECS, set `JIRA_API_TOKEN` and either `JIRA_CONFIG_JSON` or `JIRA_CONFIG_JSON_FILE` before running the script. The uploaded Jira config should use `"api_token_env": "JIRA_API_TOKEN"` instead of a local token file path. Set `JIRA_WEBHOOK_SECRET` as well if Jira will call `POST /jira/webhook`.
+   To enable autonomous code-review agents, set `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_DEFAULT_REPO`, and `GITHUB_ALLOWED_REPOS` before running the script. The GitHub App should be installed only on the target repo with `Contents: read` and `Pull requests: read`; set `GITHUB_PR_COMMENTS_ENABLED=true` only after granting `Pull requests: write`. Agent Claude models use Bedrock US inference-profile IDs such as `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
    To enable TURN/TLS, set `LIVEKIT_TURN_CERTIFICATE_ARN` and `LIVEKIT_TURN_DOMAIN_NAME`; the ACM certificate must match the TURN domain.
 
 4. Bootstrap remote state and ECR:
@@ -127,5 +128,6 @@ The version was verified against the HashiCorp releases index on 2026-05-15.
 - Do not set `APP_LOCAL_LOGIN_TOKEN` in AWS. The Keychain-backed `/auth/local-login` path is local-only and production startup rejects that variable.
 - The app mounts EFS at `/srv/data` and uses `BOARD_SQLITE_PATH=/srv/data/board.sqlite` for board snapshots and event history.
 - Jira sync is injected through Secrets Manager. The app supports the same advanced Jira config used locally: project-key safety, status mappings, transition IDs, blocked flag fallback, story points field, sprint field, epic link field, rank custom field ID, named custom field mappings, authenticated Jira webhooks, and visible conflict resolution.
+- Autonomous agent runs use AWS Bedrock only. The default PM classifier is Claude Haiku 4.5 and the default code-review specialist is Claude Sonnet 4.6; both are included in the default narrowed Bedrock model ARN list. Configure Opus only for escalation-grade reviews. GitHub repo access uses short-lived GitHub App installation tokens scoped to the requested repo.
 - Fargate can run UDP services through NLB target groups, but LiveKit self-hosting is more sensitive than the Go app because WebRTC needs publicly reachable UDP media. LiveKit Cloud remains the lower-ops production path until self-hosting is proven.
 - Secrets are read from AWS Secrets Manager into ECS tasks. Do not pass secret values as Terraform variables.
