@@ -93,7 +93,7 @@ func loadJiraConfig(ctx context.Context, path string) (*jiraConfig, error) {
 		raw = []byte(inlineConfig)
 	} else {
 		var err error
-		raw, err = os.ReadFile(path)
+		raw, err = os.ReadFile(path) // #nosec G304 G703 -- Jira config path is operator-controlled deployment configuration.
 		if err != nil {
 			return nil, fmt.Errorf("read Jira config: %w", err)
 		}
@@ -148,7 +148,7 @@ func (config *jiraConfig) resolveAPIToken(ctx context.Context) (string, error) {
 	if len(config.APITokenCommand) > 0 {
 		commandCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(commandCtx, config.APITokenCommand[0], config.APITokenCommand[1:]...)
+		cmd := exec.CommandContext(commandCtx, config.APITokenCommand[0], config.APITokenCommand[1:]...) // #nosec G204 -- explicit operator-configured token command, no shell expansion.
 		raw, err := cmd.Output()
 		if err != nil {
 			return "", fmt.Errorf("run Jira API token command: %w", err)
@@ -168,33 +168,33 @@ func (config *jiraConfig) resolveAPIToken(ctx context.Context) (string, error) {
 		return token, nil
 	}
 
-	return "", fmt.Errorf("Jira API token is required; set api_token_file, api_token_command, api_token_env, or api_token in the Jira config")
+	return "", fmt.Errorf("jira API token is required; set api_token_file, api_token_command, api_token_env, or api_token in the Jira config")
 }
 
 func (config *jiraConfig) validate() error {
 	if strings.TrimSpace(config.BaseURL) == "" {
-		return fmt.Errorf("Jira base_url is required")
+		return fmt.Errorf("jira base_url is required")
 	}
 	parsedURL, err := url.Parse(config.BaseURL)
 	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return fmt.Errorf("Jira base_url must be an absolute URL")
+		return fmt.Errorf("jira base_url must be an absolute URL")
 	}
 	if parsedURL.Scheme != "https" && parsedURL.Scheme != "http" {
-		return fmt.Errorf("Jira base_url must use http or https")
+		return fmt.Errorf("jira base_url must use http or https")
 	}
 	if strings.TrimSpace(config.Email) == "" {
-		return fmt.Errorf("Jira email is required")
+		return fmt.Errorf("jira email is required")
 	}
 	if strings.TrimSpace(config.ProjectKey) == "" {
-		return fmt.Errorf("Jira project_key is required")
+		return fmt.Errorf("jira project_key is required")
 	}
 	if strings.TrimSpace(config.IssueType) == "" {
-		return fmt.Errorf("Jira issue_type is required")
+		return fmt.Errorf("jira issue_type is required")
 	}
 
 	for jiraStatus, kanbanStatusValue := range config.StatusMappings {
 		if strings.TrimSpace(jiraStatus) == "" {
-			return fmt.Errorf("Jira status mapping contains an empty Jira status")
+			return fmt.Errorf("jira status mapping contains an empty jira status")
 		}
 		if _, err := parseKanbanStatus(kanbanStatusValue); err != nil {
 			return fmt.Errorf("invalid Kanban status mapping for Jira status %q: %w", jiraStatus, err)
@@ -273,7 +273,7 @@ func (client *jiraClient) SearchKanbanCards(ctx context.Context) ([]kanbanCard, 
 
 		for _, issue := range response.Issues {
 			if err := client.validateIssueKey(issue.Key); err != nil {
-				return nil, fmt.Errorf("Jira search returned issue outside configured project: %w", err)
+				return nil, fmt.Errorf("jira search returned issue outside configured project: %w", err)
 			}
 			status := client.config.mapJiraStatus(jiraObjectName(issue.Fields["status"]))
 			blocked := client.config.hasBlockedFlag(issue.Fields[client.config.BlockedFlagField])
@@ -326,18 +326,17 @@ func (client *jiraClient) CreateIssue(ctx context.Context, card kanbanCard) (str
 	if issueType == "" {
 		issueType = client.config.IssueType
 	}
+	parentID := strings.TrimSpace(card.ParentID)
 	fields := map[string]any{
 		"project": map[string]any{
 			"key": client.config.ProjectKey,
 		},
-		"issuetype": map[string]any{
-			"name": issueType,
-		},
+		"issuetype":   client.issueTypeFieldForCreate(ctx, issueType, parentID),
 		"summary":     card.Title,
 		"description": jiraADFDocument(card.Notes),
 	}
-	if strings.TrimSpace(card.ParentID) != "" {
-		fields["parent"] = map[string]any{"key": strings.TrimSpace(card.ParentID)}
+	if parentID != "" {
+		fields["parent"] = map[string]any{"key": parentID}
 	}
 	if strings.TrimSpace(card.EpicKey) != "" && strings.TrimSpace(client.config.EpicLinkField) != "" {
 		fields[client.config.EpicLinkField] = strings.TrimSpace(card.EpicKey)
@@ -371,12 +370,77 @@ func (client *jiraClient) CreateIssue(ctx context.Context, card kanbanCard) (str
 		return "", err
 	}
 	if response.Key == "" {
-		return "", fmt.Errorf("Jira create issue response did not include an issue key")
+		return "", fmt.Errorf("jira create issue response did not include an issue key")
 	}
 	if err := client.validateIssueKey(response.Key); err != nil {
-		return "", fmt.Errorf("Jira create issue returned key outside configured project: %w", err)
+		return "", fmt.Errorf("jira create issue returned key outside configured project: %w", err)
 	}
 	return response.Key, nil
+}
+
+func (client *jiraClient) issueTypeFieldForCreate(ctx context.Context, issueType string, parentID string) map[string]any {
+	issueType = strings.TrimSpace(issueType)
+	field := map[string]any{"name": issueType}
+	if parentID == "" || !isJiraSubtaskIssueTypeName(issueType) {
+		return field
+	}
+	resolved, err := client.resolveProjectSubtaskIssueType(ctx, issueType)
+	if err != nil {
+		log.Warnf("Jira subtask issue type metadata lookup failed; falling back to name %q: %v", issueType, err)
+		return field
+	}
+	return resolved
+}
+
+func (client *jiraClient) resolveProjectSubtaskIssueType(ctx context.Context, requested string) (map[string]any, error) {
+	var project struct {
+		IssueTypes []struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			Subtask bool   `json:"subtask"`
+		} `json:"issueTypes"`
+	}
+	if err := client.doJSON(ctx, http.MethodGet, "/rest/api/3/project/"+url.PathEscape(client.config.ProjectKey), nil, &project); err != nil {
+		return nil, err
+	}
+
+	requestedNormalized := normalizeJiraIssueTypeName(requested)
+	var firstSubtask map[string]any
+	for _, issueType := range project.IssueTypes {
+		if !issueType.Subtask {
+			continue
+		}
+		field := jiraIssueTypeField(issueType.ID, issueType.Name)
+		if firstSubtask == nil {
+			firstSubtask = field
+		}
+		nameNormalized := normalizeJiraIssueTypeName(issueType.Name)
+		if nameNormalized == requestedNormalized || isJiraSubtaskIssueTypeName(issueType.Name) {
+			return field, nil
+		}
+	}
+	if firstSubtask != nil {
+		return firstSubtask, nil
+	}
+	return nil, fmt.Errorf("project %s does not expose a subtask issue type", client.config.ProjectKey)
+}
+
+func jiraIssueTypeField(id string, name string) map[string]any {
+	if strings.TrimSpace(id) != "" {
+		return map[string]any{"id": strings.TrimSpace(id)}
+	}
+	return map[string]any{"name": strings.TrimSpace(name)}
+}
+
+func isJiraSubtaskIssueTypeName(value string) bool {
+	normalized := normalizeJiraIssueTypeName(value)
+	return normalized == "sub task" || normalized == "subtask"
+}
+
+func normalizeJiraIssueTypeName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.NewReplacer("-", " ", "_", " ").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func (client *jiraClient) UpdateIssue(ctx context.Context, cardID string, title string, notes string) error {
@@ -602,7 +666,7 @@ func (client *jiraClient) CloseIssue(ctx context.Context, cardID string) error {
 	}, nil)
 }
 
-func (client *jiraClient) doJSON(ctx context.Context, method string, path string, body any, out any) error {
+func (client *jiraClient) doJSON(ctx context.Context, method string, path string, body any, out any) (err error) {
 	var requestBody io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -626,15 +690,21 @@ func (client *jiraClient) doJSON(ctx context.Context, method string, path string
 	if err != nil {
 		return fmt.Errorf("call Jira: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if closeErr := response.Body.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close Jira response body: %w", closeErr)
+		}
+	}()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("Jira %s %s failed: status=%s body=%s", method, path, response.Status, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("jira %s %s failed: status=%s body=%s", method, path, response.Status, strings.TrimSpace(string(raw)))
 	}
 
 	if out == nil || response.StatusCode == http.StatusNoContent {
-		io.Copy(io.Discard, response.Body) //nolint:errcheck
+		if _, err := io.Copy(io.Discard, response.Body); err != nil {
+			return fmt.Errorf("drain Jira response body: %w", err)
+		}
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(out); err != nil {
@@ -647,10 +717,10 @@ func (client *jiraClient) validateIssueKey(issueKey string) error {
 	issueKey = strings.TrimSpace(issueKey)
 	projectKey := strings.TrimSpace(client.config.ProjectKey)
 	if issueKey == "" {
-		return fmt.Errorf("Jira issue key is required")
+		return fmt.Errorf("jira issue key is required")
 	}
 	if projectKey == "" {
-		return fmt.Errorf("Jira project_key is required")
+		return fmt.Errorf("jira project_key is required")
 	}
 	prefix, _, ok := strings.Cut(issueKey, "-")
 	if !ok || prefix == "" {
@@ -871,6 +941,30 @@ func (syncer *jiraSyncer) ApplyToolCall(ctx context.Context, toolName string, ra
 	case "set_sprint":
 		sprintID, _ := asInt(args["sprint_id"])
 		return syncer.client.SetSprint(ctx, asString(args["card_id"]), sprintID)
+	case "prioritize_ticket":
+		cardID := asString(args["card_id"])
+		if cardID == "" {
+			cardID = asString(result["card_id"])
+		}
+		if statusRaw := asString(result["status"]); statusRaw != "" && statusRaw != asString(result["previous_status"]) {
+			status, err := parseKanbanStatus(statusRaw)
+			if err != nil {
+				return err
+			}
+			if err := syncer.moveIssue(ctx, cardID, status, ""); err != nil {
+				return err
+			}
+		}
+		beforeID := firstNonEmptyString(args, "above_card_id", "before_card_id")
+		afterID := firstNonEmptyString(args, "below_card_id", "after_card_id")
+		if beforeID == "" && afterID == "" {
+			beforeID = firstNonEmptyString(result, "above_card_id", "before_card_id")
+			afterID = firstNonEmptyString(result, "below_card_id", "after_card_id")
+		}
+		if beforeID == "" && afterID == "" {
+			return nil
+		}
+		return syncer.client.RankIssue(ctx, cardID, beforeID, afterID)
 	case "rank_issue":
 		return syncer.client.RankIssue(ctx, asString(args["card_id"]), asString(args["before_card_id"]), asString(args["after_card_id"]))
 	case "set_components":
@@ -1028,21 +1122,57 @@ func annotateJiraSyncResult(result map[string]any, jiraRequired bool, syncErr er
 		return
 	}
 
+	confirmedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	syncStatus := map[string]any{
 		"required":   true,
 		"configured": jiraSync != nil,
 		"ok":         jiraSync != nil && syncErr == nil,
 	}
+	confirmation := externalActionConfirmation{
+		System:      "jira",
+		Operation:   "write-through",
+		Required:    true,
+		Configured:  jiraSync != nil,
+		OK:          jiraSync != nil && syncErr == nil,
+		ConfirmedAt: confirmedAt,
+	}
 	switch {
 	case jiraSync == nil:
 		syncStatus["message"] = "Jira sync is not configured; only the local board changed."
+		confirmation.Message = "Jira sync is not configured; only the local board changed."
+		confirmation.Evidence = "No Jira client is configured for this process."
+		result["assistant_instruction"] = "Do not say Jira was updated. Say the local meeting board changed, but Jira sync is not configured."
 	case syncErr != nil:
 		syncStatus["error"] = syncErr.Error()
 		syncStatus["message"] = "The local board changed, but Jira write-through failed."
+		confirmation.Error = syncErr.Error()
+		confirmation.Message = "The local board changed, but Jira write-through failed."
+		confirmation.Evidence = truncateString(syncErr.Error(), 500)
+		result["assistant_instruction"] = "Do not say Jira was updated. Say the local board changed, but Jira write-through failed, and give the short error reason."
 	default:
 		syncStatus["message"] = "Jira write-through confirmed."
+		confirmation.Message = "Jira write-through confirmed."
+		confirmation.Evidence = "Jira API returned success for the requested write."
+		result["assistant_instruction"] = "You may say Jira accepted this update."
 	}
 	result["jira_sync"] = syncStatus
+	result["external_confirmations"] = []externalActionConfirmation{confirmation}
+	result["external_action_confirmed"] = confirmation.OK
+	result["external_action_status"] = externalActionStatus(confirmation)
+	result["api_confirmation_summary"] = confirmation.Message
+}
+
+func externalActionStatus(confirmation externalActionConfirmation) string {
+	if !confirmation.Required {
+		return "local_only"
+	}
+	if confirmation.OK {
+		return "api_confirmed"
+	}
+	if !confirmation.Configured {
+		return "api_not_configured"
+	}
+	return "api_failed"
 }
 
 func jiraToolRequiresSync(toolName string, rawArgs string, result map[string]any) bool {
@@ -1073,6 +1203,7 @@ func jiraToolRequiresSync(toolName string, rawArgs string, result map[string]any
 		"add_worklog",
 		"link_issues",
 		"set_sprint",
+		"prioritize_ticket",
 		"rank_issue",
 		"set_components",
 		"set_fix_versions",

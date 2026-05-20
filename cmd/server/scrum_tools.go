@@ -13,6 +13,16 @@ func (board *kanbanBoard) createSubtask(args map[string]any) (map[string]any, bo
 	if parentID == "" {
 		return nil, false, fmt.Errorf("parent_id or parent_card_id is required")
 	}
+	title := asString(args["title"])
+	parentTitle := ""
+	board.mu.Lock()
+	if parent, ok := board.findCardLocked(parentID); ok {
+		parentTitle = parent.Title
+	}
+	board.mu.Unlock()
+	if isIncompleteSubtaskTitle(title, parentTitle) {
+		return nil, false, fmt.Errorf("subtask title is incomplete; ask the user for the exact subtask title before creating it")
+	}
 
 	nextArgs := cloneToolArgs(args)
 	nextArgs["parent_id"] = parentID
@@ -30,6 +40,30 @@ func (board *kanbanBoard) createSubtask(args map[string]any) (map[string]any, bo
 	result["card_id"] = card.ID
 	result["parent_id"] = parentID
 	return result, changed, nil
+}
+
+func isIncompleteSubtaskTitle(title string, parentTitle string) bool {
+	normalizedTitle := normalizeSubtaskTitleForComparison(title)
+	switch normalizedTitle {
+	case "", "subtask", "sub task", "new subtask", "new sub task", "child task", "child ticket", "child issue", "subtitle":
+		return true
+	}
+	if parentTitle == "" {
+		return false
+	}
+	normalizedParent := normalizeSubtaskTitleForComparison(parentTitle)
+	for _, prefix := range []string{"subtask for ", "sub task for ", "subtitle for ", "child task for ", "child ticket for "} {
+		if normalizedTitle == prefix+normalizedParent {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeSubtaskTitleForComparison(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.NewReplacer("-", " ", "_", " ").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func (board *kanbanBoard) setStoryPoints(args map[string]any) (map[string]any, bool, error) {
@@ -227,47 +261,109 @@ func (board *kanbanBoard) setSprint(args map[string]any) (map[string]any, bool, 
 	}, true, nil
 }
 
+func (board *kanbanBoard) prioritizeTicket(args map[string]any) (map[string]any, bool, error) {
+	return board.reorderTicket(args, true, true)
+}
+
 func (board *kanbanBoard) rankIssue(args map[string]any) (map[string]any, bool, error) {
+	return board.reorderTicket(args, false, false)
+}
+
+func (board *kanbanBoard) reorderTicket(args map[string]any, moveToTargetColumn bool, requirePlacement bool) (map[string]any, bool, error) {
 	cardID := asString(args["card_id"])
 	if cardID == "" {
 		return nil, false, fmt.Errorf("card_id is required")
 	}
-	beforeID := asString(args["before_card_id"])
-	afterID := asString(args["after_card_id"])
+	beforeID := firstNonEmptyString(args, "above_card_id", "before_card_id")
+	afterID := firstNonEmptyString(args, "below_card_id", "after_card_id")
 	if beforeID != "" && afterID != "" {
-		return nil, false, fmt.Errorf("only one of before_card_id or after_card_id may be set")
+		return nil, false, fmt.Errorf("only one of above_card_id/before_card_id or below_card_id/after_card_id may be set")
+	}
+	position := strings.ToLower(strings.TrimSpace(asString(args["position"])))
+	if position != "" && position != "top" && position != "bottom" {
+		return nil, false, fmt.Errorf("position must be top or bottom")
+	}
+	if (beforeID != "" || afterID != "") && position != "" {
+		return nil, false, fmt.Errorf("position cannot be combined with above_card_id or below_card_id")
+	}
+	if requirePlacement && beforeID == "" && afterID == "" && position == "" {
+		return nil, false, fmt.Errorf("above_card_id, below_card_id, or position is required")
 	}
 
 	board.mu.Lock()
 	defer board.mu.Unlock()
 
+	cardID = board.resolveCardAliasLocked(cardID)
+	beforeID = board.resolveCardAliasLocked(beforeID)
+	afterID = board.resolveCardAliasLocked(afterID)
 	index := board.cardIndexLocked(cardID)
 	if index < 0 {
 		return nil, false, fmt.Errorf("unknown card_id: %s", cardID)
 	}
 	card := board.cards[index]
+	previousStatus := card.Status
+	previousRank := card.Rank
 	rank := "manual"
 	targetID := ""
-	insertIndex := index
+	rankBeforeID := ""
+	rankAfterID := ""
+	targetStatus := card.Status
 	if beforeID != "" || afterID != "" {
 		targetID = beforeID
 		if targetID == "" {
 			targetID = afterID
 		}
-		targetIndex := board.cardIndexLocked(targetID)
-		if targetIndex < 0 {
+		if targetID == cardID {
+			return nil, false, fmt.Errorf("cannot prioritize a card relative to itself")
+		}
+		targetCard, ok := board.findCardLocked(targetID)
+		if !ok {
 			return nil, false, fmt.Errorf("unknown target card_id: %s", targetID)
 		}
-		board.cards = append(board.cards[:index], board.cards[index+1:]...)
-		if targetIndex > index {
-			targetIndex--
+		if moveToTargetColumn {
+			targetStatus = targetCard.Status
 		}
-		insertIndex = targetIndex
-		if afterID != "" {
-			insertIndex = targetIndex + 1
-			rank = "after " + afterID
+	}
+	if rawStatus := firstNonEmptyString(args, "target_status", "status", "column"); rawStatus != "" {
+		parsedStatus, err := parseKanbanStatus(rawStatus)
+		if err != nil {
+			return nil, false, err
+		}
+		if targetID != "" {
+			targetCard, _ := board.findCardLocked(targetID)
+			if targetCard != nil && targetCard.Status != parsedStatus {
+				return nil, false, fmt.Errorf("target card %s is in %s; cannot place %s relative to it in %s", targetID, targetCard.Status, cardID, parsedStatus)
+			}
+		}
+		targetStatus = parsedStatus
+	}
+
+	if targetID != "" || position != "" {
+		card.Status = targetStatus
+		board.cards = append(board.cards[:index], board.cards[index+1:]...)
+		var insertIndex int
+		if targetID != "" {
+			targetIndex := board.cardIndexLocked(targetID)
+			if targetIndex < 0 {
+				return nil, false, fmt.Errorf("unknown target card_id: %s", targetID)
+			}
+			insertIndex = targetIndex
+			if afterID != "" {
+				insertIndex = targetIndex + 1
+				rank = "below " + targetID
+				rankAfterID = targetID
+			} else {
+				rank = "above " + targetID
+				rankBeforeID = targetID
+			}
 		} else {
-			rank = "before " + beforeID
+			if position == "top" {
+				rankBeforeID = firstCardIDInStatus(board.cards, targetStatus)
+			} else {
+				rankAfterID = lastCardIDInStatus(board.cards, targetStatus)
+			}
+			insertIndex = insertionIndexForColumnPosition(board.cards, targetStatus, position)
+			rank = fmt.Sprintf("%s of %s", position, targetStatus)
 		}
 		if insertIndex < 0 {
 			insertIndex = 0
@@ -282,12 +378,64 @@ func (board *kanbanBoard) rankIssue(args map[string]any) (map[string]any, bool, 
 	rankedCard.RankHint = rank
 	board.touchLocked()
 
-	return map[string]any{
-		"ok":             true,
-		"card_id":        cardID,
-		"rank":           rank,
-		"target_card_id": targetID,
-	}, true, nil
+	result := map[string]any{
+		"ok":              true,
+		"card_id":         cardID,
+		"rank":            rank,
+		"rank_hint":       rank,
+		"target_card_id":  targetID,
+		"status":          string(targetStatus),
+		"previous_status": string(previousStatus),
+		"previous_rank":   previousRank,
+		"moved":           previousStatus != targetStatus,
+	}
+	if rankBeforeID != "" {
+		result["above_card_id"] = rankBeforeID
+		result["before_card_id"] = rankBeforeID
+	}
+	if rankAfterID != "" {
+		result["below_card_id"] = rankAfterID
+		result["after_card_id"] = rankAfterID
+	}
+	if position != "" {
+		result["position"] = position
+	}
+	return result, true, nil
+}
+
+func firstCardIDInStatus(cards []kanbanCard, status kanbanStatus) string {
+	for _, card := range cards {
+		if card.Status == status {
+			return card.ID
+		}
+	}
+	return ""
+}
+
+func lastCardIDInStatus(cards []kanbanCard, status kanbanStatus) string {
+	for index := len(cards) - 1; index >= 0; index-- {
+		if cards[index].Status == status {
+			return cards[index].ID
+		}
+	}
+	return ""
+}
+
+func insertionIndexForColumnPosition(cards []kanbanCard, status kanbanStatus, position string) int {
+	if position == "top" {
+		for index, card := range cards {
+			if card.Status == status {
+				return index
+			}
+		}
+		return len(cards)
+	}
+	for index := len(cards) - 1; index >= 0; index-- {
+		if cards[index].Status == status {
+			return index + 1
+		}
+	}
+	return len(cards)
 }
 
 func (board *kanbanBoard) setComponents(args map[string]any) (map[string]any, bool, error) {

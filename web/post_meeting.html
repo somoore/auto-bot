@@ -364,6 +364,13 @@
             ev.textContent = `Evidence: ${evidence}`
             row.appendChild(ev)
           }
+          const confirmations = item.externalConfirmations || item.external_confirmations || []
+          if (confirmations.length) {
+            const api = document.createElement('div')
+            api.className = 'evidence'
+            api.textContent = confirmations.map(c => `${c.system || 'external'}: ${c.ok ? 'confirmed' : 'not confirmed'}${c.message ? ' - ' + c.message : ''}${c.error ? ' - ' + c.error : ''}`).join('\n')
+            row.appendChild(api)
+          }
           els.timeline.appendChild(row)
         })
       }
@@ -379,7 +386,7 @@
           title.textContent = `${item.card_id || item.cardId || 'Ticket'} · ${item.specialist || 'agent'} · ${item.status || 'unknown'}${pr ? ' · PR #' + pr : ''}`
           const meta = document.createElement('div')
           meta.className = 'muted'
-          meta.textContent = `${item.repo || 'repo not set'} · ${item.request_type || item.requestType || 'unclassified'} · updated ${formatTime(item.updated_at || item.updatedAt)}`
+          meta.textContent = `${item.repo || 'repo not set'} · ${item.request_type || item.requestType || 'unclassified'} · ${item.review_lens || item.reviewLens || 'review'} lens · updated ${formatTime(item.updated_at || item.updatedAt)}`
           row.append(title, meta)
           if (item.summary || item.error || item.current_step || item.currentStep) {
             const summary = document.createElement('div')
@@ -387,11 +394,24 @@
             summary.textContent = item.summary || item.error || item.current_step || item.currentStep
             row.appendChild(summary)
           }
+          const warnings = item.publish_warnings || item.publishWarnings || []
+          if (warnings.length) {
+            const warningBox = document.createElement('div')
+            warningBox.className = 'evidence'
+            warningBox.textContent = `Publish warnings:\n${warnings.join('\n')}`
+            row.appendChild(warningBox)
+          }
           const findings = item.findings || []
           if (findings.length) {
             const findingBox = document.createElement('div')
             findingBox.className = 'evidence'
-            findingBox.textContent = findings.slice(0, 5).map(f => `[${f.severity || 'medium'}] ${f.title || 'Finding'}${f.file ? ' - ' + f.file : ''}`).join('\n')
+            findingBox.textContent = findings.slice(0, 5).map(f => {
+              const where = f.file ? ` - ${f.file}${f.line ? ':' + f.line : ''}` : ''
+              const category = f.category ? `/${f.category}` : ''
+              const impact = f.impact ? `\n  Impact: ${f.impact}` : ''
+              const fix = f.suggested_fix || f.suggestedFix ? `\n  Fix: ${f.suggested_fix || f.suggestedFix}` : ''
+              return `[${f.severity || 'medium'}${category}] ${f.title || 'Finding'}${where}${impact}${fix}`
+            }).join('\n')
             row.appendChild(findingBox)
           }
           els.agentRuns.appendChild(row)

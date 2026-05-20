@@ -16,6 +16,24 @@ openai-realtime-meeting-assistant
 cover.html
 coverage.txt
 
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# ---------- Browser / test artifacts ----------
+.playwright-mcp/
+playwright-report/
+test-results/
+blob-report/
+
+# ---------- Local app data ----------
+*.sqlite
+*.sqlite3
+*.db
+
 # Module vendoring (uncomment if you vendor)
 # vendor/
 
@@ -67,24 +85,9 @@ $RECYCLE.BIN/
 .env.*.local
 .env.development
 .env.production
-config/*.local.json
-config/*.secret.json
 
 # ---------- Docker ----------
 # docker-compose.yml and Dockerfile are tracked;
 # ignore runtime volumes and overrides
 docker-compose.override.yml
 var/
-
-# ---------- Terraform ----------
-**/.terraform/
-*.tfstate
-*.tfstate.*
-*.tfvars
-*.tfvars.json
-crash.log
-crash.*.log
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json

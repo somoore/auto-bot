@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,6 +59,13 @@ func TestHostSetupMeetingCreatesJoinCodeAndHostAccess(t *testing.T) {
 	}
 	if ctx.Role != meetingRoleHost || ctx.MeetingType != meetingTypeStandup {
 		t.Fatalf("auth context = %+v", ctx)
+	}
+}
+
+func TestRandomJoinCodeMeetsEntropyRequirement(t *testing.T) {
+	entropyBits := float64(joinCodeLength) * math.Log2(float64(len(joinCodeChars)))
+	if entropyBits < 72 {
+		t.Fatalf("join code entropy = %.1f bits, want at least 72", entropyBits)
 	}
 }
 
@@ -127,6 +135,67 @@ func TestParticipantMustJoinWithExactCodeBeforeRoomAccess(t *testing.T) {
 	}
 	if ctx.Role != meetingRoleParticipant || ctx.Identity != "Sarah_1" {
 		t.Fatalf("participant auth context = %+v", ctx)
+	}
+}
+
+func TestParticipantCannotRunHostOnlyKanbanCommands(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	apiToken = "host-token"
+	appAuthMode = "token"
+	appEnvironment = "production"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+	meetingAccess = newMeetingAccessManager()
+	sharedBoard = newKanbanBoard()
+
+	hostCookie := createTestSessionCookie(t, "host-token", "Scott_1")
+	setupRec := httptest.NewRecorder()
+	setupReq := httptest.NewRequest(http.MethodPost, "/meeting/setup", strings.NewReader(`{"meeting_type":"standup"}`))
+	setupReq.AddCookie(hostCookie)
+	setupMeetingHandler(setupRec, setupReq)
+	if setupRec.Code != http.StatusOK {
+		t.Fatalf("setup status = %d, body = %s", setupRec.Code, setupRec.Body.String())
+	}
+	var setupResponse struct {
+		Meeting meetingAccessSnapshot `json:"meeting"`
+	}
+	if err := json.Unmarshal(setupRec.Body.Bytes(), &setupResponse); err != nil {
+		t.Fatal(err)
+	}
+
+	joinReq := httptest.NewRequest(http.MethodPost, "/meeting/join", strings.NewReader(`{"join_code":"`+setupResponse.Meeting.JoinCode+`","identity":"Sarah_1"}`))
+	joinRec := httptest.NewRecorder()
+	joinMeetingHandler(joinRec, joinReq)
+	if joinRec.Code != http.StatusOK {
+		t.Fatalf("join status = %d, body = %s", joinRec.Code, joinRec.Body.String())
+	}
+	participantReq := httptest.NewRequest(http.MethodGet, "/websocket?room_id=team-room&board_id=team-board", nil)
+	participantReq.AddCookie(joinRec.Result().Cookies()[0])
+	participantCtx, ok := authorizeRequest(participantReq)
+	if !ok {
+		t.Fatal("participant was not authorized after joining")
+	}
+
+	hostReq := httptest.NewRequest(http.MethodGet, "/websocket?room_id=team-room&board_id=team-board", nil)
+	hostReq.AddCookie(hostCookie)
+	hostCtx, ok := authorizeRequest(hostReq)
+	if !ok {
+		t.Fatal("host was not authorized")
+	}
+
+	for _, toolName := range []string{"confirm_action", "cancel_confirmation", "resolve_jira_conflict", "undo_last_mutation", "switch_meeting_type", "end_meeting"} {
+		if kanbanCommandAllowed(participantCtx, toolName) {
+			t.Fatalf("participant was allowed to run host-only tool %q", toolName)
+		}
+		if !kanbanCommandAllowed(hostCtx, toolName) {
+			t.Fatalf("host was blocked from host-only tool %q", toolName)
+		}
+	}
+	if !kanbanCommandAllowed(participantCtx, "move_ticket") {
+		t.Fatal("participant should still be allowed to run non-host-only board commands")
 	}
 }
 
@@ -332,6 +401,23 @@ func TestHostLeaveEndsMeetingAndRevokesParticipants(t *testing.T) {
 	}
 	if meetingAccess.snapshot(false).Active {
 		t.Fatal("host leave did not end meeting access")
+	}
+
+	secondLeaveReq := httptest.NewRequest(http.MethodPost, "/meeting/leave", nil)
+	secondLeaveReq.AddCookie(hostCookie)
+	secondLeaveRec := httptest.NewRecorder()
+	leaveMeetingHandler(secondLeaveRec, secondLeaveReq)
+	if secondLeaveRec.Code != http.StatusOK {
+		t.Fatalf("idempotent host leave status = %d, body = %s", secondLeaveRec.Code, secondLeaveRec.Body.String())
+	}
+	var secondLeaveResponse struct {
+		Ended bool `json:"ended"`
+	}
+	if err := json.Unmarshal(secondLeaveRec.Body.Bytes(), &secondLeaveResponse); err != nil {
+		t.Fatal(err)
+	}
+	if !secondLeaveResponse.Ended {
+		t.Fatalf("idempotent leave response = %+v, want ended", secondLeaveResponse)
 	}
 
 	state := sharedBoard.SnapshotState()

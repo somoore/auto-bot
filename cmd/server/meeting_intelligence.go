@@ -36,6 +36,8 @@ type pendingConfirmation struct {
 	ExpiresAt      string         `json:"expiresAt"`
 }
 
+// pendingConfirmationView is the client-safe representation of a medium/high
+// risk action waiting for host confirmation.
 type pendingConfirmationView struct {
 	ConfirmationID    string        `json:"confirmationId"`
 	ToolName          string        `json:"toolName"`
@@ -51,11 +53,17 @@ type pendingConfirmationView struct {
 	ExpiresAt         string        `json:"expiresAt"`
 }
 
+// transcriptEntry is the retained meeting transcript shape used for audit and
+// intelligence reports. CreatedAt is RFC3339Nano UTC.
 type transcriptEntry struct {
-	Role      string `json:"role"`
-	Speaker   string `json:"speaker,omitempty"`
-	Text      string `json:"text"`
-	CreatedAt string `json:"createdAt"`
+	Role           string `json:"role"`
+	Speaker        string `json:"speaker,omitempty"`
+	Text           string `json:"text"`
+	OriginalText   string `json:"original_text,omitempty"`
+	TranslatedText string `json:"translated_text,omitempty"`
+	Language       string `json:"language,omitempty"`
+	InputMode      string `json:"input_mode,omitempty"`
+	CreatedAt      string `json:"createdAt"`
 }
 
 type transcriptEvidence struct {
@@ -63,47 +71,64 @@ type transcriptEvidence struct {
 	Summary string            `json:"summary,omitempty"`
 }
 
-type boardMutationRecord struct {
-	EventID       string             `json:"eventId"`
-	OccurredAt    string             `json:"occurredAt"`
-	Source        string             `json:"source"`
-	Actor         string             `json:"actor,omitempty"`
-	ToolName      string             `json:"toolName"`
-	Arguments     map[string]any     `json:"arguments,omitempty"`
-	Result        map[string]any     `json:"result,omitempty"`
-	RiskLevel     toolRiskLevel      `json:"riskLevel"`
-	Confirmation  string             `json:"confirmationId,omitempty"`
-	CallID        string             `json:"callId,omitempty"`
-	CardIDs       []string           `json:"cardIds,omitempty"`
-	Summary       string             `json:"summary"`
-	BeforeCards   []kanbanCard       `json:"beforeCards,omitempty"`
-	AfterCards    []kanbanCard       `json:"afterCards,omitempty"`
-	BeforeMeeting *scrumMeetingState `json:"beforeMeeting,omitempty"`
-	AfterMeeting  *scrumMeetingState `json:"afterMeeting,omitempty"`
-	Transcript    transcriptEvidence `json:"transcript,omitempty"`
-	Sequence      int64              `json:"sequenceNumber"`
-	Reverted      bool               `json:"reverted,omitempty"`
-	UndoOf        string             `json:"undoOf,omitempty"`
+type externalActionConfirmation struct {
+	System      string `json:"system"`
+	Operation   string `json:"operation,omitempty"`
+	Required    bool   `json:"required"`
+	Configured  bool   `json:"configured"`
+	OK          bool   `json:"ok"`
+	Message     string `json:"message,omitempty"`
+	Error       string `json:"error,omitempty"`
+	ConfirmedAt string `json:"confirmedAt,omitempty"`
+	Evidence    string `json:"evidence,omitempty"`
 }
 
+type boardMutationRecord struct {
+	EventID               string                       `json:"eventId"`
+	OccurredAt            string                       `json:"occurredAt"`
+	Source                string                       `json:"source"`
+	Actor                 string                       `json:"actor,omitempty"`
+	ToolName              string                       `json:"toolName"`
+	Arguments             map[string]any               `json:"arguments,omitempty"`
+	Result                map[string]any               `json:"result,omitempty"`
+	RiskLevel             toolRiskLevel                `json:"riskLevel"`
+	Confirmation          string                       `json:"confirmationId,omitempty"`
+	CallID                string                       `json:"callId,omitempty"`
+	CardIDs               []string                     `json:"cardIds,omitempty"`
+	Summary               string                       `json:"summary"`
+	ExternalConfirmations []externalActionConfirmation `json:"externalConfirmations,omitempty"`
+	BeforeCards           []kanbanCard                 `json:"beforeCards,omitempty"`
+	AfterCards            []kanbanCard                 `json:"afterCards,omitempty"`
+	BeforeMeeting         *scrumMeetingState           `json:"beforeMeeting,omitempty"`
+	AfterMeeting          *scrumMeetingState           `json:"afterMeeting,omitempty"`
+	Transcript            transcriptEvidence           `json:"transcript,omitempty"`
+	Sequence              int64                        `json:"sequenceNumber"`
+	Reverted              bool                         `json:"reverted,omitempty"`
+	UndoOf                string                       `json:"undoOf,omitempty"`
+}
+
+// boardMutationView is the client-safe audit summary for one board or Jira
+// mutation.
 type boardMutationView struct {
-	EventID           string             `json:"eventId"`
-	OccurredAt        string             `json:"occurredAt"`
-	Source            string             `json:"source"`
-	Actor             string             `json:"actor,omitempty"`
-	ToolName          string             `json:"toolName"`
-	RiskLevel         toolRiskLevel      `json:"riskLevel"`
-	Confirmation      string             `json:"confirmationId,omitempty"`
-	CardIDs           []string           `json:"cardIds,omitempty"`
-	Summary           string             `json:"summary"`
-	Confidence        float64            `json:"confidence,omitempty"`
-	ConfidenceReasons []string           `json:"confidenceReasons,omitempty"`
-	MatchedCardID     string             `json:"matchedCardId,omitempty"`
-	GuardrailDecision string             `json:"guardrailDecision,omitempty"`
-	Transcript        transcriptEvidence `json:"transcript,omitempty"`
-	Sequence          int64              `json:"sequenceNumber"`
-	Reverted          bool               `json:"reverted,omitempty"`
-	UndoOf            string             `json:"undoOf,omitempty"`
+	EventID               string                       `json:"eventId"`
+	OccurredAt            string                       `json:"occurredAt"`
+	Source                string                       `json:"source"`
+	Actor                 string                       `json:"actor,omitempty"`
+	ToolName              string                       `json:"toolName"`
+	RiskLevel             toolRiskLevel                `json:"riskLevel"`
+	Confirmation          string                       `json:"confirmationId,omitempty"`
+	CardIDs               []string                     `json:"cardIds,omitempty"`
+	Summary               string                       `json:"summary"`
+	Confidence            float64                      `json:"confidence,omitempty"`
+	ConfidenceReasons     []string                     `json:"confidenceReasons,omitempty"`
+	MatchedCardID         string                       `json:"matchedCardId,omitempty"`
+	GuardrailDecision     string                       `json:"guardrailDecision,omitempty"`
+	ExternalConfirmations []externalActionConfirmation `json:"externalConfirmations,omitempty"`
+	APIStatus             string                       `json:"apiStatus,omitempty"`
+	Transcript            transcriptEvidence           `json:"transcript,omitempty"`
+	Sequence              int64                        `json:"sequenceNumber"`
+	Reverted              bool                         `json:"reverted,omitempty"`
+	UndoOf                string                       `json:"undoOf,omitempty"`
 }
 
 type scrumFollowUp struct {
@@ -146,6 +171,8 @@ type scrumBriefing struct {
 	RecommendedQuestions []string `json:"recommendedQuestions,omitempty"`
 }
 
+// jiraConflict is the client-visible local-vs-Jira divergence record used to
+// ask the meeting host which version should win.
 type jiraConflict struct {
 	ConflictID    string     `json:"conflictId"`
 	CardID        string     `json:"cardId"`
@@ -175,7 +202,7 @@ func riskForTool(toolName string) toolRiskLevel {
 	switch toolName {
 	case "assign_ticket", "unassign_ticket", "assign_ticket_to_agent", "set_eta", "set_priority", "set_reporter":
 		return toolRiskMedium
-	case "delete_ticket", "set_sprint", "rank_issue":
+	case "delete_ticket", "set_sprint", "rank_issue", "prioritize_ticket":
 		return toolRiskHigh
 	default:
 		return toolRiskLow
@@ -249,7 +276,17 @@ func confirmationPrompt(toolName string, args map[string]any) string {
 		return fmt.Sprintf("I heard you want to close or delete %s. Confirm?", target)
 	case "set_sprint":
 		return fmt.Sprintf("I heard you want to move %s into sprint %v. Confirm?", target, args["sprint_id"])
-	case "rank_issue":
+	case "rank_issue", "prioritize_ticket":
+		if targetCardID := firstNonEmptyString(args, "above_card_id", "before_card_id", "below_card_id", "after_card_id"); targetCardID != "" {
+			return fmt.Sprintf("I heard you want to reorder %s relative to %s. Confirm?", target, targetCardID)
+		}
+		if position := asString(args["position"]); position != "" {
+			column := firstNonEmptyString(args, "target_status", "status", "column")
+			if column != "" {
+				return fmt.Sprintf("I heard you want to move %s to the %s of %s. Confirm?", target, position, column)
+			}
+			return fmt.Sprintf("I heard you want to move %s to the %s of its column. Confirm?", target, position)
+		}
 		return fmt.Sprintf("I heard you want to reorder %s in Jira. Confirm?", target)
 	default:
 		return fmt.Sprintf("I heard you want to run %s on %s. Confirm?", toolName, target)
@@ -340,8 +377,12 @@ func (board *kanbanBoard) recordMutation(toolName string, args map[string]any, r
 	board.mu.Lock()
 	defer board.mu.Unlock()
 
+	eventID := board.nextOperationIDLocked("event")
+	if result != nil {
+		result["audit_event_id"] = eventID
+	}
 	record := boardMutationRecord{
-		EventID:       board.nextOperationIDLocked("event"),
+		EventID:       eventID,
 		OccurredAt:    time.Now().UTC().Format(time.RFC3339Nano),
 		Source:        meta.Source,
 		Actor:         meta.Actor,
@@ -366,6 +407,94 @@ func (board *kanbanBoard) recordMutation(toolName string, args map[string]any, r
 		board.mutationHistory = append([]boardMutationRecord(nil), board.mutationHistory[len(board.mutationHistory)-200:]...)
 	}
 	return record
+}
+
+func (board *kanbanBoard) attachExternalConfirmationsToMutation(result map[string]any) {
+	if board == nil || result == nil {
+		return
+	}
+	confirmations := externalConfirmationsFromResult(result)
+	if len(confirmations) == 0 {
+		return
+	}
+	eventID := asString(result["audit_event_id"])
+	if eventID == "" {
+		return
+	}
+
+	board.mu.Lock()
+	index := -1
+	for i := len(board.mutationHistory) - 1; i >= 0; i-- {
+		if board.mutationHistory[i].EventID == eventID {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		board.mu.Unlock()
+		return
+	}
+	board.mutationHistory[index].ExternalConfirmations = confirmations
+	board.mutationHistory[index].Result = cloneToolArgs(result)
+	record := board.mutationHistory[index]
+	state := board.snapshotStateLocked()
+	board.mu.Unlock()
+
+	board.persistMutationRecord(record, state)
+}
+
+func externalConfirmationsFromResult(result map[string]any) []externalActionConfirmation {
+	raw, ok := result["external_confirmations"]
+	if !ok {
+		return nil
+	}
+	switch typed := raw.(type) {
+	case []externalActionConfirmation:
+		return cloneExternalActionConfirmations(typed)
+	case []any:
+		confirmations := make([]externalActionConfirmation, 0, len(typed))
+		for _, item := range typed {
+			if confirmation := externalConfirmationFromAny(item); confirmation.System != "" {
+				confirmations = append(confirmations, confirmation)
+			}
+		}
+		return confirmations
+	default:
+		if confirmation := externalConfirmationFromAny(typed); confirmation.System != "" {
+			return []externalActionConfirmation{confirmation}
+		}
+		return nil
+	}
+}
+
+func externalConfirmationFromAny(value any) externalActionConfirmation {
+	switch typed := value.(type) {
+	case externalActionConfirmation:
+		return typed
+	case map[string]any:
+		return externalActionConfirmation{
+			System:      truncateString(asString(typed["system"]), 80),
+			Operation:   truncateString(asString(typed["operation"]), 120),
+			Required:    asBool(typed["required"]),
+			Configured:  asBool(typed["configured"]),
+			OK:          asBool(typed["ok"]),
+			Message:     truncateString(asString(typed["message"]), 500),
+			Error:       truncateString(asString(typed["error"]), 500),
+			ConfirmedAt: truncateString(firstNonEmpty(asString(typed["confirmedAt"]), asString(typed["confirmed_at"])), 80),
+			Evidence:    truncateString(asString(typed["evidence"]), 500),
+		}
+	default:
+		return externalActionConfirmation{}
+	}
+}
+
+func cloneExternalActionConfirmations(confirmations []externalActionConfirmation) []externalActionConfirmation {
+	if len(confirmations) == 0 {
+		return nil
+	}
+	out := make([]externalActionConfirmation, len(confirmations))
+	copy(out, confirmations)
+	return out
 }
 
 func mutationSummary(toolName string, args map[string]any, result map[string]any) string {
@@ -393,6 +522,14 @@ func mutationSummary(toolName string, args map[string]any, result map[string]any
 		return fmt.Sprintf("Set ETA for %s", cardID)
 	case "set_priority":
 		return fmt.Sprintf("Set priority for %s", cardID)
+	case "rank_issue", "prioritize_ticket":
+		if targetCardID := firstNonEmptyString(args, "above_card_id", "before_card_id", "below_card_id", "after_card_id"); targetCardID != "" {
+			return fmt.Sprintf("Prioritized %s relative to %s", cardID, targetCardID)
+		}
+		if position := asString(result["position"]); position != "" {
+			return fmt.Sprintf("Prioritized %s to %s of %s", cardID, position, asString(result["status"]))
+		}
+		return fmt.Sprintf("Prioritized %s", cardID)
 	case "record_participant_update":
 		return fmt.Sprintf("Recorded update from %s", firstNonEmptyString(args, "participant", "display_name", "participant_id"))
 	default:
@@ -465,24 +602,44 @@ func (board *kanbanBoard) transcriptEvidenceLocked(extra string) transcriptEvide
 	}
 }
 
+// RecordTranscript records a simple transcript entry using the same truncation,
+// timestamp, and retention rules as RecordTranscriptEntry.
 func (board *kanbanBoard) RecordTranscript(role, speaker, text string) {
-	text = truncateString(text, 2000)
-	if text == "" {
+	board.RecordTranscriptEntry(transcriptEntry{
+		Role:    role,
+		Speaker: speaker,
+		Text:    text,
+	})
+}
+
+// RecordTranscriptEntry stores a sanitized transcript entry for meeting
+// intelligence and audit evidence. Text fields are truncated, CreatedAt is
+// filled with an RFC3339Nano UTC timestamp when omitted, and only the latest 50
+// entries are retained in memory.
+func (board *kanbanBoard) RecordTranscriptEntry(entry transcriptEntry) {
+	entry.Text = truncateString(entry.Text, 2000)
+	if entry.Text == "" {
 		return
 	}
+	if strings.TrimSpace(entry.CreatedAt) == "" {
+		entry.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	entry.Role = truncateString(strings.ToLower(strings.TrimSpace(entry.Role)), 40)
+	entry.Speaker = truncateString(entry.Speaker, 120)
+	entry.OriginalText = truncateString(entry.OriginalText, 2000)
+	entry.TranslatedText = truncateString(entry.TranslatedText, 2000)
+	entry.Language = truncateString(strings.ToLower(strings.TrimSpace(entry.Language)), 40)
+	entry.InputMode = truncateString(strings.ToLower(strings.TrimSpace(entry.InputMode)), 40)
 	board.mu.Lock()
 	defer board.mu.Unlock()
-	board.lastTranscripts = append(board.lastTranscripts, transcriptEntry{
-		Role:      truncateString(strings.ToLower(strings.TrimSpace(role)), 40),
-		Speaker:   truncateString(speaker, 120),
-		Text:      text,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-	})
+	board.lastTranscripts = append(board.lastTranscripts, entry)
 	if len(board.lastTranscripts) > 50 {
 		board.lastTranscripts = append([]transcriptEntry(nil), board.lastTranscripts[len(board.lastTranscripts)-50:]...)
 	}
 }
 
+// LastTranscriptAt returns the RFC3339Nano timestamp for the latest retained
+// transcript entry, or an empty string when no transcript has been recorded.
 func (board *kanbanBoard) LastTranscriptAt() string {
 	board.mu.Lock()
 	defer board.mu.Unlock()
@@ -563,10 +720,95 @@ func (board *kanbanBoard) replayAuditEvent(args map[string]any) (map[string]any,
 				"after":       kanbanBoardState{Cards: cloneKanbanCards(record.AfterCards), Meeting: cloneScrumMeetingStatePointerValue(record.AfterMeeting)},
 				"explanation": record.Summary,
 				"transcript":  record.Transcript,
+				"tool_call": map[string]any{
+					"source":       record.Source,
+					"actor":        record.Actor,
+					"tool_name":    record.ToolName,
+					"arguments":    cloneToolArgs(record.Arguments),
+					"call_id":      record.CallID,
+					"risk_level":   record.RiskLevel,
+					"confirmation": record.Confirmation,
+				},
+				"api_confirmations": cloneExternalActionConfirmations(record.ExternalConfirmations),
+				"api_status":        apiStatusForMutation(record),
+				"replay_steps":      replayStepsForMutation(record),
 			}, false, nil
 		}
 	}
 	return map[string]any{"ok": false, "error": "event not found"}, false, nil
+}
+
+func replayStepsForMutation(record boardMutationRecord) []map[string]any {
+	steps := make([]map[string]any, 0, 5)
+	transcript := strings.TrimSpace(record.Transcript.Summary)
+	if transcript == "" {
+		transcript = "No transcript evidence was captured for this action."
+	}
+	steps = append(steps, map[string]any{
+		"label":  "Live speech evidence",
+		"status": "captured",
+		"detail": transcript,
+	})
+
+	toolDetail := record.ToolName
+	if len(record.CardIDs) > 0 {
+		toolDetail += " on " + strings.Join(record.CardIDs, ", ")
+	}
+	steps = append(steps, map[string]any{
+		"label":  "Tool selected",
+		"status": "selected",
+		"detail": toolDetail,
+	})
+
+	steps = append(steps, map[string]any{
+		"label":  "Guardrail and confidence",
+		"status": guardrailDecisionForMutation(record),
+		"detail": strings.Join(confidenceReasonsForReplay(record), " "),
+	})
+
+	if len(record.ExternalConfirmations) == 0 {
+		steps = append(steps, map[string]any{
+			"label":  "External API",
+			"status": "not required",
+			"detail": "This action did not require a Jira or GitHub write.",
+		})
+	} else {
+		for _, confirmation := range record.ExternalConfirmations {
+			status := externalActionStatus(confirmation)
+			detail := confirmation.Message
+			if confirmation.Error != "" {
+				detail += " Error: " + confirmation.Error
+			}
+			if confirmation.Evidence != "" {
+				detail += " Evidence: " + confirmation.Evidence
+			}
+			steps = append(steps, map[string]any{
+				"label":  titleWord(firstNonEmpty(confirmation.System, "external")) + " API",
+				"status": status,
+				"detail": strings.TrimSpace(detail),
+			})
+		}
+	}
+
+	steps = append(steps, map[string]any{
+		"label":  "Board state",
+		"status": "recorded",
+		"detail": record.Summary,
+	})
+	return steps
+}
+
+func titleWord(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
+}
+
+func confidenceReasonsForReplay(record boardMutationRecord) []string {
+	_, reasons := confidenceForMutation(record)
+	return reasons
 }
 
 func (board *kanbanBoard) recordMeetingMemory(args map[string]any) (map[string]any, bool, error) {
@@ -862,26 +1104,55 @@ func pendingConfirmationToView(confirmation pendingConfirmation) pendingConfirma
 }
 
 func boardMutationToView(record boardMutationRecord) boardMutationView {
-	confidence, reasons := confidenceForToolAction(record.ToolName, record.Arguments, record.RiskLevel, record.Confirmation != "")
+	confidence, reasons := confidenceForMutation(record)
 	return boardMutationView{
-		EventID:           record.EventID,
-		OccurredAt:        record.OccurredAt,
-		Source:            record.Source,
-		Actor:             record.Actor,
-		ToolName:          record.ToolName,
-		RiskLevel:         record.RiskLevel,
-		Confirmation:      record.Confirmation,
-		CardIDs:           append([]string(nil), record.CardIDs...),
-		Summary:           record.Summary,
-		Confidence:        confidence,
-		ConfidenceReasons: reasons,
-		MatchedCardID:     firstNonEmpty(record.CardIDs...),
-		GuardrailDecision: guardrailDecisionForMutation(record),
-		Transcript:        record.Transcript,
-		Sequence:          record.Sequence,
-		Reverted:          record.Reverted,
-		UndoOf:            record.UndoOf,
+		EventID:               record.EventID,
+		OccurredAt:            record.OccurredAt,
+		Source:                record.Source,
+		Actor:                 record.Actor,
+		ToolName:              record.ToolName,
+		RiskLevel:             record.RiskLevel,
+		Confirmation:          record.Confirmation,
+		CardIDs:               append([]string(nil), record.CardIDs...),
+		Summary:               record.Summary,
+		Confidence:            confidence,
+		ConfidenceReasons:     reasons,
+		MatchedCardID:         firstNonEmpty(record.CardIDs...),
+		GuardrailDecision:     guardrailDecisionForMutation(record),
+		ExternalConfirmations: cloneExternalActionConfirmations(record.ExternalConfirmations),
+		APIStatus:             apiStatusForMutation(record),
+		Transcript:            record.Transcript,
+		Sequence:              record.Sequence,
+		Reverted:              record.Reverted,
+		UndoOf:                record.UndoOf,
 	}
+}
+
+func confidenceForMutation(record boardMutationRecord) (float64, []string) {
+	score, reasons := confidenceForToolAction(record.ToolName, record.Arguments, record.RiskLevel, record.Confirmation != "")
+	for _, confirmation := range record.ExternalConfirmations {
+		if !confirmation.Required {
+			continue
+		}
+		switch {
+		case confirmation.OK:
+			score += 0.04
+			reasons = append(reasons, fmt.Sprintf("%s API confirmed the write.", confirmation.System))
+		case !confirmation.Configured:
+			score -= 0.2
+			reasons = append(reasons, fmt.Sprintf("%s API was not configured; only local state changed.", confirmation.System))
+		default:
+			score -= 0.25
+			reasons = append(reasons, fmt.Sprintf("%s API did not confirm the write.", confirmation.System))
+		}
+	}
+	if score < 0.1 {
+		score = 0.1
+	}
+	if score > 0.98 {
+		score = 0.98
+	}
+	return score, reasons
 }
 
 func confidenceForToolAction(toolName string, args map[string]any, risk toolRiskLevel, confirmed bool) (float64, []string) {
@@ -917,6 +1188,13 @@ func confidenceForToolAction(toolName string, args map[string]any, risk toolRisk
 }
 
 func guardrailDecisionForMutation(record boardMutationRecord) string {
+	if status := apiStatusForMutation(record); status == "api_failed" {
+		return "local mutation kept, external API write failed"
+	} else if status == "api_not_configured" {
+		return "local mutation only; external API not configured"
+	} else if status == "api_confirmed" {
+		return "external API confirmed"
+	}
 	if record.Confirmation != "" {
 		return "confirmed before Jira mutation"
 	}
@@ -924,6 +1202,37 @@ func guardrailDecisionForMutation(record boardMutationRecord) string {
 		return "allowed as low-risk meeting action"
 	}
 	return "allowed by server policy"
+}
+
+func apiStatusForMutation(record boardMutationRecord) string {
+	if len(record.ExternalConfirmations) == 0 {
+		return ""
+	}
+	anyRequired := false
+	allOK := true
+	anyUnconfigured := false
+	for _, confirmation := range record.ExternalConfirmations {
+		if !confirmation.Required {
+			continue
+		}
+		anyRequired = true
+		if !confirmation.Configured {
+			anyUnconfigured = true
+		}
+		if !confirmation.OK {
+			allOK = false
+		}
+	}
+	if !anyRequired {
+		return "local_only"
+	}
+	if allOK {
+		return "api_confirmed"
+	}
+	if anyUnconfigured {
+		return "api_not_configured"
+	}
+	return "api_failed"
 }
 
 func (board *kanbanBoard) mutationViewsLocked(limit int) []boardMutationView {
@@ -988,4 +1297,33 @@ func (board *kanbanBoard) persistMutationRecord(record boardMutationRecord, stat
 	if err := board.store.AppendEvent(context.Background(), board.boardID, event, state); err != nil {
 		log.Errorf("Failed to persist board event: %v", err)
 	}
+	if ledgerStore, ok := board.store.(mutationLedgerStore); ok {
+		if err := ledgerStore.SaveMutationRecord(context.Background(), board.boardID, record, state); err != nil {
+			log.Errorf("Failed to persist action replay event: %v", err)
+		}
+	}
+}
+
+func cloneBoardMutationRecords(records []boardMutationRecord) []boardMutationRecord {
+	if len(records) == 0 {
+		return nil
+	}
+	out := make([]boardMutationRecord, len(records))
+	for i, record := range records {
+		out[i] = cloneBoardMutationRecord(record)
+	}
+	return out
+}
+
+func cloneBoardMutationRecord(record boardMutationRecord) boardMutationRecord {
+	record.Arguments = cloneToolArgs(record.Arguments)
+	record.Result = cloneToolArgs(record.Result)
+	record.CardIDs = append([]string(nil), record.CardIDs...)
+	record.ExternalConfirmations = cloneExternalActionConfirmations(record.ExternalConfirmations)
+	record.BeforeCards = cloneKanbanCards(record.BeforeCards)
+	record.AfterCards = cloneKanbanCards(record.AfterCards)
+	record.BeforeMeeting = cloneScrumMeetingStatePointerValue(record.BeforeMeeting)
+	record.AfterMeeting = cloneScrumMeetingStatePointerValue(record.AfterMeeting)
+	record.Transcript.Entries = append([]transcriptEntry(nil), record.Transcript.Entries...)
+	return record
 }

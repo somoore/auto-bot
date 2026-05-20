@@ -36,6 +36,13 @@ else
   fail "go mod verify failed — module checksums do not match"
 fi
 
+step "Checking package graph and ghost imports"
+if scripts/check-go-dependencies.sh 2>&1; then
+  pass "Go package and module graph resolved"
+else
+  fail "Go dependency graph check failed"
+fi
+
 # ── Go code quality ──
 
 step "Running go vet"
@@ -45,9 +52,125 @@ else
   fail "go vet found issues"
 fi
 
+step "Running Go tests"
+if go test ./... 2>&1; then
+  pass "Go tests passed"
+else
+  fail "Go tests failed"
+fi
+
+step "Checking architecture import boundaries"
+if scripts/check-import-boundaries.sh 2>&1; then
+  pass "Import boundaries are intact"
+else
+  fail "Import boundary check failed"
+fi
+
+step "Checking GitHub Actions pinning"
+if scripts/check-github-actions-pinning.sh 2>&1; then
+  pass "GitHub Actions use immutable refs"
+else
+  fail "GitHub Actions pinning check failed"
+fi
+
+step "Checking dependency lock files and immutable release pins"
+LOCK_FAIL=0
+
+if [ -f go.mod ] && [ ! -f go.sum ]; then
+  fail "go.mod exists but go.sum is missing"
+  LOCK_FAIL=1
+fi
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/package-lock.json" ] && [ ! -f "$dir/pnpm-lock.yaml" ] && [ ! -f "$dir/yarn.lock" ] && [ ! -f "$dir/bun.lock" ] && [ ! -f "$dir/bun.lockb" ]; then
+    fail "JavaScript manifest lacks a lock file: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -path './node_modules' -prune -o -name package.json -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if grep -q '^\[tool\.poetry\]' "$manifest" && [ ! -f "$dir/poetry.lock" ]; then
+    fail "Poetry manifest lacks poetry.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name pyproject.toml -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/Pipfile.lock" ]; then
+    fail "Pipfile lacks Pipfile.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name Pipfile -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/Cargo.lock" ]; then
+    fail "Cargo manifest lacks Cargo.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name Cargo.toml -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/Gemfile.lock" ]; then
+    fail "Gemfile lacks Gemfile.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name Gemfile -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/composer.lock" ]; then
+    fail "Composer manifest lacks composer.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name composer.json -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/.terraform.lock.hcl" ]; then
+    fail "Terragrunt environment lacks .terraform.lock.hcl: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find infra/live -path '*/.terragrunt-cache' -prune -o -name terragrunt.hcl -print 2>/dev/null || true)
+
+if [ -f .pre-commit-config.yaml ]; then
+  FLOATING_PRECOMMIT_REVS=$(awk '/^[[:space:]]+rev:/ { print FNR ": " $0 }' .pre-commit-config.yaml | grep -Ev 'rev:[[:space:]]+[0-9a-f]{40}([[:space:]]+#.*)?$' || true)
+  if [ -n "$FLOATING_PRECOMMIT_REVS" ]; then
+    fail "pre-commit hook revs must be immutable commit SHAs:"
+    echo "$FLOATING_PRECOMMIT_REVS" | while IFS= read -r line; do printf "    .pre-commit-config.yaml:%s\n" "$line"; done
+    LOCK_FAIL=1
+  fi
+fi
+
+FLOATING_TERRAFORM_VERSION_CONSTRAINTS=$(rg -n 'required_version\s*=\s*"(>=|>|<=|<|~>|!=)' infra --glob '!**/.terraform/**' 2>/dev/null || true)
+if [ -n "$FLOATING_TERRAFORM_VERSION_CONSTRAINTS" ]; then
+  fail "Terraform required_version constraints must be exact:"
+  echo "$FLOATING_TERRAFORM_VERSION_CONSTRAINTS" | while IFS= read -r line; do printf "    %s\n" "$line"; done
+  LOCK_FAIL=1
+fi
+
+if [ "$LOCK_FAIL" -eq 0 ]; then
+  pass "Dependency lock files and immutable release pins are present"
+fi
+
+step "Running golangci-lint if installed"
+if command -v golangci-lint >/dev/null 2>&1; then
+  if golangci-lint run 2>&1; then
+    pass "golangci-lint passed"
+  else
+    fail "golangci-lint found issues"
+  fi
+else
+  printf "${YELLOW}  ⚠ golangci-lint not installed — skipping (install v2.12.2 from https://golangci-lint.run/docs/welcome/install/)${NC}\n"
+fi
+
 step "Checking for unused imports (goimports)"
 if command -v goimports >/dev/null 2>&1; then
-  BAD_IMPORTS=$(goimports -l ./cmd/ 2>/dev/null || true)
+  BAD_IMPORTS=$(goimports -l . 2>/dev/null || true)
   if [ -z "$BAD_IMPORTS" ]; then
     pass "No unused imports"
   else
@@ -71,6 +194,17 @@ else
   printf "${YELLOW}  ⚠ govulncheck not installed — skipping (go install golang.org/x/vuln/cmd/govulncheck@v1.3.0)${NC}\n"
 fi
 
+step "Running gosec if installed"
+if command -v gosec >/dev/null 2>&1; then
+  if gosec -exclude-generated ./... 2>&1; then
+    pass "gosec found no unsuppressed findings"
+  else
+    fail "gosec found security findings"
+  fi
+else
+  printf "${YELLOW}  ⚠ gosec not installed — skipping (go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1)${NC}\n"
+fi
+
 # ── Terraform / Terragrunt hygiene ──
 
 step "Checking Terraform formatting"
@@ -81,7 +215,7 @@ if command -v terraform >/dev/null 2>&1; then
     fail "terraform fmt found files that need formatting"
   fi
 elif command -v docker >/dev/null 2>&1; then
-  if docker run --rm -v "$PWD:/work" -w /work hashicorp/terraform:1.14.0@sha256:3abcdb56739bf9c61a0290cfd1a2e41ef9c3799c0e6fa7f3c467f883367d3ecb fmt -check -recursive infra/ 2>&1; then
+  if docker run --rm -v "$PWD:/work" -w /work alpine/terragrunt:1.15.2@sha256:002defed150fa617710d6c5c208c1d54dd7ad60821d83f0408457d116e39f191 terraform fmt -check -recursive infra/ 2>&1; then
     pass "Terraform files are formatted via Docker"
   else
     fail "terraform fmt found files that need formatting"
@@ -143,6 +277,47 @@ if [ "$DOCKER_FAIL" -eq 0 ]; then
   pass "All Docker images pinned to sha256 digests"
 fi
 
+step "Checking Debian package pinning"
+APT_FAIL=0
+APT_UNPINNED=$(
+  awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        token = $i
+        gsub(/\\$/, "", token)
+        if (token == "apt-get" && (i + 1) <= NF && $(i + 1) == "install") {
+          in_install = 1
+          i++
+          continue
+        }
+        if (!in_install) {
+          continue
+        }
+        if (token == "&&" || token == ";") {
+          in_install = 0
+          continue
+        }
+        if (token == "" || token == "\\" || token ~ /^-/) {
+          continue
+        }
+        if (token !~ /=/) {
+          printf "%s:%d: %s\n", FILENAME, FNR, token
+        }
+      }
+    }
+  ' Dockerfile 2>/dev/null || true
+)
+
+if [ -n "$APT_UNPINNED" ]; then
+  fail "Unpinned apt package(s):"
+  echo "$APT_UNPINNED" | while IFS= read -r line; do printf "    %s\n" "$line"; done
+  APT_FAIL=1
+fi
+
+if [ "$APT_FAIL" -eq 0 ]; then
+  pass "Debian apt packages are pinned to exact versions"
+fi
+
 step "Checking for forbidden latest version references"
 LATEST_FAIL=0
 LATEST_MATCHES=$(rg -n '(:latest|@latest)' \
@@ -154,6 +329,17 @@ LATEST_MATCHES=$(rg -n '(:latest|@latest)' \
 if [ -n "$LATEST_MATCHES" ]; then
   fail "Forbidden latest reference(s):"
   echo "$LATEST_MATCHES" | while read -r line; do printf "    %s\n" "$line"; done
+  LATEST_FAIL=1
+fi
+
+MODEL_LATEST_MATCHES=$(rg -n 'gpt-[A-Za-z0-9_.-]*latest' \
+  cmd/server docker-compose.yml .env.example infra scripts .github \
+  --glob '!**/.terraform/**' \
+  2>/dev/null || true)
+
+if [ -n "$MODEL_LATEST_MATCHES" ]; then
+  fail "Forbidden floating model latest alias(es):"
+  echo "$MODEL_LATEST_MATCHES" | while read -r line; do printf "    %s\n" "$line"; done
   LATEST_FAIL=1
 fi
 

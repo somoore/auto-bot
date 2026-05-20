@@ -47,6 +47,9 @@ func TestJiraToolRequiresSync(t *testing.T) {
 	if !jiraToolRequiresSync("move_ticket", `{"card_id":"KAN-7","status":"In Progress"}`, nil) {
 		t.Fatal("move_ticket should require Jira sync")
 	}
+	if !jiraToolRequiresSync("prioritize_ticket", `{"card_id":"KAN-7","above_card_id":"KAN-8"}`, nil) {
+		t.Fatal("prioritize_ticket should require Jira sync")
+	}
 	if !jiraToolRequiresSync("confirm_action", `{}`, map[string]any{"original_tool_name": "assign_ticket"}) {
 		t.Fatal("confirmed assign_ticket should require Jira sync")
 	}
@@ -279,6 +282,65 @@ func TestJiraSyncCreateTicketRenamesLocalCardToIssueKey(t *testing.T) {
 	}
 	if !foundJiraKey {
 		t.Fatal("renamed Jira issue KAN-42 not found on board")
+	}
+}
+
+func TestJiraClientCreateSubtaskUsesProjectIssueTypeID(t *testing.T) {
+	var sawProjectLookup bool
+	var sawCreate bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/project/KAN":
+			sawProjectLookup = true
+			_, _ = w.Write([]byte(`{
+				"key":"KAN",
+				"issueTypes":[
+					{"id":"10001","name":"Task","subtask":false},
+					{"id":"10002","name":"Subtask","subtask":true}
+				]
+			}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue":
+			sawCreate = true
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode Jira create body: %v", err)
+			}
+			fields := body["fields"].(map[string]any)
+			issueType := fields["issuetype"].(map[string]any)
+			if issueType["id"] != "10002" {
+				t.Fatalf("issuetype = %#v, want id 10002", issueType)
+			}
+			parent := fields["parent"].(map[string]any)
+			if parent["key"] != "KAN-1" {
+				t.Fatalf("parent = %#v, want KAN-1", parent)
+			}
+			_, _ = w.Write([]byte(`{"key":"KAN-42"}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := newJiraClient(&jiraConfig{
+		BaseURL:    server.URL,
+		Email:      "bot@example.com",
+		APIToken:   "token",
+		ProjectKey: "KAN",
+		IssueType:  "Task",
+	})
+
+	issueKey, err := client.CreateIssue(context.Background(), kanbanCard{
+		Title:     "Talk to the dev team",
+		Notes:     "Follow-up from standup.",
+		IssueType: "Sub-task",
+		ParentID:  "KAN-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateIssue returned error: %v", err)
+	}
+	if issueKey != "KAN-42" || !sawProjectLookup || !sawCreate {
+		t.Fatalf("issueKey=%q sawProjectLookup=%v sawCreate=%v, want KAN-42 true true", issueKey, sawProjectLookup, sawCreate)
 	}
 }
 

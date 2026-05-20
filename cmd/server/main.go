@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -27,6 +28,7 @@ const (
 	wsPingInterval = (wsPongWait * 9) / 10
 	wsRateLimit    = 60
 	tokenRateLimit = 30
+	joinRateLimit  = 10
 )
 
 // nolint
@@ -53,6 +55,7 @@ var (
 
 	websocketLimiter    = newFixedWindowRateLimiter(wsRateLimit, time.Minute)
 	livekitTokenLimiter = newFixedWindowRateLimiter(tokenRateLimit, time.Minute)
+	joinMeetingLimiter  = newFixedWindowRateLimiter(joinRateLimit, time.Minute)
 )
 
 var validIdentityRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -110,7 +113,7 @@ func main() {
 		panic(err)
 	}
 	if boardStore != nil {
-		defer boardStore.Close()
+		defer closeBoardStore(boardStore)
 	}
 	sharedBoard, err = newPersistentKanbanBoard(appBoardID, boardStore)
 	if err != nil {
@@ -123,7 +126,11 @@ func main() {
 	} else {
 		jiraSync = configuredJiraSync
 	}
+	extensions = setupExtensionRuntime(sharedBoard, jiraSync)
 	agentOrchestrator = setupAgentRunOrchestrator(appContext, sharedBoard, jiraSync)
+	if agentOrchestrator != nil {
+		registerAgentModelProvider(agentOrchestrator.model)
+	}
 
 	switch voiceProvider {
 	case "openai":
@@ -131,7 +138,7 @@ func main() {
 		roomMixer = newAudioMixer()
 		defer roomMixer.close()
 		kanbanApp = newKanbanBoardApp(sharedBoard)
-		defer kanbanApp.Close()
+		defer closeKanbanApp(kanbanApp)
 		if err := kanbanApp.JoinConferenceRoom(); err != nil {
 			log.Errorf("Kanban Realtime peer disabled: %v", err)
 		}
@@ -158,16 +165,13 @@ func main() {
 		roomMixer = newAudioMixer()
 		defer roomMixer.close()
 		kanbanApp = newKanbanBoardApp(sharedBoard)
-		defer kanbanApp.Close()
+		defer closeKanbanApp(kanbanApp)
 		if err := kanbanApp.JoinConferenceRoom(); err != nil {
 			log.Errorf("Kanban Realtime peer disabled: %v", err)
 		}
 	}
 
-	indexHTMLFile := "web/index.html"
-	if voiceProvider == "nova-sonic" {
-		indexHTMLFile = "web/index_livekit.html"
-	}
+	indexHTMLFile := "web/index_livekit.html"
 	indexHTML, err := os.ReadFile(indexHTMLFile)
 	if err != nil {
 		panic(err)
@@ -201,14 +205,18 @@ func main() {
 	mux.HandleFunc("/meetings", meetingsListHandler)
 	mux.HandleFunc("/post-meeting", postMeetingPageHandler)
 	mux.HandleFunc("/setup/status", setupStatusHandler)
+	mux.HandleFunc("/setup/aws/refresh", localAWSCredentialRefreshHandler)
 	mux.HandleFunc("/observability/status", observabilityStatusHandler)
+	mux.HandleFunc("/voice/model", voiceModelHandler)
 	mux.HandleFunc("/voice/providers", voiceProvidersHandler)
 	mux.HandleFunc("/identity/status", identityStatusHandler)
+	mux.HandleFunc("/workspace/status", workspaceStatusHandler)
 	mux.HandleFunc("/voice/status", voiceStatusHandler)
 
 	baseURL := strings.TrimSpace(os.Getenv("APP_BASE_URL"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
+		setNoStoreHeaders(w)
 		wsURL := baseURL
 		if wsURL == "" {
 			scheme := "ws"
@@ -224,9 +232,7 @@ func main() {
 		}
 	})
 
-	if voiceProvider == "nova-sonic" {
-		mux.HandleFunc("/livekit-token", livekitTokenHandler)
-	}
+	mux.HandleFunc("/livekit-token", livekitTokenHandler)
 
 	if voiceProvider == "openai" {
 		go func() {
@@ -249,6 +255,24 @@ func main() {
 	log.Infof("Starting server on %s with VOICE_PROVIDER=%s", *addr, voiceProvider)
 	if err = srv.ListenAndServe(); err != nil {
 		log.Errorf("Failed to start http server: %v", err)
+	}
+}
+
+func closeBoardStore(store boardStore) {
+	if store == nil {
+		return
+	}
+	if err := store.Close(); err != nil {
+		log.Errorf("Board store close failed: %v", err)
+	}
+}
+
+func closeKanbanApp(app *kanbanBoardApp) {
+	if app == nil {
+		return
+	}
+	if err := app.Close(); err != nil {
+		log.Errorf("Kanban Realtime close failed: %v", err)
 	}
 }
 
@@ -285,6 +309,14 @@ func livekitTokenHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusServiceUnavailable, status)
 			return
 		}
+	} else {
+		status := currentVoiceReadiness(r.Context(), false)
+		status.Ready = false
+		status.AgentReady = false
+		status.AgentParticipantPresent = false
+		status.Message = "The unified meeting room currently uses LiveKit. Select AWS Nova Sonic in Meeting Settings to join; OpenAI Realtime needs the LiveKit bridge before it can join this room."
+		writeJSON(w, http.StatusServiceUnavailable, status)
+		return
 	}
 
 	token, err := generateLivekitToken(authCtx.RoomID, identity)
@@ -305,14 +337,15 @@ func livekitTokenHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
 func newPeerConnection() (*webrtc.PeerConnection, error) {
 	settingEngine := webrtc.SettingEngine{}
-	if nat1To1IP := os.Getenv("PION_NAT1TO1_IP"); nat1To1IP != "" {
-		settingEngine.SetNAT1To1IPs([]string{nat1To1IP}, webrtc.ICECandidateTypeHost)
+	if err := configureNAT1To1Rewrite(&settingEngine); err != nil {
+		return nil, err
 	}
 
 	return webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine)).NewPeerConnection(webrtc.Configuration{})
@@ -320,8 +353,8 @@ func newPeerConnection() (*webrtc.PeerConnection, error) {
 
 func newBrowserPeerConnection() (*webrtc.PeerConnection, error) {
 	settingEngine := webrtc.SettingEngine{}
-	if nat1To1IP := os.Getenv("PION_NAT1TO1_IP"); nat1To1IP != "" {
-		settingEngine.SetNAT1To1IPs([]string{nat1To1IP}, webrtc.ICECandidateTypeHost)
+	if err := configureNAT1To1Rewrite(&settingEngine); err != nil {
+		return nil, err
 	}
 	if os.Getenv("CONFERENCE_LOOPBACK_ONLY") == "1" {
 		settingEngine.SetInterfaceFilter(func(name string) bool { return name == "lo0" })
@@ -329,6 +362,21 @@ func newBrowserPeerConnection() (*webrtc.PeerConnection, error) {
 	}
 
 	return webrtc.NewAPI(webrtc.WithSettingEngine(settingEngine)).NewPeerConnection(webrtc.Configuration{})
+}
+
+func configureNAT1To1Rewrite(settingEngine *webrtc.SettingEngine) error {
+	nat1To1IP := os.Getenv("PION_NAT1TO1_IP")
+	if nat1To1IP == "" {
+		return nil
+	}
+	if err := settingEngine.SetICEAddressRewriteRules(webrtc.ICEAddressRewriteRule{
+		External:        []string{nat1To1IP},
+		AsCandidateType: webrtc.ICECandidateTypeHost,
+		Mode:            webrtc.ICEAddressRewriteReplace,
+	}); err != nil {
+		return fmt.Errorf("configure ICE address rewrite rules: %w", err)
+	}
+	return nil
 }
 
 func addTrack(t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP { // nolint
@@ -540,7 +588,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 		log.Errorf("Failed to send Kanban status: %v", err)
 	}
 
-	if voiceProvider == "nova-sonic" {
+	if voiceProvider == "nova-sonic" || strings.TrimSpace(r.URL.Query().Get("transport")) != "webrtc" {
 		websocketHandlerNovaSonic(c, authCtx)
 		return
 	}
@@ -567,6 +615,8 @@ func websocketHandlerNovaSonic(c *threadSafeWriter, authCtx requestAuthContext) 
 		switch message.Event {
 		case "confirm_board":
 			broadcastKanbanEvent("status", "Board confirmed by team")
+		case "chat_message":
+			handleClientChatMessage(c, message.Data, authCtx)
 		case "kanban_command":
 			handleClientKanbanCommand(c, message.Data, authCtx)
 		default:
@@ -696,6 +746,8 @@ func websocketHandlerOpenAI(c *threadSafeWriter, authCtx requestAuthContext) {
 		}
 
 		switch message.Event {
+		case "chat_message":
+			handleClientChatMessage(c, message.Data, authCtx)
 		case "kanban_command":
 			handleClientKanbanCommand(c, message.Data, authCtx)
 		case "candidate":
@@ -746,7 +798,7 @@ func handleClientKanbanCommand(c *threadSafeWriter, rawData string, authCtx requ
 	if request.Arguments == nil {
 		request.Arguments = map[string]any{}
 	}
-	if request.Tool == "switch_meeting_type" && meetingAccess != nil && !meetingAccess.isHost(authCtx) {
+	if !kanbanCommandAllowed(authCtx, request.Tool) {
 		_ = sendKanbanEvent(c, "command_result", map[string]any{"ok": false, "error": "meeting host access is required"})
 		return
 	}
@@ -759,6 +811,7 @@ func handleClientKanbanCommand(c *threadSafeWriter, rawData string, authCtx requ
 	if changed {
 		jiraRequired, syncErr := syncJiraToolCall(request.Tool, rawArgs, result)
 		annotateJiraSyncResult(result, jiraRequired, syncErr)
+		sharedBoard.attachExternalConfirmationsToMutation(result)
 	}
 
 	switch request.Tool {
@@ -775,7 +828,40 @@ func handleClientKanbanCommand(c *threadSafeWriter, rawData string, authCtx requ
 	}
 	state := sharedBoard.SnapshotState()
 	auditBoardMutation("ui", request.Tool, result, state)
+	broadcastKanbanEvent("action_result", result)
 	broadcastKanbanEvent("board", state)
+}
+
+func kanbanCommandAllowed(authCtx requestAuthContext, toolName string) bool {
+	if !kanbanToolRequiresHost(toolName) {
+		return true
+	}
+	if meetingAccess == nil || !meetingAccess.isActive() {
+		return true
+	}
+	return meetingAccess.isHost(authCtx)
+}
+
+func kanbanToolRequiresHost(toolName string) bool {
+	switch toolName {
+	case "confirm_action", "cancel_confirmation", "resolve_jira_conflict", "undo_last_mutation",
+		"switch_meeting_type", "start_meeting", "end_meeting":
+		return true
+	default:
+		return false
+	}
+}
+
+func activeMeetingRequiresAuthenticatedHostForTool(toolName string) bool {
+	return kanbanToolRequiresHost(toolName) && meetingAccess != nil && meetingAccess.isActive()
+}
+
+func hostOnlyToolResult(toolName string) map[string]any {
+	return map[string]any{
+		"ok":        false,
+		"tool_name": toolName,
+		"error":     "meeting host access is required",
+	}
 }
 
 // Helper to make Gorilla Websockets threadsafe.
@@ -788,8 +874,8 @@ func (t *threadSafeWriter) WriteJSON(v any) error {
 	t.Lock()
 	defer t.Unlock()
 
-	_ = t.Conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
-	return t.Conn.WriteJSON(v)
+	_ = t.SetWriteDeadline(time.Now().Add(wsWriteWait))
+	return t.Conn.WriteJSON(v) //nolint:staticcheck // Call the embedded websocket.Conn method; t.WriteJSON would recurse.
 }
 
 func startWebSocketKeepalive(c *threadSafeWriter) func() {
@@ -833,6 +919,12 @@ func setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy())
 }
 
+func setNoStoreHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+}
+
 func contentSecurityPolicy() string {
 	connectSrc := []string{"'self'", "ws:", "wss:"}
 	if appEnvironment == "local" || strings.EqualFold(os.Getenv("APP_ENV"), "local") {
@@ -858,9 +950,10 @@ func appendConnectSrcOrigin(connectSrc []string, rawURL string) []string {
 		return connectSrc
 	}
 	scheme := parsed.Scheme
-	if scheme == "ws" {
+	switch scheme {
+	case "ws":
 		scheme = "http"
-	} else if scheme == "wss" {
+	case "wss":
 		scheme = "https"
 	}
 	origin := scheme + "://" + parsed.Host

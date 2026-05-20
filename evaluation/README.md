@@ -18,9 +18,11 @@ The tests validate that the committed fixtures cover:
 - Owner, ETA, and blocker extraction.
 - Executive recap expectations.
 - Post-meeting intelligence expectations: Jira change summary, blockers, action items by owner, unresolved questions, setup/observability signals, and transcript evidence.
-- Agent-run visibility expectations: PM classification, Bedrock Opus/Haiku model use, GitHub App setup readiness, code-review findings, Jira write-back, optional PR review comment state, and checkpoint trail.
+- Agent-run visibility expectations: PM classification, default Bedrock Haiku/Sonnet model use, optional Opus escalation, GitHub App setup readiness, code-review findings, Jira write-back, optional PR review comment state, and checkpoint trail.
 - Voice reliability signals and user-facing failure states.
 - AWS LiveKit hardening proof areas for UDP/TURN, reconnect, CloudWatch alarms, and LiveKit Cloud switching.
+- Extension-contract expectations for voice providers, connectors, model providers, action replay, and import-boundary gates.
+- Golden-demo validation is real-stack only; use `scripts/validate-golden-demo.sh` and `scripts/livekit-multiperson-proof.sh` with configured AWS/Jira/GitHub/LiveKit credentials.
 
 Captured live or simulated agent outputs can be graded against the same fixtures by writing one JSON result file per fixture and running:
 

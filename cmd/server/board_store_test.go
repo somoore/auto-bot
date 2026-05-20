@@ -11,7 +11,11 @@ func TestSQLiteBoardStorePersistsSnapshotsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newSQLiteBoardStore returned error: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close board store: %v", err)
+		}
+	})
 
 	board, err := newPersistentKanbanBoard("team-board", store)
 	if err != nil {
@@ -54,12 +58,75 @@ func TestSQLiteBoardStorePersistsSnapshotsAndEvents(t *testing.T) {
 	}
 }
 
+func TestSQLiteBoardStorePersistsActionReplayLedger(t *testing.T) {
+	store, err := newSQLiteBoardStore(filepath.Join(t.TempDir(), "board.sqlite"))
+	if err != nil {
+		t.Fatalf("newSQLiteBoardStore returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close board store: %v", err)
+		}
+	})
+
+	board, err := newPersistentKanbanBoard("team-board", store)
+	if err != nil {
+		t.Fatalf("newPersistentKanbanBoard returned error: %v", err)
+	}
+	result, changed, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Replay persisted ticket","notes":"Audit should survive restart","status":"In Progress"}`, toolCallMeta{
+		Source:     "test",
+		Actor:      "Scott",
+		Transcript: "create a ticket for replay persistence",
+	})
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("create_ticket should mutate")
+	}
+	eventID := asString(result["audit_event_id"])
+	if eventID == "" {
+		t.Fatal("create_ticket did not return audit_event_id")
+	}
+
+	var replayCount int
+	if err := store.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM action_replay_events WHERE board_id = ?`, "team-board").Scan(&replayCount); err != nil {
+		t.Fatalf("count action replay events: %v", err)
+	}
+	if replayCount != 1 {
+		t.Fatalf("replayCount = %d, want 1", replayCount)
+	}
+
+	reloaded, err := newPersistentKanbanBoard("team-board", store)
+	if err != nil {
+		t.Fatalf("reload board returned error: %v", err)
+	}
+	replay, _, err := reloaded.ApplyToolCall("replay_audit_event", `{"event_id":"`+eventID+`"}`)
+	if err != nil {
+		t.Fatalf("replay_audit_event returned error after reload: %v", err)
+	}
+	event, ok := replay["event"].(boardMutationView)
+	if !ok {
+		t.Fatalf("replay event = %#v, want boardMutationView", replay["event"])
+	}
+	if event.EventID != eventID {
+		t.Fatalf("replay event_id = %q, want %q", event.EventID, eventID)
+	}
+	if transcript, ok := replay["transcript"].(transcriptEvidence); !ok || transcript.Summary == "" {
+		t.Fatalf("replay transcript = %#v, want persisted transcript evidence", replay["transcript"])
+	}
+}
+
 func TestSQLiteBoardStorePersistsMeetingReports(t *testing.T) {
 	store, err := newSQLiteBoardStore(filepath.Join(t.TempDir(), "board.sqlite"))
 	if err != nil {
 		t.Fatalf("newSQLiteBoardStore returned error: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close board store: %v", err)
+		}
+	})
 
 	board, err := newPersistentKanbanBoard("team-board", store)
 	if err != nil {
@@ -130,7 +197,11 @@ func TestSQLiteBoardStorePersistsAgentRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newSQLiteBoardStore returned error: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close board store: %v", err)
+		}
+	})
 
 	board, err := newPersistentKanbanBoard("team-board", store)
 	if err != nil {

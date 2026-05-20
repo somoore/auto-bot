@@ -68,20 +68,38 @@ func clientAddress(r *http.Request) string {
 	if osTrustProxyHeaders() {
 		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
 			parts := strings.Split(forwardedFor, ",")
-			if candidate := strings.TrimSpace(parts[0]); candidate != "" {
+			if candidate := normalizedClientIP(parts[0]); candidate != "" {
 				return candidate
 			}
 		}
-		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		if realIP := normalizedClientIP(r.Header.Get("X-Real-IP")); realIP != "" {
 			return realIP
 		}
 	}
 
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		if candidate := normalizedClientIP(r.RemoteAddr); candidate != "" {
+			return candidate
+		}
+		return "unknown"
 	}
 	return host
+}
+
+func normalizedClientIP(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	value = strings.Trim(value, "[]")
+	if ip := net.ParseIP(value); ip != nil {
+		return ip.String()
+	}
+	return ""
 }
 
 func osTrustProxyHeaders() bool {

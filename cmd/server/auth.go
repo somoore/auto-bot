@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -16,10 +17,11 @@ import (
 
 const (
 	authCookieName       = "auto_bot_session"
+	localSessionHeader   = "X-Auto-Bot-Local-Session"
 	defaultSessionTTL    = 12 * time.Hour
 	defaultAppRoomID     = "kanban-meeting"
 	defaultAppBoardID    = "default"
-	defaultLocalAPIToken = "local-dev-only-change-me"
+	defaultLocalAPIToken = "local-dev-only-change-me" // #nosec G101 -- local-only fallback rejected outside local mode.
 )
 
 var (
@@ -398,10 +400,18 @@ func allowLocalBrowserSession(r *http.Request) bool {
 	if appEnvironment != "local" || appAuthMode != "token" || appLocalLoginToken == "" {
 		return false
 	}
+	if !requestHasLocalSessionHeader(r) {
+		return false
+	}
 	if meetingAccess != nil && meetingAccess.isActive() && !strings.EqualFold(r.URL.Query().Get("role"), meetingRoleHost) {
 		return false
 	}
 	return requestHostIsLocalhost(r)
+}
+
+func requestHasLocalSessionHeader(r *http.Request) bool {
+	value := strings.TrimSpace(r.Header.Get(localSessionHeader))
+	return value == "1" || strings.EqualFold(value, "true")
 }
 
 func requestHostIsLocalhost(r *http.Request) bool {
@@ -417,6 +427,7 @@ func requestHostIsLocalhost(r *http.Request) bool {
 }
 
 func setSessionCookie(w http.ResponseWriter, r *http.Request, session webSession) {
+	// #nosec G124 -- Secure follows the request scheme so localhost HTTP development works; production uses HTTPS.
 	http.SetCookie(w, &http.Cookie{
 		Name:     authCookieName,
 		Value:    session.ID,
@@ -430,6 +441,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, session webSession
 }
 
 func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	// #nosec G124 -- Secure follows the request scheme so localhost HTTP development can clear the cookie.
 	http.SetCookie(w, &http.Cookie{
 		Name:     authCookieName,
 		Value:    "",
@@ -482,8 +494,7 @@ func createSessionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createSessionRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
-	if err := decoder.Decode(&req); err != nil {
+	if err := decodeSmallJSON(w, r, &req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
@@ -512,7 +523,7 @@ func localLoginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if appEnvironment != "local" || appAuthMode != "token" || appLocalLoginToken == "" {
+	if appEnvironment != "local" || appAuthMode != "token" || appLocalLoginToken == "" || !requestHostIsLocalhost(r) {
 		http.NotFound(w, r)
 		return
 	}
@@ -532,6 +543,7 @@ func localLoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	setSessionCookie(w, r, session)
 	next := cleanLocalLoginRedirect(r.URL.Query().Get("next"))
+	// #nosec G710 -- cleanLocalLoginRedirect only returns same-origin absolute paths.
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
@@ -540,7 +552,14 @@ func cleanLocalLoginRedirect(next string) string {
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
 		return "/"
 	}
-	return next
+	parsed, err := url.Parse(next)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/") {
+		return "/"
+	}
+	if strings.HasPrefix(parsed.Path, "//") {
+		return "/"
+	}
+	return parsed.RequestURI()
 }
 
 func deleteSessionHandler(w http.ResponseWriter, r *http.Request) {
@@ -563,5 +582,5 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func requestIsHTTPS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	return r.TLS != nil || (osTrustProxyHeaders() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
 }

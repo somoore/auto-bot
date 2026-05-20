@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -46,7 +45,7 @@ func newGitHubAppClientFromEnv() (*githubAppClient, error) {
 	installationID := strings.TrimSpace(os.Getenv("GITHUB_APP_INSTALLATION_ID"))
 	privateKeyPEM := strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY"))
 	if privateKeyPEM == "" && strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE")) != "" {
-		raw, err := os.ReadFile(strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE")))
+		raw, err := os.ReadFile(strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE"))) // #nosec G703 -- GitHub App key path is operator-controlled deployment configuration.
 		if err != nil {
 			return nil, fmt.Errorf("read GITHUB_APP_PRIVATE_KEY_FILE: %w", err)
 		}
@@ -117,7 +116,7 @@ func (client *githubAppClient) FetchPullRequestFiles(ctx context.Context, repo s
 	return files, fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, name, pullRequestNumber), nil
 }
 
-func (client *githubAppClient) CreatePullRequestReview(ctx context.Context, repo string, pullRequestNumber int, body string) error {
+func (client *githubAppClient) CreatePullRequestReview(ctx context.Context, repo string, pullRequestNumber int, body string, findings []codeReviewFinding) error {
 	owner, name, err := client.validateRepo(repo)
 	if err != nil {
 		return err
@@ -139,13 +138,93 @@ func (client *githubAppClient) CreatePullRequestReview(ctx context.Context, repo
 		"event": "COMMENT",
 		"body":  truncateString(body, 60000),
 	}
+	if comments := githubReviewCommentsFromFindings(findings); len(comments) > 0 {
+		payload["comments"] = comments
+	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", url.PathEscape(owner), url.PathEscape(name), pullRequestNumber)
-	return client.doGitHubJSON(ctx, token, http.MethodPost, path, payload, nil)
+	if err := client.doGitHubJSON(ctx, token, http.MethodPost, path, payload, nil); err != nil {
+		if _, ok := payload["comments"]; ok {
+			delete(payload, "comments")
+			return client.doGitHubJSON(ctx, token, http.MethodPost, path, payload, nil)
+		}
+		return err
+	}
+	return nil
+}
+
+func githubReviewCommentsFromFindings(findings []codeReviewFinding) []map[string]any {
+	const maxInlineComments = 10
+	comments := make([]map[string]any, 0, maxInlineComments)
+	for _, finding := range findings {
+		if len(comments) >= maxInlineComments {
+			break
+		}
+		if strings.TrimSpace(finding.File) == "" || finding.Line <= 0 {
+			continue
+		}
+		body := formatGitHubFindingComment(finding)
+		if strings.TrimSpace(body) == "" {
+			continue
+		}
+		comments = append(comments, map[string]any{
+			"path": finding.File,
+			"line": finding.Line,
+			"side": "RIGHT",
+			"body": truncateString(body, 6000),
+		})
+	}
+	return comments
+}
+
+func formatGitHubFindingComment(finding codeReviewFinding) string {
+	var builder strings.Builder
+	builder.WriteString("**")
+	builder.WriteString(strings.ToUpper(normalizeFindingSeverity(finding.Severity)))
+	builder.WriteString("**")
+	if finding.Category != "" {
+		builder.WriteString(" · ")
+		builder.WriteString(finding.Category)
+	}
+	if finding.CWE != "" {
+		builder.WriteString(" · ")
+		builder.WriteString(finding.CWE)
+	}
+	builder.WriteString("\n\n")
+	builder.WriteString(finding.Title)
+	if finding.Body != "" {
+		builder.WriteString("\n\n")
+		builder.WriteString(finding.Body)
+	}
+	if finding.Evidence != "" {
+		builder.WriteString("\n\nEvidence: ")
+		builder.WriteString(finding.Evidence)
+	}
+	if finding.Impact != "" {
+		builder.WriteString("\n\nImpact: ")
+		builder.WriteString(finding.Impact)
+	}
+	if finding.ExploitScenario != "" {
+		builder.WriteString("\n\nExploit scenario: ")
+		builder.WriteString(finding.ExploitScenario)
+	}
+	if finding.SuggestedFix != "" {
+		builder.WriteString("\n\nSuggested fix:\n")
+		builder.WriteString(finding.SuggestedFix)
+	}
+	if len(finding.Tests) > 0 {
+		builder.WriteString("\n\nValidate with:\n")
+		for _, test := range finding.Tests {
+			builder.WriteString("- ")
+			builder.WriteString(test)
+			builder.WriteString("\n")
+		}
+	}
+	return builder.String()
 }
 
 func (client *githubAppClient) installationToken(ctx context.Context, repo string, permissions map[string]string) (string, error) {
 	if !client.Configured() {
-		return "", fmt.Errorf("GitHub App client is not configured")
+		return "", fmt.Errorf("github app client is not configured")
 	}
 	_, repoName, err := client.validateRepo(repo)
 	if err != nil {
@@ -168,12 +247,12 @@ func (client *githubAppClient) installationToken(ctx context.Context, repo strin
 		return "", err
 	}
 	if response.Token == "" {
-		return "", fmt.Errorf("GitHub App installation token response did not include a token")
+		return "", fmt.Errorf("github app installation token response did not include a token")
 	}
 	return response.Token, nil
 }
 
-func (client *githubAppClient) doGitHubJSON(ctx context.Context, token string, method string, path string, body any, out any) error {
+func (client *githubAppClient) doGitHubJSON(ctx context.Context, token string, method string, path string, body any, out any) (err error) {
 	var requestBody io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -196,13 +275,19 @@ func (client *githubAppClient) doGitHubJSON(ctx context.Context, token string, m
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() {
+		if closeErr := response.Body.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close github response body: %w", closeErr)
+		}
+	}()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("GitHub %s %s failed: status=%s body=%s", method, path, response.Status, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("github %s %s failed: status=%s body=%s", method, path, response.Status, strings.TrimSpace(string(raw)))
 	}
 	if out == nil || response.StatusCode == http.StatusNoContent {
-		io.Copy(io.Discard, response.Body) //nolint:errcheck
+		if _, err := io.Copy(io.Discard, response.Body); err != nil {
+			return fmt.Errorf("drain GitHub response body: %w", err)
+		}
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(out); err != nil {
@@ -259,7 +344,7 @@ func parseGitHubAppPrivateKey(value string) (*rsa.PrivateKey, error) {
 	value = strings.ReplaceAll(value, `\n`, "\n")
 	block, _ := pem.Decode([]byte(value))
 	if block == nil {
-		return nil, fmt.Errorf("GitHub App private key must be PEM encoded")
+		return nil, fmt.Errorf("github app private key must be PEM encoded")
 	}
 	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
 		return key, nil
@@ -270,7 +355,7 @@ func parseGitHubAppPrivateKey(value string) (*rsa.PrivateKey, error) {
 	}
 	key, ok := parsed.(*rsa.PrivateKey)
 	if !ok {
-		return nil, fmt.Errorf("GitHub App private key must be RSA")
+		return nil, fmt.Errorf("github app private key must be RSA")
 	}
 	return key, nil
 }
@@ -289,15 +374,4 @@ func githubSetupConfigured() bool {
 	return strings.TrimSpace(os.Getenv("GITHUB_APP_ID")) != "" &&
 		strings.TrimSpace(os.Getenv("GITHUB_APP_INSTALLATION_ID")) != "" &&
 		(strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY")) != "" || strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE")) != "")
-}
-
-func githubAppIDForDocs() string {
-	id := strings.TrimSpace(os.Getenv("GITHUB_APP_ID"))
-	if id == "" {
-		return ""
-	}
-	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
-		return "configured"
-	}
-	return "configured"
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"strings"
@@ -23,7 +24,7 @@ const (
 	meetingTypeSprintReview = "sprint_review"
 	meetingTypeOpenEnded    = "open_ended"
 
-	joinCodeLength = 8
+	joinCodeLength = 16
 	joinCodeChars  = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 )
 
@@ -120,7 +121,7 @@ func setupMeetingHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if meetingAccess.isActive() && !meetingAccess.isHost(authCtx) {
-		http.Error(w, "meeting host access is required", http.StatusForbidden)
+		http.Error(w, errHostRequired.Error(), http.StatusForbidden)
 		return
 	}
 
@@ -164,6 +165,10 @@ func joinMeetingHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !joinMeetingLimiter.Allow(clientAddress(r)) {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
 
 	var req joinMeetingRequest
 	if err := decodeSmallJSON(w, r, &req); err != nil {
@@ -176,6 +181,14 @@ func joinMeetingHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	joinCode := firstNonEmpty(req.JoinCode, req.MeetingCode, req.Code)
+	if err := meetingAccess.validateJoinCode(joinCode); err != nil {
+		status := http.StatusForbidden
+		if errors.Is(err, errMeetingNotActive) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
 	session, err := authStore.create(identity)
 	if err != nil {
 		log.Errorf("Failed to create meeting participant session: %v", err)
@@ -222,11 +235,18 @@ func leaveMeetingHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, err := meetingAccess.leaveSession(authCtx.SessionID)
 	if err != nil {
-		status := http.StatusBadRequest
 		if errors.Is(err, errMeetingNotActive) {
-			status = http.StatusNotFound
+			snapshot := meetingAccess.snapshot(false)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":       true,
+				"left":     false,
+				"ended":    true,
+				"identity": authCtx.Identity,
+				"meeting":  snapshot.withoutJoinCode(),
+			})
+			return
 		}
-		http.Error(w, err.Error(), status)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	for _, sessionID := range result.RevokedSessionIDs {
@@ -285,7 +305,7 @@ func switchMeetingTypeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !meetingAccess.isHost(authCtx) {
-		http.Error(w, "meeting host access is required", http.StatusForbidden)
+		http.Error(w, errHostRequired.Error(), http.StatusForbidden)
 		return
 	}
 
@@ -324,7 +344,13 @@ func switchMeetingTypeHandler(w http.ResponseWriter, r *http.Request) {
 func decodeSmallJSON(w http.ResponseWriter, r *http.Request, target any) error {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(target)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("request body must contain exactly one JSON value")
+	}
+	return nil
 }
 
 func (m *meetingAccessManager) setup(ctx requestAuthContext, meetingType string) (meetingAccessSnapshot, error) {

@@ -62,9 +62,27 @@ variable "voice_provider" {
 }
 
 variable "openai_realtime_model" {
-  description = "OpenAI Realtime model for the OpenAI provider."
+  description = "OpenAI Realtime voice-to-action model for the OpenAI provider. Must support tool calling."
   type        = string
   default     = "gpt-realtime-2"
+}
+
+variable "openai_realtime_transcription_model" {
+  description = "OpenAI streaming transcription model used inside the realtime meeting session."
+  type        = string
+  default     = "gpt-realtime-whisper"
+}
+
+variable "openai_realtime_translation_model" {
+  description = "OpenAI dedicated live-translation model profile. This is registered for capability discovery but is not granted Jira/GitHub tools."
+  type        = string
+  default     = "gpt-realtime-translate"
+}
+
+variable "openai_realtime_translation_target_language" {
+  description = "Default target language for the OpenAI realtime translation profile."
+  type        = string
+  default     = "en"
 }
 
 variable "nova_sonic_model" {

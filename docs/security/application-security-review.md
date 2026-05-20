@@ -174,7 +174,7 @@ AWS runtime secrets are injected from Secrets Manager: app token, LiveKit API ke
 - Medium/high-risk Jira action confirmation gates.
 - Advanced Jira write-through unit coverage for subtasks, planning metadata, worklogs, links, sprint/rank, custom fields, reporter, and watchers.
 - Non-root container.
-- Docker image digests, pinned helper images, no `:latest` / `@latest` operational references, and CDN SRI.
+- Docker image digests, exact Debian package versions, Terraform provider locks, pinned helper images, no `:latest` / `@latest` operational references, and CDN SRI.
 - AWS WAF on the app ALB.
 - Private subnet ECS/EFS/Redis placement with fck-nat egress and no AWS NAT Gateway.
 - LiveKit self-host mode with Redis routing, TURN hooks, metrics, and NLB edge listeners.

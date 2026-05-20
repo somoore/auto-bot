@@ -15,17 +15,32 @@ Both paths share the same Kanban board state and tool definitions ([cmd/server/b
 
 ![screenshot](./public/screenshot.png)
 
+## Project Shape
+
+The repo now has an explicit extension layer for open-source contribution:
+
+- [docs/architecture.md](docs/architecture.md) explains the core runtime boundaries.
+- [docs/codebase-map.md](docs/codebase-map.md) maps source files to runtime responsibilities.
+- [CONTRIBUTING.md](CONTRIBUTING.md) gives contributor setup and extension workflow.
+- [docs/extension-contracts.md](docs/extension-contracts.md) documents voice provider, connector, model provider, and action-ledger contracts.
+- [docs/api/openapi.yaml](docs/api/openapi.yaml) documents the HTTP control plane.
+- [docs/threat-model.md](docs/threat-model.md), [SECURITY.md](SECURITY.md), and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) cover open-source security and governance.
+- [docs/golden-demo.md](docs/golden-demo.md) defines the narrow proof path for demos.
+- [examples/connector-template](examples/connector-template), [examples/voice-provider-template](examples/voice-provider-template), and [examples/model-provider-template](examples/model-provider-template) provide starting points for new integrations.
+
+The stable contract package is `internal/core`. Runtime implementations live outside that package, and `scripts/check-import-boundaries.sh` prevents provider-specific dependencies from leaking into the core extension surface.
+
 > [!IMPORTANT]
-> Browser access is protected by an HttpOnly session cookie. The page never receives `APP_API_TOKEN`; users enter it once to create a session, and `/websocket` plus `/livekit-token` require that session or a Bearer token. For public multi-user use, put OIDC/Cognito in front of this shared-token flow.
+> Browser control APIs are protected by an HttpOnly session cookie. The HTML shells contain no token and the page never receives `APP_API_TOKEN`; users enter it once to create a session, and `/websocket`, `/livekit-token`, and authenticated JSON endpoints require that session or a Bearer token. For public multi-user use, put OIDC/Cognito in front of this shared-token flow.
 
 ## Quickstart
 
-Local secrets belong in macOS Keychain. Do not create a project `.env` file for local development.
+Local secrets belong in macOS Keychain. Do not create a project `.env` file for local development. Some maintainer demo examples below use the AWS profile `test_AccountA/AdministratorAccess`, Jira account `somoore2025@gmail.com`, and repo `somoore/auto-bot`; replace those with your own AWS/Jira/GitHub values.
 
 For the normal local stack, use the one-command launcher:
 
 ```bash
-cd /Users/scottmoore/github/auto-bot
+cd /path/to/auto-bot
 scripts/local-up.sh
 ```
 
@@ -37,6 +52,25 @@ Use the local Compose wrapper for routine stack commands:
 scripts/local-compose.sh ps
 scripts/local-compose.sh logs -f app livekit
 scripts/local-down.sh
+```
+
+Contributor quality checks:
+
+```bash
+make test
+make eval
+make boundary
+make precommit
+```
+
+The pre-commit path checks Go module hygiene, package graph resolution, dependency lock files, immutable release pins, import boundaries, tests, formatting, Docker digest pinning, Debian package pinning, Terraform/Terragrunt formatting, CDN SRI, and optional installed scanners such as `golangci-lint`, `govulncheck`, and `gosec`. The Python `pre-commit` framework is also configured through [.pre-commit-config.yaml](.pre-commit-config.yaml) with hook revisions pinned to immutable commit SHAs.
+
+Golden demo preflight against a real configured stack:
+
+```bash
+AUTO_BOT_BASE_URL=http://localhost:3001 \
+AUTO_BOT_ACCESS_TOKEN="$(scripts/keychain-get-secret.sh auto-bot/app-api-token "$USER")" \
+scripts/validate-golden-demo.sh
 ```
 
 Recommended Keychain service names:
@@ -76,17 +110,17 @@ Read the fallback app access token when you need to enter it manually:
 scripts/keychain-get-secret.sh auto-bot/app-api-token "$USER"
 ```
 
-### Option A: OpenAI Realtime (local, no Docker)
+### Option A: OpenAI Realtime Transport (developer path)
+
+The OpenAI Realtime backend transport is still in the repo for provider work and tests, but the default served browser experience is currently the unified LiveKit UI. Until an OpenAI-to-LiveKit bridge or a restored OpenAI HTML route is added, use Nova Sonic for normal local meetings and use this launcher only when developing the OpenAI transport itself.
 
 ```bash
-# Prerequisites
-brew install go opus pkg-config
+# Prerequisites: Go 1.26, Opus 1.5.2, and pkg-config 1.8.1.
+# Use the Docker Compose path below for the fully pinned local dependency set.
 
-# Run
+# Run the OpenAI backend path for development
 scripts/run-openai-keychain.sh
 ```
-
-Open [http://localhost:3000](http://localhost:3000), click **Join room**, and start talking.
 
 ### Option B: Nova Sonic 2 (Docker Compose)
 
@@ -102,11 +136,11 @@ export AWS_PROFILE=test_AccountA/AdministratorAccess
 
 Open [http://localhost:3001](http://localhost:3001). As host, select **Host**, choose the meeting type, click **Create meeting code**, then click **Join room** and grant microphone access. Participants select **Participant**, enter the generated meeting code, and click **Join room**. Participant browsers do not need the app access token; the server creates their session only after the meeting code is accepted. The LiveKit SFU runs on port 7880, the app on port 3001.
 
-The **Join room** button performs a server-side voice readiness preflight before entering LiveKit. For Nova Sonic it validates AWS credentials with STS in `us-east-1` and makes sure the server-side Nova participant has joined the room. If credentials are missing or expired, the browser will stay out of the room and show the `scripts/local-up.sh` recovery command instead of leaving you alone in an empty meeting.
+The **Join room** button performs a server-side voice readiness preflight before entering LiveKit. For AWS Nova Sonic it validates AWS credentials with STS in `us-east-1` and makes sure the server-side Nova participant has joined the room. If credentials are missing or expired and the selected speech model is AWS-based, the host browser asks the local-only refresh broker to rerun the Keychain/`assume`/Docker path, waits for the app container to come back, and retries the join once. Non-AWS speech models never trigger AWS re-auth. If the broker is not available, the browser stays out of the room and shows the `scripts/local-up.sh` recovery command instead of leaving you alone in an empty meeting.
 
-The Docker Compose stack is explicitly `APP_ENV=local`. `APP_API_TOKEN` is required and should come from Keychain through `scripts/dc-up-keychain.sh`; the app token is not baked into the image or served to the browser. `scripts/local-up.sh` also provisions a separate local-only `APP_LOCAL_LOGIN_TOKEN` and opens `/auth/local-login` to set the HttpOnly session cookie without prompting. That endpoint only exists in local mode; production rejects `APP_LOCAL_LOGIN_TOKEN`.
+The Docker Compose stack is explicitly `APP_ENV=local`. `APP_API_TOKEN` is required and should come from Keychain through `scripts/dc-up-keychain.sh`; the app token is not baked into the image or served to the browser. `scripts/local-up.sh` also provisions a separate local-only `APP_LOCAL_LOGIN_TOKEN`, starts the token-protected local runtime restart broker on `127.0.0.1`, and opens `/auth/local-login` to set the HttpOnly session cookie without prompting. The local login and local restart paths only exist in local mode; production rejects `APP_LOCAL_LOGIN_TOKEN`.
 
-For a local end-to-end stack with Jira sync, use [config/jira.local.json](config/jira.local.json) and store the Jira token in Keychain as `auto-bot/jira-api-token` for account `somoore2025@gmail.com`. The Keychain launcher sets `JIRA_CONFIG_PATH=/srv/config/jira.local.json` automatically when that token is present. The app container mounts `./config` read-only at `/srv/config`.
+For a local end-to-end stack with Jira sync, create an ignored local config at `config/jira.local.json` from [config/jira.example.json](config/jira.example.json), then store the Jira token in Keychain as `auto-bot/jira-api-token` for account `somoore2025@gmail.com`. The Keychain launcher sets `JIRA_CONFIG_PATH=/srv/config/jira.local.json` automatically when that local file and token are present. The app container mounts `./config` read-only at `/srv/config`.
 
 For autonomous code-review agent runs, create a GitHub App and install it only on the repository you want the agents to inspect. Minimum analyzer permissions are `Contents: read`, `Metadata: read`, and `Pull requests: read`; enable `Pull requests: write` only if you want the app to leave PR review comments. Store the app id, installation id, and private key in Keychain using the service names above. The app mints short-lived GitHub App installation tokens per run, scopes them to the requested repo, and refuses repos outside `GITHUB_ALLOWED_REPOS` when that allowlist is set.
 
@@ -118,7 +152,7 @@ GITHUB_DEFAULT_REPO=somoore/auto-bot scripts/github-app-setup.sh
 
 The helper uses GitHub's manifest flow, stores the App ID, installation ID, and private key in macOS Keychain, and creates no `.env` file. If GitHub returns the PEM key as Keychain hex data, the server decodes it before use.
 
-Agent models run through AWS Bedrock only. The project-manager classifier defaults to Claude Haiku 4.5 on the Bedrock US inference profile and the code-review specialist defaults to Claude Sonnet 4.6 on the Bedrock US inference profile. Sonnet 4.6 is the normal cost/capability default; use Opus 4.7 or Opus 4.6 by setting `AGENT_REVIEW_MODEL` only for escalation-grade reviews on large or high-risk changes. There is no direct Anthropic API key path for these agents, and an autonomous run fails visibly instead of dispatching if the Bedrock client cannot be initialized.
+Agent models run through AWS Bedrock only. The project-manager classifier defaults to Claude Haiku 4.5 on the Bedrock US inference profile and the code-review specialist defaults to Claude Sonnet 4.6 on the Bedrock US inference profile. Sonnet 4.6 is the normal cost/capability default; use Opus 4.7 or Opus 4.6 by setting `AGENT_REVIEW_MODEL` only for escalation-grade reviews on large or high-risk changes. Security-review requests route through the PR reviewer with a vulnerability/exploitability lens, including impact, exploit scenario, remediation, validation guidance, Jira writeback, and optional inline PR comments. Agent runs mark Jira/PR publishing as posted only after those APIs return success; publish failures are kept as visible warnings in the live drawer and post-meeting report. There is no direct Anthropic API key path for these agents, and an autonomous run fails visibly instead of dispatching if the Bedrock client cannot be initialized.
 
 To run the UI, board, and Jira control plane without AWS voice credentials:
 
@@ -131,8 +165,8 @@ That mode is for board/Jira testing only. Nova Sonic meeting join is intentional
 ### Option C: Nova Sonic 2 (local, no Docker)
 
 ```bash
-# Prerequisites
-brew install go opus pkg-config
+# Prerequisites: Go 1.26, Opus 1.5.2, and pkg-config 1.8.1.
+# Use the Docker Compose path above for the fully pinned local dependency set.
 
 # Start LiveKit dev server in a separate terminal
 docker run --rm -p 7880:7880 -p 7881:7881 -p 7882-7892:7882-7892/udp \
@@ -160,9 +194,9 @@ Create a Jira Cloud API token and store it in macOS Keychain. For this repo's lo
 scripts/keychain-store-secret.sh auto-bot/jira-api-token somoore2025@gmail.com
 ```
 
-The checked-in local Jira config [config/jira.local.json](config/jira.local.json) already contains the non-secret EMAL site/project mapping and reads the token from `JIRA_API_TOKEN`. Local launchers load that token from Keychain and set `JIRA_API_TOKEN` only for the child process/container.
+Create `config/jira.local.json` by copying [config/jira.example.json](config/jira.example.json) and filling in non-secret site/project/status mappings. Keep that local file ignored, and read the token from `JIRA_API_TOKEN`. Local launchers load the token from Keychain and set `JIRA_API_TOKEN` only for the child process/container.
 
-When `JIRA_CONFIG_PATH` or `JIRA_CONFIG_JSON` is set, the server loads the initial board from Jira using the configured JQL and writes board mutations back to Jira: create issues/sub-tasks, transition issues, update summary/description, append notes, add comments, add/remove labels, assign/unassign issues, set reporter/watchers, set due dates/ETAs, set priority, set story points and time estimates, add worklogs, link issues, assign sprint, rank backlog/sprint issues, set components/fix versions/custom fields, attach remote links, mark blocked, and close/cancel for deletes. Keep the API token outside the repo; prefer `api_token_file`, `api_token_command`, or `api_token_env` in the config.
+When `JIRA_CONFIG_PATH` or `JIRA_CONFIG_JSON` is set, the server loads the initial board from Jira using the configured JQL and writes board mutations back to Jira: create issues/sub-tasks, transition issues, update summary/description, append notes, add comments, add/remove labels, assign/unassign issues, set reporter/watchers, set due dates/ETAs, set priority, set story points and time estimates, add worklogs, link issues, assign sprint, prioritize issues above/below other issues in any Kanban column, rank backlog/sprint issues, set components/fix versions/custom fields, attach remote links, mark blocked, and close/cancel for deletes. Sub-task creation resolves the project metadata and sends Jira the real subtask issue-type id when available, so projects that call it `Subtask` instead of `Sub-task` still work. Keep the API token outside the repo; prefer `api_token_file`, `api_token_command`, or `api_token_env` in the config.
 
 Jira webhooks are available at `POST /jira/webhook`. Set `webhook_secret` in the Jira config or `JIRA_WEBHOOK_SECRET`; Jira should send the same value as `Authorization: Bearer <secret>` or `X-Auto-Bot-Jira-Webhook-Secret`. Webhook payloads are project-key checked before refresh, then the board is refreshed from Jira. If Jira changed a card that also has newer local meeting changes, the UI surfaces a conflict and asks whether to keep the local meeting update or use Jira's latest value.
 
@@ -213,6 +247,8 @@ The scrum master agent understands natural language commands:
 | "Log ninety minutes on the Jira metadata work" | Adds a Jira worklog |
 | "Link this as blocked by the provider API" | Creates a Jira issue link |
 | "Put this in Platform Sprint 42 and rank it before EMAL-8" | Sets sprint and backlog/sprint rank |
+| "Prioritize Perform end-to-end testing above aws scanning" | Moves/reorders the card above the target card in that Kanban column |
+| "Move the sub-task to the top of In Progress" | Reorders a sub-task within the column while preserving its parent |
 | "Set component to Voice Agent and fix version to scrum-master-mvp" | Updates Jira planning metadata |
 | "Delete the old task" | Removes a ticket from the board |
 
@@ -220,13 +256,13 @@ The agent also responds to implicit status updates during standup — if someone
 
 Meeting types are explicit. The host can start as a general meeting, standup, 1:1, sprint review, or open-ended meeting, and can switch modes in the UI or by asking the agent during the meeting. The agent is instructed to switch modes only from live host/facilitator speech or after host confirmation.
 
-Medium-risk Jira actions such as assignment, ETA, priority, and reporter changes create a pending confirmation before they write. High-risk actions such as delete/close, sprint moves, and ranking changes also require explicit confirmation. The UI exposes **Undo** and **Audit** controls; audit replay shows the mutation, before/after context, and captured transcript evidence when available.
+Medium-risk Jira actions such as assignment, ETA, priority, and reporter changes create a pending confirmation before they write. High-risk actions such as delete/close, sprint moves, and ranking changes also require explicit confirmation. Jira-backed tool results distinguish local board mutation from external API confirmation. The agent is instructed to say Jira was updated only when `jira_sync.ok=true` or `external_action_status=api_confirmed`; failed or unconfigured write-through returns an explicit `assistant_instruction` telling the agent not to claim success. The UI exposes **Undo** and **Audit** controls; audit replay shows the live speech evidence, selected tool, confidence/guardrail decision, external API result, and before/after context.
 
 ## Multi-Party Video & Layout Modes
 
 The Nova Sonic frontend (LiveKit) supports multi-party video conferencing. All participants see each other's webcam feeds, hear each other, and interact with the shared AI agent. Active speakers are highlighted in real time.
 
-The right-side operator panel includes the meeting code, Meeting Control Center, Voice Reliability Dashboard, agent confidence evidence, validation checklist, and a Slack-ready executive recap. It surfaces who has and has not spoken, blockers, decisions, action items, pending confirmations, Jira mutations, mic/LiveKit/Nova/Bedrock/transcription/Jira health, and precise failure states such as expired AWS credentials, missing agent participant, blocked mic permission, rejected Jira scope, or LiveKit audio-track problems.
+The right-side operator panel includes the meeting code, Meeting Control Center, Voice Reliability Dashboard, agent confidence evidence, validation checklist, and a Slack-ready executive recap. It surfaces who has and has not spoken, blockers, decisions, action items, pending confirmations, Jira mutations, mic/LiveKit/Nova/Bedrock/participant-audio/agent-audio/transcription/Jira health, and precise failure states such as expired AWS credentials, missing agent participant, blocked mic permission, rejected Jira scope, unconfirmed Jira writes, or LiveKit audio-track problems.
 
 ## Meeting Intelligence
 
@@ -249,11 +285,17 @@ Useful authenticated endpoints:
 | --- | --- |
 | `GET /meeting/intelligence` | Current meeting intelligence report |
 | `GET /meeting/intelligence?meeting_id=<id>` | Archived report loaded from SQLite |
+| `GET /meeting/status` | Current host/participant meeting access, role, meeting type, and recent agent runs |
 | `GET /meetings?limit=50` | Archived report summaries plus current summary |
 | `GET /setup/status` | Setup/admin readiness checks |
+| `POST /setup/aws/refresh` | Local-only host refresh trigger for expired AWS speech credentials |
 | `GET /observability/status` | Current voice/Jira/storage/meeting observability |
+| `GET /voice/model` | Active voice model, selectable model options, and restart-required provider paths |
+| `POST /voice/model` | Host-only voice model/provider selection; provider-path changes may trigger local restart or return restart-required |
 | `GET /voice/providers` | Active and available full-duplex speech provider options |
+| `GET /voice/status` | Voice readiness JSON; failures are returned in `ready`, `requires_restart`, and `message` fields |
 | `GET /identity/status` | Current identity, role, and meeting permissions |
+| `GET /workspace/status` | Current workspace, board, room, provider, identity, and connector health scope |
 
 When `BOARD_SQLITE_PATH` is set, ending a meeting archives the intelligence report into SQLite. Docker Compose uses `/srv/data/board.sqlite`; AWS mounts `/srv/data` on EFS for the Fargate app task.
 
@@ -289,12 +331,22 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `APP_AUTH_MODE` | `token` | Both | `token` for HttpOnly browser sessions/Bearer auth; `disabled` is only allowed with `APP_ENV=local`. |
 | `APP_API_TOKEN` | _(required unless auth disabled)_ | Both | Shared bootstrap token for creating browser sessions and for non-browser Bearer auth. Never injected into served HTML. |
 | `APP_LOCAL_LOGIN_TOKEN` | _unset_ | Both/local only | Local-only one-click browser login token used by `scripts/local-up.sh`; rejected unless `APP_ENV=local`. Do not set in AWS. |
+| `APP_LOCAL_AWS_REFRESH_URL` | _unset_ | Local only | Token-protected localhost broker URL used to refresh expired AWS speech credentials from Docker development. Only used when the active voice model is AWS Nova Sonic. |
+| `APP_LOCAL_AWS_REFRESH_TOKEN` | _unset_ | Local only | Broker auth token generated into macOS Keychain by `scripts/local-up.sh`. Do not set in AWS. |
+| `APP_WORKSPACE_ID` | `default` | Both | Deployment/workspace identifier returned by `/workspace/status`; current runtime remains single-workspace scoped. |
 | `APP_ROOM_ID` | `kanban-meeting` | Both | Authorized room ID for this deployment. |
 | `APP_BOARD_ID` | `default` | Both | Authorized board ID for this deployment. |
 | `APP_BASE_URL` | _(auto-detect)_ | Both | Override WebSocket base URL (e.g., `wss://example.com/websocket`) |
+| `APP_IDENTITY_PROVIDER` | _(derived)_ | Both | Optional label for identity status/readiness reports. If unset, the server derives `cognito`, `trusted-proxy`, or `shared-token`. |
+| `COGNITO_USER_POOL_ID` | _unset_ | AWS/future auth | Readiness signal for a future Cognito/OIDC front door; it does not replace current session auth by itself. |
+| `TRUSTED_IDENTITY_HEADER` | _unset_ | Reverse proxy/future auth | Readiness signal for trusted ALB/proxy identity headers; only set behind a trusted proxy. |
 | `BOARD_SQLITE_PATH` | _unset_ | Both | Optional SQLite path for durable board snapshots and event history. Compose uses `/srv/data/board.sqlite`. |
 | `OPENAI_API_KEY` | _(required)_ | OpenAI | Auth for the OpenAI Realtime API |
-| `OPENAI_REALTIME_MODEL` | `gpt-realtime-2` | OpenAI | Realtime model to use |
+| `OPENAI_REALTIME_MODEL` | `gpt-realtime-2` | OpenAI | Voice-to-action Realtime model. Must be a conversation/tool-capable model for Jira/GitHub actions. |
+| `OPENAI_REALTIME_TRANSCRIPTION_MODEL` | `gpt-realtime-whisper` | OpenAI | Streaming transcription model used inside the OpenAI Realtime meeting session. |
+| `OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE` | _unset_ | OpenAI | Optional language hint passed to the OpenAI realtime transcription config. |
+| `OPENAI_REALTIME_TRANSLATION_MODEL` | `gpt-realtime-translate` | OpenAI | Registered live-translation profile model for future translation sessions. It is not granted Jira/GitHub tools. |
+| `OPENAI_REALTIME_TRANSLATION_TARGET_LANGUAGE` | `en` | OpenAI | Default target language for the registered translation profile. |
 | `CONFERENCE_LOOPBACK_ONLY` | _unset_ | OpenAI | When `1`, restrict browser ICE to loopback (macOS same-machine) |
 | `PION_NAT1TO1_IP` | _unset_ | OpenAI | Advertise this IP as host ICE candidate |
 | `AWS_ACCESS_KEY_ID` | _unset_ | Nova Sonic | Explicit AWS credentials (preferred in Docker) |
@@ -306,12 +358,16 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `NOVA_SONIC_VOICE` | `matthew` | Nova Sonic | TTS voice ID |
 | `AGENT_PM_MODEL` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Agents/AWS | Bedrock US inference-profile ID for PM classification |
 | `AGENT_REVIEW_MODEL` | `us.anthropic.claude-sonnet-4-6` | Agents/AWS | Bedrock US inference-profile ID for code-review specialists |
+| `CHAT_TRANSLATION_MODEL` | `AGENT_PM_MODEL` | Agents/AWS | Optional Bedrock model ID for translating non-English meeting chat text to English before agent processing. |
 | `GITHUB_APP_ID` | _unset_ | Agents/GitHub | GitHub App id for short-lived installation tokens |
 | `GITHUB_APP_INSTALLATION_ID` | _unset_ | Agents/GitHub | GitHub App installation id for the allowed repo/account |
 | `GITHUB_APP_PRIVATE_KEY` | _unset_ | Agents/GitHub | PEM private key injected from Keychain or Secrets Manager; never shown to the model |
+| `GITHUB_APP_PRIVATE_KEY_FILE` | _unset_ | Agents/GitHub | Optional operator-controlled file path for the GitHub App PEM when env injection is not used. |
 | `GITHUB_DEFAULT_REPO` | _unset_ | Agents/GitHub | Optional default repo in `owner/name` form |
 | `GITHUB_ALLOWED_REPOS` | _unset_ | Agents/GitHub | Comma-separated repo allowlist; agent GitHub access refuses anything else |
 | `GITHUB_PR_COMMENTS_ENABLED` | `false` | Agents/GitHub | When `true`, post PR review comments using `Pull requests: write`; Jira comments still work without it |
+| `GITHUB_CONTEXT_JSON` | _unset_ | Reports/GitHub | Optional JSON context for post-meeting GitHub/PR enrichment when no live GitHub App query is needed. |
+| `GITHUB_TOKEN` | _unset_ | Reports/GitHub | Optional setup-readiness signal for GitHub enrichment; GitHub App credentials are still the agent-run path. |
 | `LIVEKIT_DEPLOYMENT_MODE` | `self-hosted` | Nova Sonic/AWS | Terraform media-plane switch: `self-hosted` deploys LiveKit, `cloud` uses LiveKit Cloud with `LIVEKIT_CLOUD_URL`. |
 | `LIVEKIT_CLOUD_URL` | _unset_ | Nova Sonic/AWS | LiveKit Cloud URL, for example `wss://project.livekit.cloud`, used when `LIVEKIT_DEPLOYMENT_MODE=cloud`. |
 | `LIVEKIT_URL` | `ws://localhost:7880` | Nova Sonic | LiveKit server WebSocket URL |
@@ -334,6 +390,16 @@ The backend is already provider-switched with `VOICE_PROVIDER`:
 - `VOICE_PROVIDER=openai` uses the OpenAI Realtime path and `OPENAI_REALTIME_MODEL`.
 - `VOICE_PROVIDER=nova-sonic` uses LiveKit for the meeting room and Amazon Bedrock Nova Sonic for full-duplex speech-to-speech via `NOVA_SONIC_MODEL`.
 
+The Meeting Settings drawer includes a host-only **Voice model** dropdown. It lists the action-capable full-duplex models known to the server. Same-provider Nova Sonic changes update the next Bedrock stream immediately and restart an active stream if needed. Provider-path changes, such as switching a running Nova Sonic deployment to OpenAI Realtime, are selectable in local Docker and trigger the local restart broker; in non-local environments they are shown as restart-required because they use a different browser/media path.
+
+OpenAI model support is intentionally split by capability:
+
+- `gpt-realtime-2` is the default voice-to-action meeting model. It is the only new OpenAI realtime model in this repo that is allowed to call Jira/GitHub tools.
+- `gpt-realtime-whisper` is the default streaming transcription model via `OPENAI_REALTIME_TRANSCRIPTION_MODEL`.
+- `gpt-realtime-translate` is registered as a dedicated live-translation provider profile using OpenAI's translation endpoints. It is not accepted as `OPENAI_REALTIME_MODEL` for the scrum agent because the translation model does not support function calling.
+
+Startup fails clearly if a specialized transcription or translation model is configured as the Jira/GitHub action model. `/voice/status` returns HTTP 200 with failure details in the JSON body, including `ready=false`, `requires_restart`, and `message` when relevant. That prevents the agent from claiming an action-capable meeting session is ready when the selected OpenAI model cannot actually call tools.
+
 To add another full-duplex speech model, keep the browser/session/Jira/tool surface unchanged and add a provider implementation beside `kanban.go` and `nova_sonic.go` that consumes the shared `KanbanToolDefs()` and `SessionInstructions()` contracts. The app should only need a new `VOICE_PROVIDER` value, model env vars, and any provider-specific secret ARN wiring in Terraform.
 
 The Nova Sonic path sends exactly one Bedrock `SYSTEM` content block when a stream starts. Later board refreshes are sent as non-interactive application data, not new system prompts, because Bedrock rejects duplicate system content. The audio input stream also sends periodic silent frames while participants are paused so Bedrock does not close the meeting stream for lack of input events.
@@ -351,7 +417,7 @@ VOICE_PROVIDER=openai                    VOICE_PROVIDER=nova-sonic
 
 Both paths share the Kanban board state, tool definitions, and session instructions from `board.go`. The OpenAI path uses Pion WebRTC with data channels; the Nova Sonic path uses LiveKit as the SFU and sends audio to Bedrock via bidirectional HTTP/2 streaming.
 
-The Nova Sonic Bedrock stream is **lazy** — it only starts when the first participant joins the room and auto-restarts if the stream ends or errors. After each board mutation, Nova Sonic receives a sanitized board-context refresh with the latest sequence number, and that refresh is explicitly framed as untrusted application data so Jira/task text cannot become instructions.
+The Nova Sonic Bedrock stream is **lazy** — it only starts when the first participant joins the room and auto-restarts if the stream ends or errors. After each board mutation, Nova Sonic receives a sanitized board-context refresh with the latest sequence number, and that refresh is explicitly framed as untrusted application data so Jira/task text cannot become instructions. Nova output audio is paced through a bounded 20 ms frame queue with an 80 ms pre-roll buffer, 120 ms short-utterance timeout, output drops/underruns/jitter metrics, and linear 16 kHz-to-48 kHz resampling before LiveKit publish.
 
 ## Project Layout
 
@@ -364,6 +430,10 @@ cmd/
     meeting_reports.go  Post-meeting intelligence report builder
     meeting_report_handlers.go
                         Intelligence, setup, observability, provider, and identity endpoints
+    meeting_access.go   Host/participant meeting codes, roles, and access lifecycle
+    meeting_intelligence.go
+                        Confirmations, audit replay, transcript evidence, memory, and briefings
+    chat_messages.go    Meeting text normalization and English translation helpers
     agent_runs.go       Bedrock PM/specialist agent-run lifecycle and Jira publish path
     bedrock_agents.go   Bedrock Claude Messages invoke client for PM/review agents
     github_app.go       GitHub App JWT, installation tokens, PR diff reads, optional PR reviews
@@ -372,20 +442,31 @@ cmd/
     auth.go             HttpOnly session and Bearer auth
     board_store.go      SQLite board snapshots and event history
     guardrails.go       Prompt-injection redaction and tool-argument guardrails
+    voice_status.go     Voice readiness preflight and user-facing recovery guidance
+    voice_models.go     Host-selectable voice models and restart-required provider switches
+    aws_refresh.go      Local-only proxy to refresh expired AWS speech credentials
+    workspace.go        Current workspace/board/room/provider scope endpoint
     rate_limiter.go     Fixed-window HTTP/WebSocket rate limits
     audit.go            Structured board/Jira audit events
     kanban.go           OpenAI Realtime WebRTC transport
     nova_sonic.go       Nova Sonic 2 provider (LiveKit + Bedrock)
+    nova_sonic_output.go
+                        Paced Nova output audio queue and metrics
     nova_sonic_mixer.go 16kHz mono PCM mixer for Nova Sonic
     audio_mixer.go      48kHz stereo PCM mixer for OpenAI
     opus_encoder.go     CGo Opus encoder
     opus_decoder.go     CGo Opus decoder
+internal/
+  core/                 Stable extension contracts, registries, evidence, receipts, and action ledger
+  core/contracttest/    Shared extension contract-test helpers
+  mocks/                No-credential test implementations of the extension contracts
 web/
   index.html            OpenAI frontend (Pion WebRTC)
   index_livekit.html    Nova Sonic frontend (LiveKit SDK, multi-party video, layout modes, transcription)
   post_meeting.html     Post-meeting intelligence dashboard
 scripts/
   local-up.sh           One-command local startup: Keychain, assume, Docker Compose, browser
+  local-aws-refresh-*   Local-only broker that refreshes AWS speech credentials for Docker
   local-compose.sh      Docker Compose wrapper that injects Keychain-backed local env
   local-down.sh         Stop the local stack through local-compose.sh
   dc-up-keychain.sh     Resolve macOS Keychain secrets, AWS credentials, and start Docker Compose
@@ -403,6 +484,23 @@ scripts/
                          Validate Jira status and transition config via Platform APIs
 config/
   jira.example.json     Copyable Jira Cloud sync configuration template
+docs/
+  architecture.md       Core runtime boundaries and extension ownership
+  codebase-map.md       Source-to-responsibility map for contributors
+  extension-contracts.md
+                        Human-readable provider, connector, model, and ledger contracts
+  golden-demo.md        Narrow real-stack proof path and pass criteria
+  threat-model.md       Trust boundaries, assets, threats, and mitigations
+  adrs/                 Architecture decision records
+  api/                  API specifications
+  planning/             Roadmap and working progress notes
+  research/             Research notes for repository process decisions
+  security/             Security review and hardening register
+evaluation/
+  failure-inventory.md  Voice-command replay inventory
+  fixtures/             JSON fixtures for evaluation harness tests
+examples/
+  */                    Integration templates for connectors and providers
 infra/
   terragrunt.hcl        Root Terragrunt config for S3 state, DynamoDB locking, AWS provider generation
   live/dev/             Dev ECS/Fargate stack wrapper
@@ -412,7 +510,6 @@ public/
 Dockerfile              Multi-stage build (Go 1.26 + libopus)
 docker-compose.yml      LiveKit + app for local Nova Sonic dev
 .env.example            Environment variable reference only; do not copy to local .env
-plan.md                 Project roadmap
 ```
 
 ## Key Files
@@ -423,6 +520,9 @@ plan.md                 Project roadmap
 | `cmd/server/scrum_tools.go` | Scrum-master meeting state plus advanced task actions: subtasks, estimates, worklogs, links, sprint/rank, components, fix versions, custom fields, remote links, reporter/watchers |
 | `cmd/server/meeting_reports.go` | Meeting intelligence report builder: recap, transcript evidence, sprint signals, GitHub/PR hints, setup readiness, and observability |
 | `cmd/server/meeting_report_handlers.go` | HTTP handlers for `/post-meeting`, report archives, setup status, observability, provider options, and identity status |
+| `cmd/server/meeting_access.go` | Meeting code setup, participant join/leave, host access, and meeting type switching |
+| `cmd/server/meeting_intelligence.go` | Confirmation gates, transcript evidence, audit replay, undo, meeting memory, ownership, and scrum briefings |
+| `cmd/server/chat_messages.go` | Meeting text normalization and English translation helpers |
 | `cmd/server/agent_runs.go` | Autonomous agent-run model, voice tool, Bedrock PM routing, code-review specialist, Jira result publishing |
 | `cmd/server/bedrock_agents.go` | AWS Bedrock Claude Messages invocation used by PM and code-review agents |
 | `cmd/server/github_app.go` | GitHub App JWT authentication, short-lived installation tokens, read-only PR diff fetch, optional PR review comments |
@@ -431,8 +531,12 @@ plan.md                 Project roadmap
 | `cmd/server/auth.go` | Token-backed HttpOnly browser sessions and non-browser Bearer auth |
 | `cmd/server/board_store.go` | SQLite board snapshot persistence and mutation event history |
 | `cmd/server/guardrails.go` | Prompt-injection redaction for model-facing context/tool output and mutating tool argument rejection |
+| `cmd/server/voice_status.go` | Voice readiness preflight and recovery guidance for OpenAI, Nova Sonic, AWS, LiveKit, and Bedrock |
+| `cmd/server/voice_models.go` | Active voice model status, selectable model options, and local restart integration |
+| `cmd/server/workspace.go` | Current workspace, board, room, provider, identity, and connector health scope |
 | `cmd/server/kanban.go` | OpenAI Realtime WebRTC transport (peer connection, data channel, tool dispatch) |
 | `cmd/server/nova_sonic.go` | Nova Sonic 2 provider (LiveKit agent, Bedrock bidi stream, lazy connect, audio I/O, tool dispatch) |
+| `cmd/server/nova_sonic_output.go` | Nova Sonic output audio pacing, pre-roll, queue limits, and metrics |
 | `cmd/server/nova_sonic_mixer.go` | 16kHz mono PCM audio mixer for Nova Sonic path |
 | `cmd/server/audio_mixer.go` | 48kHz stereo PCM audio mixer for OpenAI path |
 | `cmd/server/main.go` | Entry point, provider switch, HTTP/WebSocket server, LiveKit token endpoint |
@@ -454,7 +558,7 @@ When running the OpenAI path on the same Mac as the browser, set `CONFERENCE_LOO
 
 ## AWS Deployment
 
-AWS infrastructure lives under [infra](infra/README.md) and uses Terragrunt with S3 remote state and DynamoDB locking in `us-east-1`. The generated Terraform providers are pinned to `hashicorp/aws = 6.45.0` and `hashicorp/cloudinit = 2.4.0`.
+AWS infrastructure lives under [infra](infra/README.md) and uses Terragrunt with S3 remote state and DynamoDB locking in `us-east-1`. The generated Terraform CLI constraint is pinned to `1.15.2`; providers are pinned and locked to `hashicorp/aws = 6.45.0` and `hashicorp/cloudinit = 2.4.0`.
 
 The dev stack deploys:
 
@@ -514,7 +618,7 @@ aws ec2 describe-images \
 
 `scripts/aws-build-push.sh` tags the app image with the current git SHA by default and updates `.env.aws.local` with `APP_IMAGE`. Full deploys fail if `APP_IMAGE` is missing or uses a moving tag.
 
-For TURN/TLS, also set `LIVEKIT_TURN_CERTIFICATE_ARN` and keep `LIVEKIT_TURN_DOMAIN_NAME` pointed at the LiveKit NLB. The module defaults TURN/UDP on 443 and keeps TURN/TLS off until a matching certificate ARN is provided.
+For TURN/TLS, set `LIVEKIT_TURN_CERTIFICATE_ARN`, keep `LIVEKIT_TURN_DOMAIN_NAME` pointed at the LiveKit NLB, and set the Terraform input `livekit_turn_tls_enabled = true` in the Terragrunt inputs you are deploying. The module defaults TURN/UDP on 443 and keeps TURN/TLS off until both that boolean and a matching certificate ARN/domain are provided.
 
 For Jira in ECS, set `JIRA_API_TOKEN` and `JIRA_CONFIG_JSON_FILE=/absolute/path/to/jira.json` before `aws-upsert-secrets.sh`; that Jira config should use `"api_token_env": "JIRA_API_TOKEN"`.
 
@@ -526,6 +630,7 @@ This application includes several hardening measures:
 
 - **Authentication**: Browser users create an HttpOnly `SameSite=Lax` session by entering `APP_API_TOKEN`; the token is not rendered into HTML or stored in JavaScript. `/websocket` and `/livekit-token` reject unauthenticated requests. Bearer auth remains available for non-browser automation.
 - **Room/board authorization**: Requests are bound to configured `APP_ROOM_ID` and `APP_BOARD_ID`; LiveKit grants are minted only for that room and WebSocket broadcasts are scoped by board ID.
+- **Meeting access codes**: Participant join codes use 80 bits of entropy, are scoped to the active meeting, and the unauthenticated join path is rate-limited.
 - **LiveKit secret safety**: Production mode refuses missing LiveKit credentials and refuses the `devkey`/`secret` development pair.
 - **Durable board state**: Set `BOARD_SQLITE_PATH` to persist board snapshots and event history. Docker Compose mounts `/srv/data`; AWS mounts that path on EFS for Fargate.
 - **Durable meeting reports**: Ended meetings archive post-meeting intelligence reports when the board store supports report persistence.
@@ -533,20 +638,20 @@ This application includes several hardening measures:
 - **HTTP security headers**: CSP, X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy.
 - **HTTP server timeouts**: Read, write, idle, and header timeouts are all set to prevent slowloris attacks.
 - **WebSocket limits**: 64KB max message size, 100 max concurrent connections.
-- **Rate limiting**: Per-client fixed-window limits on WebSocket upgrades and LiveKit token minting.
-- **Audit trail**: Board mutations and Jira refreshes are logged as structured audit events; set `AUDIT_LOG_PATH` to also write JSONL.
-- **Undo and replay**: Voice/UI mutations keep a bounded in-memory audit history with before/after board state, transcript evidence, undo support, and UI replay controls.
+- **Rate limiting**: Per-client fixed-window limits on WebSocket upgrades, participant join attempts, and LiveKit token minting.
+- **Audit trail**: Board mutations and Jira refreshes are logged as structured audit events; Jira write-through confirmation is stored separately from local state changes; set `AUDIT_LOG_PATH` to also write JSONL.
+- **Undo and replay**: Voice/UI mutations keep a bounded in-memory audit history with before/after board state, transcript evidence, external API confirmation, undo support, and UI replay controls.
 - **Confirmation gates**: Medium/high-risk Jira actions create pending confirmations instead of writing immediately.
 - **Jira webhook conflicts**: Authenticated Jira webhooks refresh the board and surface local-vs-Jira conflicts for human resolution.
 - **Prompt-injection guardrails**: Jira/task text is treated as untrusted data, not instructions. Model-facing board context and tool outputs redact detected prompt-injection payloads, tool arguments are scanned before mutation, and tool schemas tell the model that only live user speech can authorize Jira changes.
 - **Input validation**: Identity parameters validated to `[a-zA-Z0-9_-]{1,64}`. Card titles, notes, and tags have size caps.
 - **Non-root container**: Docker image runs as `appuser`, not root.
 - **LiveKit media hardening**: AWS self-host mode uses private ECS tasks, NLB edge listeners, Redis distributed routing, embedded TURN/UDP hooks, optional TURN/TLS, and CloudWatch dashboarding. LiveKit Cloud can be enabled by Terraform inputs without changing app code.
-- **Supply chain**: All Docker images pinned to `@sha256:` digests, CDN scripts use SRI, Go modules verified via `go.sum`.
+- **Supply chain**: All Docker images pinned to `@sha256:` digests, Debian packages pinned to exact versions, Terraform providers locked with `.terraform.lock.hcl`, CDN scripts use SRI, and Go modules are verified via `go.sum`.
 - **Pre-commit hook**: Runs `go vet`, `goimports`, `govulncheck`, Docker digest checks, SRI checks, and secrets scanning before every commit.
 - **No sensitive logging**: SDP, ICE candidates, transcripts, and tool arguments are redacted from logs.
 
-See [scan.md](scan.md) for the full security audit and remediation details.
+See [docs/security/application-security-review.md](docs/security/application-security-review.md) for the full security audit and remediation details.
 
 > [!IMPORTANT]
 > While hardened, this is still a shared-token demo boundary. For production, put OIDC/Cognito in front of room membership and use per-user authorization instead of a shared bootstrap token.

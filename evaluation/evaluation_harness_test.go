@@ -210,6 +210,18 @@ type awsChecklistItem struct {
 	PassCriteria     string `json:"pass_criteria"`
 }
 
+type extensionContractFixture struct {
+	SchemaVersion          int      `json:"schema_version"`
+	FixtureKind            string   `json:"fixture_kind"`
+	ID                     string   `json:"id"`
+	Description            string   `json:"description"`
+	RequiredVoiceProviders []string `json:"required_voice_providers"`
+	RequiredConnectors     []string `json:"required_connectors"`
+	RequiredModelProviders []string `json:"required_model_providers"`
+	RequiredContracts      []string `json:"required_contracts"`
+	QualityGates           []string `json:"quality_gates"`
+}
+
 type evaluationResult struct {
 	FixtureID               string                  `json:"fixture_id"`
 	Behaviors               []string                `json:"behaviors"`
@@ -511,6 +523,51 @@ func TestAWSLiveKitHardeningChecklistIsActionable(t *testing.T) {
 	}
 }
 
+func TestExtensionContractFixtureIsDefined(t *testing.T) {
+	fixtures := loadExtensionContractFixtures(t)
+	if len(fixtures) == 0 {
+		t.Fatal("no extension contract fixture found")
+	}
+	requiredContracts := map[string]bool{
+		"voice_provider_contract": false,
+		"connector_contract":      false,
+		"model_provider_contract": false,
+		"action_ledger_contract":  false,
+		"import_boundary_check":   false,
+	}
+	for _, fixture := range fixtures {
+		if fixture.SchemaVersion != 1 || fixture.ID == "" || fixture.Description == "" {
+			t.Fatalf("invalid extension fixture header: %#v", fixture)
+		}
+		for _, name := range []string{"nova-sonic", "openai-realtime", "openai-realtime-translate", "openai-realtime-whisper", "livekit-cloud"} {
+			if !containsString(fixture.RequiredVoiceProviders, name) {
+				t.Fatalf("%s missing voice provider %q", fixture.ID, name)
+			}
+		}
+		for _, name := range []string{"local-board", "jira", "github"} {
+			if !containsString(fixture.RequiredConnectors, name) {
+				t.Fatalf("%s missing connector %q", fixture.ID, name)
+			}
+		}
+		if !containsString(fixture.RequiredModelProviders, "bedrock") {
+			t.Fatalf("%s missing bedrock model provider", fixture.ID)
+		}
+		for _, contract := range fixture.RequiredContracts {
+			if _, ok := requiredContracts[contract]; ok {
+				requiredContracts[contract] = true
+			}
+		}
+		if len(fixture.QualityGates) == 0 {
+			t.Fatalf("%s must list quality gates", fixture.ID)
+		}
+	}
+	for contract, covered := range requiredContracts {
+		if !covered {
+			t.Fatalf("extension fixture does not cover contract %q", contract)
+		}
+	}
+}
+
 func TestOptionalEvaluationResultsMatchFixtures(t *testing.T) {
 	resultsDir := strings.TrimSpace(os.Getenv("AUTO_BOT_EVAL_RESULTS_DIR"))
 	if resultsDir == "" {
@@ -750,6 +807,21 @@ func loadAWSChecklists(t *testing.T) []awsChecklist {
 		checklists = append(checklists, checklist)
 	}
 	return checklists
+}
+
+func loadExtensionContractFixtures(t *testing.T) []extensionContractFixture {
+	t.Helper()
+	var fixtures []extensionContractFixture
+	for _, path := range fixturePaths(t) {
+		header := loadHeader(t, path)
+		if header.FixtureKind != "extension_contracts" {
+			continue
+		}
+		var fixture extensionContractFixture
+		loadJSON(t, path, &fixture)
+		fixtures = append(fixtures, fixture)
+	}
+	return fixtures
 }
 
 func loadEvaluationResults(t *testing.T, dir string) map[string]evaluationResult {

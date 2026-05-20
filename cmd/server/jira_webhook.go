@@ -38,13 +38,13 @@ func jiraWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxJiraWebhookBytes))
-	if err != nil {
+	var payload jiraWebhookPayload
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJiraWebhookBytes))
+	if err := decoder.Decode(&payload); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	var payload jiraWebhookPayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}

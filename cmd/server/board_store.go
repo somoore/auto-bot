@@ -32,6 +32,12 @@ type agentRunStore interface {
 	ListAgentRuns(ctx context.Context, boardID string, limit int) ([]agentRun, error)
 }
 
+type mutationLedgerStore interface {
+	SaveMutationRecord(ctx context.Context, boardID string, record boardMutationRecord, state kanbanBoardState) error
+	UpdateMutationRecord(ctx context.Context, boardID string, record boardMutationRecord) error
+	ListMutationRecords(ctx context.Context, boardID string, limit int) ([]boardMutationRecord, error)
+}
+
 type boardEventRecord struct {
 	BoardID        string         `json:"board_id"`
 	EventID        string         `json:"event_id,omitempty"`
@@ -58,7 +64,7 @@ func setupBoardStore() (boardStore, error) {
 		return nil, nil
 	}
 	if dir := filepath.Dir(path); dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil { // #nosec G703 -- SQLite path is operator-controlled deployment configuration.
 			return nil, fmt.Errorf("create board sqlite dir: %w", err)
 		}
 	}
@@ -121,6 +127,17 @@ func (store *sqliteBoardStore) init(ctx context.Context) error {
 			)`,
 		`CREATE INDEX IF NOT EXISTS agent_runs_board_id_updated_at ON agent_runs(board_id, updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_runs_board_id_card_id ON agent_runs(board_id, card_id)`,
+		`CREATE TABLE IF NOT EXISTS action_replay_events (
+				board_id TEXT NOT NULL,
+				event_id TEXT NOT NULL,
+				occurred_at TEXT NOT NULL,
+				tool_name TEXT NOT NULL,
+				mutation_json TEXT NOT NULL,
+				state_json TEXT NOT NULL,
+				sequence_number INTEGER NOT NULL,
+				PRIMARY KEY(board_id, event_id)
+			)`,
+		`CREATE INDEX IF NOT EXISTS action_replay_events_board_id_occurred_at ON action_replay_events(board_id, occurred_at DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
@@ -226,7 +243,7 @@ func (store *sqliteBoardStore) LoadMeetingReport(ctx context.Context, boardID st
 	return report, true, nil
 }
 
-func (store *sqliteBoardStore) ListMeetingReports(ctx context.Context, boardID string, limit int) ([]meetingReportSummary, error) {
+func (store *sqliteBoardStore) ListMeetingReports(ctx context.Context, boardID string, limit int) (summaries []meetingReportSummary, err error) {
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
@@ -240,9 +257,13 @@ func (store *sqliteBoardStore) ListMeetingReports(ctx context.Context, boardID s
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close meeting report rows: %w", closeErr)
+		}
+	}()
 
-	summaries := make([]meetingReportSummary, 0)
+	summaries = make([]meetingReportSummary, 0)
 	for rows.Next() {
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
@@ -309,7 +330,7 @@ func (store *sqliteBoardStore) LoadAgentRun(ctx context.Context, boardID string,
 	return run, true, nil
 }
 
-func (store *sqliteBoardStore) ListAgentRuns(ctx context.Context, boardID string, limit int) ([]agentRun, error) {
+func (store *sqliteBoardStore) ListAgentRuns(ctx context.Context, boardID string, limit int) (runs []agentRun, err error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -323,9 +344,13 @@ func (store *sqliteBoardStore) ListAgentRuns(ctx context.Context, boardID string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close agent run rows: %w", closeErr)
+		}
+	}()
 
-	runs := make([]agentRun, 0)
+	runs = make([]agentRun, 0)
 	for rows.Next() {
 		var raw string
 		if err := rows.Scan(&raw); err != nil {
@@ -341,6 +366,96 @@ func (store *sqliteBoardStore) ListAgentRuns(ctx context.Context, boardID string
 		return nil, err
 	}
 	return runs, nil
+}
+
+func (store *sqliteBoardStore) SaveMutationRecord(ctx context.Context, boardID string, record boardMutationRecord, state kanbanBoardState) error {
+	if record.EventID == "" {
+		return fmt.Errorf("mutation record requires event_id")
+	}
+	mutationJSON, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	_, err = store.db.ExecContext(ctx, `
+		INSERT INTO action_replay_events(board_id, event_id, occurred_at, tool_name, mutation_json, state_json, sequence_number)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(board_id, event_id) DO UPDATE SET
+			occurred_at = excluded.occurred_at,
+			tool_name = excluded.tool_name,
+			mutation_json = excluded.mutation_json,
+			state_json = excluded.state_json,
+			sequence_number = excluded.sequence_number
+	`, boardID, record.EventID, record.OccurredAt, record.ToolName, string(mutationJSON), string(stateJSON), state.SequenceNumber)
+	return err
+}
+
+func (store *sqliteBoardStore) UpdateMutationRecord(ctx context.Context, boardID string, record boardMutationRecord) error {
+	if record.EventID == "" {
+		return fmt.Errorf("mutation record requires event_id")
+	}
+	mutationJSON, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	result, err := store.db.ExecContext(ctx, `
+		UPDATE action_replay_events
+		SET mutation_json = ?
+		WHERE board_id = ? AND event_id = ?
+	`, string(mutationJSON), boardID, record.EventID)
+	if err != nil {
+		return err
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
+		return fmt.Errorf("mutation record %s was not found", record.EventID)
+	}
+	return nil
+}
+
+func (store *sqliteBoardStore) ListMutationRecords(ctx context.Context, boardID string, limit int) (records []boardMutationRecord, err error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT mutation_json
+		FROM action_replay_events
+		WHERE board_id = ?
+		ORDER BY occurred_at DESC
+		LIMIT ?
+	`, boardID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close mutation record rows: %w", closeErr)
+		}
+	}()
+
+	var newestFirst []boardMutationRecord
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var record boardMutationRecord
+		if err := json.Unmarshal([]byte(raw), &record); err != nil {
+			return nil, fmt.Errorf("decode mutation replay record: %w", err)
+		}
+		newestFirst = append(newestFirst, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	records = make([]boardMutationRecord, 0, len(newestFirst))
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		records = append(records, newestFirst[i])
+	}
+	return records, nil
 }
 
 func (store *sqliteBoardStore) Close() error {

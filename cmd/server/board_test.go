@@ -133,6 +133,15 @@ func TestModelContextRedactsPromptInjectionInUntrustedBoardData(t *testing.T) {
 	}
 }
 
+func TestSessionInstructionsRequireBilingualParticipantReplies(t *testing.T) {
+	instructions := newKanbanBoard().SessionInstructions()
+	for _, required := range []string{"For the room:", "every assistant message", "English-only follow-up fragments"} {
+		if !strings.Contains(instructions, required) {
+			t.Fatalf("SessionInstructions missing multilingual guard %q", required)
+		}
+	}
+}
+
 func TestPromptInjectionGuardRejectsToolArguments(t *testing.T) {
 	board := newKanbanBoard()
 
@@ -312,6 +321,58 @@ func TestMeetingMemoryBriefingAuditReplayAndUndo(t *testing.T) {
 	}
 }
 
+func TestMutationReplayIncludesAPIConfirmationEvidence(t *testing.T) {
+	previous := jiraSync
+	t.Cleanup(func() { jiraSync = previous })
+	jiraSync = nil
+
+	board := newKanbanBoard()
+	result, changed, err := board.ApplyToolCallWithMeta("move_ticket", `{"card_id":"card-002","status":"In Progress"}`, toolCallMeta{
+		Source:     "nova-sonic",
+		CallID:     "call-1",
+		Transcript: "Move the RTP retransmission task to in progress.",
+	})
+	if err != nil {
+		t.Fatalf("move_ticket returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("move_ticket should mutate")
+	}
+	annotateJiraSyncResult(result, true, nil)
+	board.attachExternalConfirmationsToMutation(result)
+	if status := asString(result["external_action_status"]); status != "api_not_configured" {
+		t.Fatalf("external_action_status = %q, want api_not_configured", status)
+	}
+	if instruction := asString(result["assistant_instruction"]); !strings.Contains(instruction, "Do not say Jira was updated") {
+		t.Fatalf("assistant_instruction = %q, want no-success instruction", instruction)
+	}
+
+	eventID := asString(result["audit_event_id"])
+	replay, _, err := board.ApplyToolCall("replay_audit_event", `{"event_id":"`+eventID+`"}`)
+	if err != nil {
+		t.Fatalf("replay_audit_event returned error: %v", err)
+	}
+	if replay["api_status"] != "api_not_configured" {
+		t.Fatalf("api_status = %#v, want api_not_configured", replay["api_status"])
+	}
+	steps, ok := replay["replay_steps"].([]map[string]any)
+	if !ok || len(steps) < 4 {
+		t.Fatalf("replay_steps = %#v, want speech/tool/api path", replay["replay_steps"])
+	}
+	if !strings.Contains(mustMarshalJSON(steps), "Move the RTP retransmission task") {
+		t.Fatalf("replay steps missing transcript evidence: %#v", steps)
+	}
+
+	audit, _, err := board.ApplyToolCall("get_audit_events", `{"limit":1}`)
+	if err != nil {
+		t.Fatalf("get_audit_events returned error: %v", err)
+	}
+	events := audit["events"].([]boardMutationView)
+	if len(events) != 1 || events[0].APIStatus != "api_not_configured" || events[0].GuardrailDecision != "local mutation only; external API not configured" {
+		t.Fatalf("event view = %+v, want external API status and guardrail decision", events)
+	}
+}
+
 func TestJiraConflictResolutionKeepsLocalOrUsesJira(t *testing.T) {
 	board := newKanbanBoard()
 	result, _, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Local title","notes":"Local notes","tags":["local"],"status":"Backlog"}`, toolCallMeta{Source: "openai-realtime"})
@@ -387,6 +448,86 @@ func TestToolDefinitionsIncludeGetBoard(t *testing.T) {
 	}
 
 	t.Fatal("get_board tool definition not found")
+}
+
+func TestPrioritizeTicketMovesCardsAcrossColumns(t *testing.T) {
+	board := newKanbanBoard()
+	board.ReplaceCards([]kanbanCard{
+		{ID: "EMAL-10", Status: kanbanStatusBacklog, Title: "Perform end-to-end testing"},
+		{ID: "EMAL-15", Status: kanbanStatusBlocked, Title: "aws scanning"},
+		{ID: "EMAL-16", Status: kanbanStatusBlocked, Title: "Production guardrail"},
+	})
+
+	result, changed, err := board.ApplyToolCall("prioritize_ticket", `{"card_id":"EMAL-10","above_card_id":"EMAL-15"}`)
+	if err != nil {
+		t.Fatalf("prioritize_ticket returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("prioritize_ticket should mark the board as changed")
+	}
+	if got := result["before_card_id"]; got != "EMAL-15" {
+		t.Fatalf("before_card_id = %v, want EMAL-15", got)
+	}
+
+	state := board.SnapshotState()
+	updated := findBoardTestCard(t, state.Cards, "EMAL-10")
+	if updated.Status != kanbanStatusBlocked {
+		t.Fatalf("Status = %q, want Blocked", updated.Status)
+	}
+	if updated.Rank != "above EMAL-15" {
+		t.Fatalf("Rank = %q, want above EMAL-15", updated.Rank)
+	}
+	if got, want := boardTestCardIDsByStatus(state.Cards, kanbanStatusBlocked), []string{"EMAL-10", "EMAL-15", "EMAL-16"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("blocked order = %v, want %v", got, want)
+	}
+}
+
+func TestPrioritizeTicketSupportsSubtasksAndColumnPositions(t *testing.T) {
+	board := newKanbanBoard()
+	board.ReplaceCards([]kanbanCard{
+		{ID: "EMAL-20", Status: kanbanStatusInProgress, Title: "Parent story"},
+		{ID: "EMAL-21", Status: kanbanStatusInProgress, Title: "API wiring", IssueType: "Sub-task", ParentID: "EMAL-20"},
+		{ID: "EMAL-22", Status: kanbanStatusInProgress, Title: "UI wiring", IssueType: "Sub-task", ParentID: "EMAL-20"},
+	})
+
+	_, _, err := board.ApplyToolCall("prioritize_ticket", `{"card_id":"EMAL-22","position":"top","status":"In Progress"}`)
+	if err != nil {
+		t.Fatalf("prioritize_ticket top returned error: %v", err)
+	}
+
+	state := board.SnapshotState()
+	if got, want := boardTestCardIDsByStatus(state.Cards, kanbanStatusInProgress), []string{"EMAL-22", "EMAL-20", "EMAL-21"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("in-progress order = %v, want %v", got, want)
+	}
+	subtask := findBoardTestCard(t, state.Cards, "EMAL-22")
+	if subtask.IssueType != "Sub-task" || subtask.ParentID != "EMAL-20" {
+		t.Fatalf("subtask metadata = %#v, want parent EMAL-20 Sub-task", subtask)
+	}
+}
+
+func TestCreateSubtaskRejectsIncompletePlaceholderTitle(t *testing.T) {
+	board := newKanbanBoard()
+	board.ReplaceCards([]kanbanCard{
+		{ID: "EMAL-2", Status: kanbanStatusInProgress, Title: "Prepare features for release"},
+	})
+
+	_, changed, err := board.ApplyToolCall("create_subtask", `{
+		"parent_card_id":"EMAL-2",
+		"title":"Subtitle for prepare features for release",
+		"notes":"User paused before giving the real title."
+	}`)
+	if err == nil {
+		t.Fatal("create_subtask returned nil error for incomplete placeholder title")
+	}
+	if changed {
+		t.Fatal("create_subtask placeholder rejection should not mark the board changed")
+	}
+	if !strings.Contains(err.Error(), "subtask title is incomplete") {
+		t.Fatalf("error = %q, want incomplete title", err)
+	}
+	if got := len(board.SnapshotState().Cards); got != 1 {
+		t.Fatalf("cards length = %d, want only the parent", got)
+	}
 }
 
 func TestBoardJiraTaskMetadataTools(t *testing.T) {
@@ -472,6 +613,16 @@ func boardTestContainsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func boardTestCardIDsByStatus(cards []kanbanCard, status kanbanStatus) []string {
+	out := make([]string, 0)
+	for _, card := range cards {
+		if card.Status == status {
+			out = append(out, card.ID)
+		}
+	}
+	return out
 }
 
 func findBoardTestCard(t *testing.T, cards []kanbanCard, cardID string) kanbanCard {

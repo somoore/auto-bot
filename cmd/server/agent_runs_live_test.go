@@ -20,6 +20,10 @@ func TestLiveAgentRunCodeReview(t *testing.T) {
 	if repo == "" {
 		t.Fatal("GITHUB_DEFAULT_REPO is required")
 	}
+	objective := strings.TrimSpace(os.Getenv("AGENT_RUN_TEST_OBJECTIVE"))
+	if objective == "" {
+		objective = "Run an autonomous code review on the linked pull request and report findings to Jira and the PR."
+	}
 	prNumber, _ := asInt(os.Getenv("AGENT_RUN_TEST_PR_NUMBER"))
 	if prNumber <= 0 {
 		t.Fatal("AGENT_RUN_TEST_PR_NUMBER is required")
@@ -79,7 +83,7 @@ func TestLiveAgentRunCodeReview(t *testing.T) {
 		t.Fatal("GitHub App client is not configured")
 	}
 
-	assignArgs := fmt.Sprintf(`{"card_id":%q,"objective":"Run an autonomous code review on the linked pull request and report findings to Jira and the PR.","repo":%q,"pull_request_number":%d}`, issueKey, repo, prNumber)
+	assignArgs := fmt.Sprintf(`{"card_id":%q,"objective":%q,"repo":%q,"pull_request_number":%d}`, issueKey, objective, repo, prNumber)
 	runResult, changed, err := board.ApplyToolCall("assign_ticket_to_agent", assignArgs)
 	if err != nil {
 		t.Fatalf("assign_ticket_to_agent local mutation: %v", err)

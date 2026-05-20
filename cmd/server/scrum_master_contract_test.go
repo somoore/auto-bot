@@ -139,6 +139,22 @@ func TestJiraExtendedIssueMetadataToolContracts(t *testing.T) {
 		requireContractCardJSONField(t, board, secondID, "rank")
 	})
 
+	t.Run("prioritize_ticket", func(t *testing.T) {
+		board := newKanbanBoard()
+		firstID := createContractCard(t, board, "First blocked item")
+		secondID := createContractCard(t, board, "Second backlog item")
+
+		requireContractToolOK(t, board, "move_ticket", fmt.Sprintf(`{
+			"card_id":%q,
+			"status":"Blocked"
+		}`, firstID))
+		requireContractToolOK(t, board, "prioritize_ticket", fmt.Sprintf(`{
+			"card_id":%q,
+			"above_card_id":%q
+		}`, secondID, firstID))
+		requireContractCardJSONField(t, board, secondID, "rank")
+	})
+
 	t.Run("set_components", func(t *testing.T) {
 		board := newKanbanBoard()
 		cardID := createContractCard(t, board, "Tag Jira components")
@@ -255,6 +271,7 @@ func TestExpandedScrumMasterToolDefinitions(t *testing.T) {
 		"add_worklog":               {"card_id", "time_spent", "comment"},
 		"link_issues":               {"source_card_id", "target_card_id", "link_type"},
 		"set_sprint":                {"card_id", "sprint_id"},
+		"prioritize_ticket":         {"card_id", "above_card_id", "below_card_id", "position"},
 		"rank_issue":                {"card_id"},
 		"set_components":            {"card_id", "components"},
 		"set_fix_versions":          {"card_id", "fix_versions"},

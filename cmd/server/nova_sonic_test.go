@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNovaSonicBoardContextRefreshUsesApplicationDataRole(t *testing.T) {
@@ -63,6 +64,11 @@ func TestNovaSonicSessionInstructionsAvoidFilterTriggerTerms(t *testing.T) {
 	for _, required := range []string{"Only live participant speech", "reference data only", "require confirmation"} {
 		if !strings.Contains(instructions, required) {
 			t.Fatalf("Nova Sonic instructions missing %q", required)
+		}
+	}
+	for _, required := range []string{"For the room:", "every assistant message", "English-only follow-up fragments"} {
+		if !strings.Contains(instructions, required) {
+			t.Fatalf("Nova Sonic instructions missing multilingual guard %q", required)
 		}
 	}
 }
@@ -128,6 +134,83 @@ func TestUnwrapAudioREDReturnsPrimaryOpusPayload(t *testing.T) {
 func TestUnwrapAudioREDRejectsMissingPrimaryData(t *testing.T) {
 	if _, err := unwrapAudioRED([]byte{0x80 | 111, 0x00, 0x00, 0x03, 111, 0xaa, 0xbb, 0xcc}); err == nil {
 		t.Fatal("unwrapAudioRED returned nil error for payload without primary data")
+	}
+}
+
+func TestNovaSonicUpsampleUsesLinearInterpolation(t *testing.T) {
+	got := upsample16kMonoTo48kStereo([]int16{0, 3000})
+	want := []int16{0, 0, 1000, 1000, 2000, 2000, 3000, 3000, 3000, 3000, 3000, 3000}
+	if len(got) != len(want) {
+		t.Fatalf("upsampled length = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("upsampled[%d] = %d, want %d (full=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestNovaSonicDownsampleAveragesWindow(t *testing.T) {
+	got := downsample48kStereoTo16kMono([]int16{
+		300, 100,
+		600, 200,
+		900, 300,
+	})
+	if len(got) != 1 {
+		t.Fatalf("downsampled length = %d, want 1", len(got))
+	}
+	if got[0] != 400 {
+		t.Fatalf("downsampled sample = %d, want averaged sample 400", got[0])
+	}
+}
+
+func TestNovaSonicOutputFramesPadPartialFrame(t *testing.T) {
+	frames := novaSonicOutputFramesFromMono16(make([]int16, novaSonicFrameSize+1))
+	if len(frames) != 2 {
+		t.Fatalf("output frame count = %d, want 2", len(frames))
+	}
+	for i, frame := range frames {
+		if len(frame) != roomAudioMixFrameSize {
+			t.Fatalf("frame[%d] length = %d, want %d", i, len(frame), roomAudioMixFrameSize)
+		}
+	}
+}
+
+func TestNovaSonicOutputPacerCapsQueueAndReportsDrops(t *testing.T) {
+	pacer := &novaSonicOutputPacer{
+		stats: novaSonicOutputStats{
+			PreRollFrames:  novaSonicOutputPreRollFrames,
+			MaxQueueFrames: novaSonicOutputMaxQueue,
+		},
+	}
+	pacer.EnqueueMono16(make([]int16, novaSonicFrameSize*(novaSonicOutputMaxQueue+10)))
+	stats := pacer.Stats()
+	if stats.QueueDepthFrames != novaSonicOutputMaxQueue {
+		t.Fatalf("queue depth = %d, want cap %d", stats.QueueDepthFrames, novaSonicOutputMaxQueue)
+	}
+	if stats.DroppedFrames != 10 {
+		t.Fatalf("dropped frames = %d, want 10", stats.DroppedFrames)
+	}
+}
+
+func TestNovaSonicOutputPacerPreRollCanTimeOutForShortUtterance(t *testing.T) {
+	pacer := &novaSonicOutputPacer{
+		stats: novaSonicOutputStats{
+			PreRollFrames:  novaSonicOutputPreRollFrames,
+			MaxQueueFrames: novaSonicOutputMaxQueue,
+		},
+	}
+	pacer.EnqueueMono16(make([]int16, novaSonicFrameSize))
+	if frame := pacer.nextFrame(time.Now()); len(frame) != 0 {
+		t.Fatalf("nextFrame returned %d samples before pre-roll timeout, want none", len(frame))
+	}
+
+	pacer.mu.Lock()
+	firstFrame := pacer.firstFrame
+	pacer.mu.Unlock()
+	frame := pacer.nextFrame(firstFrame.Add(novaSonicOutputMaxPreRoll + time.Millisecond))
+	if len(frame) != roomAudioMixFrameSize {
+		t.Fatalf("nextFrame after timeout returned %d samples, want %d", len(frame), roomAudioMixFrameSize)
 	}
 }
 

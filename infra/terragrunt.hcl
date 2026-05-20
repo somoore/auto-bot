@@ -40,7 +40,7 @@ generate "provider" {
 
   contents = <<EOF
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = "= 1.15.2"
 
   required_providers {
     aws = {

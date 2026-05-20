@@ -182,7 +182,7 @@ Measure weekly. If a phase doesn't move the number, diagnose before proceeding.
   - **Confidence threshold** set from cold-start data: below threshold, skip the guess and route straight to `needs-human`
   - **Cost cap per ticket, not per agent run.** A bad classifier can dispatch the same ticket three times in an hour. Track total spend per issue key and hard-stop at the cap
 - **Agent dispatch (above threshold):**
-  - `code review` → **Code Review Agent** (Bedrock Opus): read pull request diff through GitHub App read-only access, post findings to Jira, optionally post a PR review comment
+  - `code review` → **Code Review Agent** (Bedrock Sonnet by default, Opus for escalation): read pull request diff through GitHub App read-only access, post findings to Jira, optionally post a PR review comment
   - `bug` / `fix` → **Code Agent** (future): pull repo in sandbox, reproduce, propose diff, open PR only after explicit trust gates
   - `research` / `investigate` → **Research Agent**: deep research, write findings back to ticket notes
   - `security` / `audit` → **Security Agent**: run ffsec toolchain, scan infrastructure, report findings

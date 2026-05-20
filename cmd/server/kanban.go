@@ -17,13 +17,19 @@ import (
 )
 
 const (
-	realtimeCallsURL          = "https://api.openai.com/v1/realtime/calls"
-	defaultRealtimeModel      = "gpt-realtime-2"
-	defaultReasoningEffort    = "low"
-	realtimeEventChannelLabel = "oai-events"
-	realtimeInputTrackID      = "kanban-realtime:mixed-audio"
-	realtimeInputStreamID     = "kanban-realtime-input"
-	realtimeMixedAudioSinkKey = "kanban-realtime"
+	realtimeCallsURL                         = "https://api.openai.com/v1/realtime/calls"
+	realtimeTranslationClientSecretsURL      = "https://api.openai.com/v1/realtime/translations/client_secrets" // #nosec G101 -- OpenAI endpoint path, not a credential.
+	realtimeTranslationCallsURL              = "https://api.openai.com/v1/realtime/translations/calls"
+	realtimeTranscriptionSessionsURL         = "https://api.openai.com/v1/realtime/transcription_sessions"
+	defaultRealtimeModel                     = "gpt-realtime-2"
+	defaultRealtimeTranscriptionModel        = "gpt-realtime-whisper"
+	defaultRealtimeTranslationModel          = "gpt-realtime-translate"
+	defaultRealtimeTranslationTargetLanguage = "en"
+	defaultReasoningEffort                   = "low"
+	realtimeEventChannelLabel                = "oai-events"
+	realtimeInputTrackID                     = "kanban-realtime:mixed-audio"
+	realtimeInputStreamID                    = "kanban-realtime-input"
+	realtimeMixedAudioSinkKey                = "kanban-realtime"
 )
 
 type kanbanRealtimeEvent struct {
@@ -52,14 +58,17 @@ type kanbanRealtimeOutputItem struct {
 type kanbanBoardApp struct {
 	board *kanbanBoard
 
-	mu         sync.Mutex
-	model      string
-	pc         *webrtc.PeerConnection
-	events     *webrtc.DataChannel
-	inputTrack *webrtc.TrackLocalStaticSample
-	inputEnc   *opusEncoder
-	connected  bool
-	closeOnce  sync.Once
+	mu          sync.Mutex
+	model       string
+	pc          *webrtc.PeerConnection
+	events      *webrtc.DataChannel
+	inputTrack  *webrtc.TrackLocalStaticSample
+	inputEnc    *opusEncoder
+	connected   bool
+	connectedAt time.Time
+	lastJoinErr string
+	lastJoinAt  time.Time
+	closeOnce   sync.Once
 }
 
 func newKanbanBoardApp(board *kanbanBoard) *kanbanBoardApp {
@@ -69,14 +78,29 @@ func newKanbanBoardApp(board *kanbanBoard) *kanbanBoardApp {
 }
 
 func (app *kanbanBoardApp) JoinConferenceRoom() error {
+	app.mu.Lock()
+	app.connected = false
+	app.connectedAt = time.Time{}
+	app.lastJoinErr = ""
+	app.lastJoinAt = time.Now().UTC()
+	app.mu.Unlock()
+
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
-		return fmt.Errorf("OPENAI_API_KEY is not configured")
+		return app.failRealtimeJoin(fmt.Errorf("OPENAI_API_KEY is not configured"))
+	}
+
+	model := realtimeModel()
+	if err := validateRealtimeConversationModel(model); err != nil {
+		return app.failRealtimeJoin(err)
+	}
+	if err := validateRealtimeTranscriptionModel(realtimeTranscriptionModel()); err != nil {
+		return app.failRealtimeJoin(err)
 	}
 
 	peerConnection, err := newPeerConnection()
 	if err != nil {
-		return fmt.Errorf("create Realtime peer connection: %w", err)
+		return app.failRealtimeJoin(fmt.Errorf("create Realtime peer connection: %w", err))
 	}
 
 	inputTrack, err := webrtc.NewTrackLocalStaticSample(
@@ -90,13 +114,13 @@ func (app *kanbanBoardApp) JoinConferenceRoom() error {
 	)
 	if err != nil {
 		_ = peerConnection.Close()
-		return fmt.Errorf("create Realtime mixed audio input track: %w", err)
+		return app.failRealtimeJoin(fmt.Errorf("create Realtime mixed audio input track: %w", err))
 	}
 
 	inputEnc, err := newOpusEncoder(roomAudioSampleRate, roomAudioChannels)
 	if err != nil {
 		_ = peerConnection.Close()
-		return fmt.Errorf("create Realtime mixed audio encoder: %w", err)
+		return app.failRealtimeJoin(fmt.Errorf("create Realtime mixed audio encoder: %w", err))
 	}
 
 	// Use a sendrecv transceiver so OpenAI can both receive our mixed room
@@ -108,7 +132,7 @@ func (app *kanbanBoardApp) JoinConferenceRoom() error {
 	})
 	if err != nil {
 		_ = peerConnection.Close()
-		return fmt.Errorf("attach Realtime mixed audio input track: %w", err)
+		return app.failRealtimeJoin(fmt.Errorf("attach Realtime mixed audio input track: %w", err))
 	}
 	go drainRTCP(inputTransceiver.Sender())
 	peerConnection.OnTrack(func(t *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
@@ -131,21 +155,30 @@ func (app *kanbanBoardApp) JoinConferenceRoom() error {
 	events, err := peerConnection.CreateDataChannel(realtimeEventChannelLabel, nil)
 	if err != nil {
 		_ = peerConnection.Close()
-		return fmt.Errorf("create Realtime event data channel: %w", err)
+		return app.failRealtimeJoin(fmt.Errorf("create Realtime event data channel: %w", err))
 	}
 
-	model := realtimeModel()
 	app.mu.Lock()
 	app.model = model
 	app.pc = peerConnection
 	app.events = events
 	app.inputTrack = inputTrack
 	app.inputEnc = inputEnc
+	app.connected = false
+	app.connectedAt = time.Time{}
+	app.lastJoinErr = ""
+	app.lastJoinAt = time.Now().UTC()
 	app.mu.Unlock()
 
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Infof("OpenAI Realtime peer state changed: %s", state.String())
 		broadcastKanbanEvent("status", "OpenAI Realtime: "+state.String())
+		switch state {
+		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateDisconnected:
+			app.recordRealtimeDisconnect("OpenAI Realtime peer " + state.String())
+		case webrtc.PeerConnectionStateClosed:
+			app.markRealtimeDisconnected()
+		}
 	})
 	events.OnOpen(func() {
 		log.Infof("OpenAI Realtime event channel opened")
@@ -159,6 +192,7 @@ func (app *kanbanBoardApp) JoinConferenceRoom() error {
 	go func() {
 		if err := app.connectRealtimePeer(apiKey, model); err != nil {
 			log.Errorf("Failed to connect OpenAI Realtime peer: %v", err)
+			app.recordRealtimeJoinError(err)
 			broadcastKanbanEvent("status", "OpenAI Realtime disabled: "+err.Error())
 			_ = peerConnection.Close()
 			return
@@ -199,7 +233,7 @@ func (app *kanbanBoardApp) connectRealtimePeer(apiKey string, model string) erro
 	app.mu.Unlock()
 
 	if peerConnection == nil {
-		return fmt.Errorf("Realtime peer connection is unavailable")
+		return fmt.Errorf("realtime peer connection is unavailable")
 	}
 
 	offer, err := peerConnection.CreateOffer(nil)
@@ -215,7 +249,7 @@ func (app *kanbanBoardApp) connectRealtimePeer(apiKey string, model string) erro
 
 	localDescription := peerConnection.LocalDescription()
 	if localDescription == nil || strings.TrimSpace(localDescription.SDP) == "" {
-		return fmt.Errorf("Realtime peer connection did not produce a local description")
+		return fmt.Errorf("realtime peer connection did not produce a local description")
 	}
 
 	answerSDP, err := app.createRealtimeCall(apiKey, model, localDescription.SDP)
@@ -232,9 +266,83 @@ func (app *kanbanBoardApp) connectRealtimePeer(apiKey string, model string) erro
 
 	app.mu.Lock()
 	app.connected = true
+	app.connectedAt = time.Now().UTC()
+	app.lastJoinErr = ""
+	app.lastJoinAt = app.connectedAt
 	app.mu.Unlock()
 
 	return nil
+}
+
+func (app *kanbanBoardApp) IsConnected() bool {
+	if app == nil {
+		return false
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	return app.connected
+}
+
+func (app *kanbanBoardApp) AgentConnectedAt() string {
+	if app == nil {
+		return ""
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.connectedAt.IsZero() {
+		return ""
+	}
+	return app.connectedAt.Format(time.RFC3339)
+}
+
+func (app *kanbanBoardApp) LastJoinError() string {
+	if app == nil {
+		return ""
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	return app.lastJoinErr
+}
+
+func (app *kanbanBoardApp) recordRealtimeJoinError(err error) {
+	if app == nil {
+		return
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.connected = false
+	app.connectedAt = time.Time{}
+	app.lastJoinErr = scrubStatusError(err)
+	app.lastJoinAt = time.Now().UTC()
+}
+
+func (app *kanbanBoardApp) failRealtimeJoin(err error) error {
+	app.recordRealtimeJoinError(err)
+	return err
+}
+
+func (app *kanbanBoardApp) recordRealtimeDisconnect(reason string) {
+	if app == nil {
+		return
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.connected = false
+	app.connectedAt = time.Time{}
+	if strings.TrimSpace(app.lastJoinErr) == "" {
+		app.lastJoinErr = strings.TrimSpace(reason)
+	}
+	app.lastJoinAt = time.Now().UTC()
+}
+
+func (app *kanbanBoardApp) markRealtimeDisconnected() {
+	if app == nil {
+		return
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.connected = false
+	app.connectedAt = time.Time{}
 }
 
 func (app *kanbanBoardApp) WriteMixedPCM(roomPCM []int16) error {
@@ -251,7 +359,7 @@ func (app *kanbanBoardApp) WriteMixedPCM(roomPCM []int16) error {
 	app.mu.Unlock()
 
 	if inputTrack == nil || inputEnc == nil {
-		return fmt.Errorf("Realtime mixed audio input is unavailable")
+		return fmt.Errorf("realtime mixed audio input is unavailable")
 	}
 
 	for offset := 0; offset < len(roomPCM); offset += roomAudioMixFrameSize {
@@ -282,7 +390,7 @@ func drainRTCP(sender *webrtc.RTPSender) {
 	}
 }
 
-func (app *kanbanBoardApp) createRealtimeCall(apiKey string, model string, offerSDP string) (string, error) {
+func (app *kanbanBoardApp) createRealtimeCall(apiKey string, model string, offerSDP string) (answer string, err error) {
 	contentType, body, err := buildRealtimeCallRequest(offerSDP, app.sessionConfig(model))
 	if err != nil {
 		return "", err
@@ -299,14 +407,18 @@ func (app *kanbanBoardApp) createRealtimeCall(apiKey string, model string, offer
 	if err != nil {
 		return "", fmt.Errorf("create Realtime session: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if closeErr := response.Body.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close realtime response body: %w", closeErr)
+		}
+	}()
 
 	answerSDP, err := io.ReadAll(response.Body)
 	if err != nil {
 		return "", fmt.Errorf("read Realtime answer: %w", err)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("Realtime session failed: status=%s body=%s", response.Status, strings.TrimSpace(string(answerSDP)))
+		return "", fmt.Errorf("realtime session failed: status=%s body=%s", response.Status, strings.TrimSpace(string(answerSDP)))
 	}
 
 	return string(answerSDP), nil
@@ -343,10 +455,39 @@ func (app *kanbanBoardApp) SendEvent(payload any) error {
 	events := app.events
 	app.mu.Unlock()
 	if events == nil || events.ReadyState() != webrtc.DataChannelStateOpen {
-		return fmt.Errorf("Realtime event channel is unavailable")
+		return fmt.Errorf("realtime event channel is unavailable")
 	}
 
 	return events.SendText(string(raw))
+}
+
+func (app *kanbanBoardApp) SendTextMessage(speaker string, normalized normalizedMeetingText) error {
+	if app == nil {
+		return fmt.Errorf("openai realtime agent is not initialized")
+	}
+	content := meetingChatPrompt(speaker, normalized)
+	if strings.TrimSpace(content) == "" {
+		return fmt.Errorf("chat message text is required")
+	}
+	if err := app.SendEvent(map[string]any{
+		"type": "conversation.item.create",
+		"item": map[string]any{
+			"type": "message",
+			"role": "user",
+			"content": []map[string]any{
+				{
+					"type": "input_text",
+					"text": content,
+				},
+			},
+		},
+	}); err != nil {
+		return fmt.Errorf("send realtime chat message: %w", err)
+	}
+	if err := app.SendEvent(map[string]any{"type": "response.create"}); err != nil {
+		return fmt.Errorf("request realtime chat response: %w", err)
+	}
+	return nil
 }
 
 func (app *kanbanBoardApp) sessionConfig(model string) map[string]any {
@@ -362,6 +503,13 @@ func (app *kanbanBoardApp) sessionConfig(model string) map[string]any {
 		})
 	}
 
+	transcription := map[string]any{
+		"model": realtimeTranscriptionModel(),
+	}
+	if language := strings.TrimSpace(os.Getenv("OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE")); language != "" {
+		transcription["language"] = language
+	}
+
 	session := map[string]any{
 		"type":              "realtime",
 		"model":             model,
@@ -371,10 +519,7 @@ func (app *kanbanBoardApp) sessionConfig(model string) map[string]any {
 				"noise_reduction": map[string]any{
 					"type": "near_field",
 				},
-				"transcription": map[string]any{
-					"model":    "gpt-4o-mini-transcribe",
-					"language": "en",
-				},
+				"transcription": transcription,
 				"turn_detection": map[string]any{
 					"type":                "server_vad",
 					"threshold":           0.5,
@@ -407,6 +552,9 @@ func (app *kanbanBoardApp) sessionUpdateEvent() map[string]any {
 }
 
 func realtimeModel() string {
+	if model := voiceModels.get(voiceProviderOpenAI); model != "" {
+		return model
+	}
 	if model := strings.TrimSpace(os.Getenv("OPENAI_REALTIME_MODEL")); model != "" {
 		return model
 	}
@@ -414,9 +562,141 @@ func realtimeModel() string {
 	return defaultRealtimeModel
 }
 
+func realtimeTranscriptionModel() string {
+	if model := strings.TrimSpace(os.Getenv("OPENAI_REALTIME_TRANSCRIPTION_MODEL")); model != "" {
+		return model
+	}
+
+	return defaultRealtimeTranscriptionModel
+}
+
+func openAIRealtimeTranslationModel() string {
+	if model := strings.TrimSpace(os.Getenv("OPENAI_REALTIME_TRANSLATION_MODEL")); model != "" {
+		return model
+	}
+
+	return defaultRealtimeTranslationModel
+}
+
+func openAIRealtimeTranslationTargetLanguage() string {
+	if language := strings.TrimSpace(os.Getenv("OPENAI_REALTIME_TRANSLATION_TARGET_LANGUAGE")); language != "" {
+		return language
+	}
+
+	return defaultRealtimeTranslationTargetLanguage
+}
+
+type openAIRealtimeModelProfile struct {
+	Model                  string
+	Role                   string
+	Endpoint               string
+	ToolCalling            bool
+	FullDuplex             bool
+	Reasoning              bool
+	StreamingTranscription bool
+	Translation            bool
+	Notes                  string
+}
+
+func openAIRealtimeModelProfiles() []openAIRealtimeModelProfile {
+	return []openAIRealtimeModelProfile{
+		{
+			Model:       "gpt-realtime-2",
+			Role:        "voice-agent",
+			Endpoint:    realtimeCallsURL,
+			ToolCalling: true,
+			FullDuplex:  true,
+			Reasoning:   true,
+			Notes:       "GPT-5-class realtime voice-to-action model for meeting facilitation and Jira/GitHub tools.",
+		},
+		{
+			Model:       "gpt-realtime-1.5",
+			Role:        "voice-agent",
+			Endpoint:    realtimeCallsURL,
+			ToolCalling: true,
+			FullDuplex:  true,
+			Notes:       "Flagship OpenAI audio-in/audio-out voice-agent model with function calling.",
+		},
+		{
+			Model:       "gpt-realtime-mini",
+			Role:        "voice-agent",
+			Endpoint:    realtimeCallsURL,
+			ToolCalling: true,
+			FullDuplex:  true,
+			Notes:       "Cost-efficient OpenAI realtime voice-agent model with function calling.",
+		},
+		{
+			Model:                  "gpt-realtime-whisper",
+			Role:                   "streaming-transcription",
+			Endpoint:               realtimeTranscriptionSessionsURL,
+			StreamingTranscription: true,
+			Notes:                  "Dedicated streaming speech-to-text model for low-latency transcript deltas.",
+		},
+		{
+			Model:       "gpt-realtime-translate",
+			Role:        "live-translation",
+			Endpoint:    realtimeTranslationCallsURL,
+			FullDuplex:  true,
+			Translation: true,
+			Notes:       "Dedicated speech-to-speech translation model; does not support function calling.",
+		},
+	}
+}
+
+func openAIRealtimeModelProfileFor(model string) (openAIRealtimeModelProfile, bool) {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	for _, profile := range openAIRealtimeModelProfiles() {
+		if normalizedModel == profile.Model {
+			return profile, true
+		}
+	}
+	return openAIRealtimeModelProfile{}, false
+}
+
+func validateRealtimeConversationModel(model string) error {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	if normalizedModel == "" {
+		normalizedModel = defaultRealtimeModel
+	}
+	if profile, ok := openAIRealtimeModelProfileFor(normalizedModel); ok {
+		if profile.ToolCalling {
+			return nil
+		}
+		return fmt.Errorf("OPENAI_REALTIME_MODEL=%q is a %s model at %s and cannot run Jira/GitHub tools; use OPENAI_REALTIME_MODEL=%s for the voice-to-action meeting agent", model, profile.Role, profile.Endpoint, defaultRealtimeModel)
+	}
+	if normalizedModel == "gpt-realtime" || normalizedModel == "gpt-realtime-1.5" || normalizedModel == "gpt-realtime-mini" || strings.HasPrefix(normalizedModel, "gpt-realtime-2-") {
+		return nil
+	}
+	return fmt.Errorf("OPENAI_REALTIME_MODEL=%q is not supported by the voice-to-action OpenAI path; use %s for meeting facilitation", model, defaultRealtimeModel)
+}
+
+func validateRealtimeTranscriptionModel(model string) error {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	if normalizedModel == "" {
+		normalizedModel = defaultRealtimeTranscriptionModel
+	}
+	if strings.Contains(normalizedModel, "latest") {
+		return fmt.Errorf("OPENAI_REALTIME_TRANSCRIPTION_MODEL=%q is a floating latest alias; pin an explicit transcription model such as %s", model, defaultRealtimeTranscriptionModel)
+	}
+	switch normalizedModel {
+	case "gpt-realtime-whisper", "gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1":
+		return nil
+	case "gpt-realtime-2", "gpt-realtime", "gpt-realtime-1.5", "gpt-realtime-translate":
+		return fmt.Errorf("OPENAI_REALTIME_TRANSCRIPTION_MODEL=%q is not a transcription model; use %s for streaming transcription", model, defaultRealtimeTranscriptionModel)
+	default:
+		if strings.Contains(normalizedModel, "transcribe") || strings.Contains(normalizedModel, "whisper") {
+			return nil
+		}
+		return fmt.Errorf("OPENAI_REALTIME_TRANSCRIPTION_MODEL=%q is not a recognized transcription model; use %s for streaming transcription", model, defaultRealtimeTranscriptionModel)
+	}
+}
+
 func usesAdvancedCommandProfile(model string) bool {
 	normalizedModel := strings.ToLower(strings.TrimSpace(model))
-	return normalizedModel == "gpt-realtime-2"
+	if profile, ok := openAIRealtimeModelProfileFor(normalizedModel); ok {
+		return profile.Reasoning
+	}
+	return normalizedModel == "gpt-realtime-2" || strings.HasPrefix(normalizedModel, "gpt-realtime-2-")
 }
 
 func (app *kanbanBoardApp) handleRealtimeEvent(raw []byte) {
@@ -434,6 +714,7 @@ func (app *kanbanBoardApp) handleRealtimeEvent(raw []byte) {
 		}
 	case "conversation.item.input_audio_transcription.completed", "input_audio_buffer.transcription.completed":
 		if strings.TrimSpace(event.Transcript) != "" {
+			app.board.ClearResponseLanguagePolicy()
 			app.board.RecordTranscript("user", "", event.Transcript)
 			broadcastKanbanEvent("transcription", map[string]any{
 				"role": "user",
@@ -473,22 +754,31 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 		return
 	}
 
-	result, changed, err := app.board.ApplyToolCallWithMeta(outputItem.Name, outputItem.Arguments, toolCallMeta{
-		Source: "openai-realtime",
-		CallID: outputItem.CallID,
-	})
-	if err != nil {
-		log.Errorf("Kanban tool call %q failed: %v", outputItem.Name, err)
-		result = map[string]any{
-			"ok":    false,
-			"error": "tool call failed",
+	var result map[string]any
+	var changed bool
+	var err error
+	if activeMeetingRequiresAuthenticatedHostForTool(outputItem.Name) {
+		result = hostOnlyToolResult(outputItem.Name)
+	} else {
+		result, changed, err = app.board.ApplyToolCallWithMeta(outputItem.Name, outputItem.Arguments, toolCallMeta{
+			Source: "openai-realtime",
+			CallID: outputItem.CallID,
+		})
+		if err != nil {
+			log.Errorf("Kanban tool call %q failed: %v", outputItem.Name, err)
+			result = map[string]any{
+				"ok":    false,
+				"error": "tool call failed",
+			}
 		}
 	}
 
 	if changed {
 		jiraRequired, syncErr := syncJiraToolCall(outputItem.Name, outputItem.Arguments, result)
 		annotateJiraSyncResult(result, jiraRequired, syncErr)
+		app.board.attachExternalConfirmationsToMutation(result)
 	}
+	app.board.annotateResponseLanguagePolicy(result)
 
 	if err := app.SendEvent(map[string]any{
 		"type": "conversation.item.create",
@@ -507,6 +797,7 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 
 	state := app.board.SnapshotState()
 	auditBoardMutation("openai-realtime", outputItem.Name, result, state)
+	broadcastKanbanEvent("action_result", result)
 	broadcastKanbanEvent("board", state)
 	if err := app.SendEvent(app.sessionUpdateEvent()); err != nil {
 		log.Errorf("Failed to refresh Kanban Realtime session: %v", err)

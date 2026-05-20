@@ -19,7 +19,15 @@ Every dependency entering this project MUST be pinned to an exact, reproducible 
 
 - All `FROM` lines in `Dockerfile` MUST include a `@sha256:` digest after the tag.
 - All `image:` lines in `docker-compose.yml` MUST use `@sha256:` digests, never `:latest`.
+- Debian packages installed in Dockerfiles MUST be pinned with exact `package=version` selectors.
 - To update an image: pull the new tag, extract the digest with `docker inspect --format='{{index .RepoDigests 0}}'`, and replace the digest in the file.
+
+## Terraform / Terragrunt
+
+- Terraform CLI `required_version` constraints MUST be exact.
+- Provider versions MUST use exact constraints.
+- Every live Terragrunt environment MUST commit `.terraform.lock.hcl` with provider checksums for supported developer and CI platforms.
+- Terraform registry modules MUST use exact `version =` pins.
 
 ## CDN / External Scripts
 
@@ -38,8 +46,10 @@ A git pre-commit hook at `scripts/pre-commit` runs automatically. It checks:
 3. `go vet ./...` — code correctness
 4. Unused imports (via `goimports -l`)
 5. Docker digest presence in `Dockerfile` and `docker-compose.yml`
-6. Forbidden `:latest` / `@latest` references in operational files
-7. SRI attributes on all external `<script>` tags
+6. Exact Debian package pins in Dockerfiles
+7. Dependency lock files and immutable pre-commit hook SHAs
+8. Forbidden `:latest` / `@latest` references in operational files
+9. SRI attributes on all external `<script>` tags
 
 If any check fails, the commit is blocked. NEVER bypass with `--no-verify` unless explicitly discussed.
 

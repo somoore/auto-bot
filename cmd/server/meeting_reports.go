@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// meetingIntelligenceReport is the JSON report returned by
+// /meeting/intelligence and archived when durable storage is configured.
 type meetingIntelligenceReport struct {
 	OK                   bool                       `json:"ok"`
 	BoardID              string                     `json:"board_id"`
@@ -143,6 +145,9 @@ type voiceProviderOption struct {
 	Notes      string `json:"notes,omitempty"`
 }
 
+// BuildMeetingIntelligenceReport takes a point-in-time board snapshot and
+// derives client-safe recap, evidence, setup, observability, sprint, GitHub,
+// and agent-run views without mutating the board.
 func (board *kanbanBoard) BuildMeetingIntelligenceReport(source string) meetingIntelligenceReport {
 	now := time.Now().UTC()
 	board.mu.Lock()
@@ -230,6 +235,7 @@ func stateBoardID(state kanbanBoardState, fallback string) string {
 	return defaultAppBoardID
 }
 
+// SummaryView returns the compact archive/list representation for a report.
 func (report meetingIntelligenceReport) SummaryView() meetingReportSummary {
 	return meetingReportSummary{
 		BoardID:        report.BoardID,
@@ -643,9 +649,14 @@ func buildSetupReadinessReport() setupReadinessReport {
 }
 
 func voiceProviderOptions() []voiceProviderOption {
+	if options := registeredVoiceProviderOptions(); len(options) > 0 {
+		return options
+	}
 	return []voiceProviderOption{
 		{Name: "nova-sonic", Enabled: voiceProvider == "nova-sonic", FullDuplex: true, Transport: "LiveKit", Notes: "Current AWS Bedrock Nova Sonic path."},
-		{Name: "openai-realtime", Enabled: voiceProvider == "openai", FullDuplex: true, Transport: "WebRTC", Notes: "Existing OpenAI realtime path."},
+		{Name: "openai-realtime", Enabled: voiceProvider == "openai", FullDuplex: true, Transport: "WebRTC", Notes: "OpenAI voice-to-action path using " + defaultRealtimeModel + " with " + defaultRealtimeTranscriptionModel + " transcripts."},
+		{Name: "openai-realtime-translate", Enabled: false, FullDuplex: true, Transport: "WebRTC", Notes: "Dedicated translation endpoint profile; no Jira/GitHub tool calling."},
+		{Name: "openai-realtime-whisper", Enabled: false, FullDuplex: false, Transport: "WebRTC/WebSocket", Notes: "Dedicated streaming transcription endpoint profile; no Jira/GitHub tool calling."},
 		{Name: "livekit-cloud", Enabled: strings.EqualFold(os.Getenv("LIVEKIT_DEPLOYMENT_MODE"), "cloud"), FullDuplex: true, Transport: "LiveKit Cloud", Notes: "Terraform switch via LIVEKIT_DEPLOYMENT_MODE=cloud."},
 	}
 }

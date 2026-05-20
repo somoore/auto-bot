@@ -134,14 +134,14 @@ func TestLocalLoginCreatesSessionOnlyWithLocalToken(t *testing.T) {
 	appBoardID = "team-board"
 	authStore = newWebAuthStore(time.Hour)
 
-	badReq := httptest.NewRequest(http.MethodGet, "/auth/local-login?token=wrong", nil)
+	badReq := httptest.NewRequest(http.MethodGet, "http://localhost:3001/auth/local-login?token=wrong", nil)
 	badRec := httptest.NewRecorder()
 	localLoginHandler(badRec, badReq)
 	if badRec.Code != http.StatusUnauthorized {
 		t.Fatalf("localLoginHandler bad token status = %d, want 401", badRec.Code)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/auth/local-login?token=local-login-token&identity=Scott_1&next=/hello", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:3001/auth/local-login?token=local-login-token&identity=Scott_1&next=/hello", nil)
 	rec := httptest.NewRecorder()
 	localLoginHandler(rec, req)
 	if rec.Code != http.StatusSeeOther {
@@ -178,6 +178,7 @@ func TestSessionStatusCreatesLocalBrowserSessionForLocalhost(t *testing.T) {
 	authStore = newWebAuthStore(time.Hour)
 
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:3001/auth/session?identity=Scott_1", nil)
+	req.Header.Set(localSessionHeader, "1")
 	rec := httptest.NewRecorder()
 	sessionStatusHandler(rec, req)
 	if rec.Code != http.StatusOK {
@@ -207,6 +208,28 @@ func TestSessionStatusCreatesLocalBrowserSessionForLocalhost(t *testing.T) {
 	}
 }
 
+func TestSessionStatusRequiresLocalSessionHeaderForAutoLocalSession(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	appEnvironment = "local"
+	appAuthMode = "token"
+	appLocalLoginToken = "local-login-token"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:3001/auth/session?identity=Scott_1", nil)
+	rec := httptest.NewRecorder()
+	sessionStatusHandler(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("sessionStatusHandler without local header status = %d, want 401", rec.Code)
+	}
+	if cookies := rec.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("local session cookies without header = %#v, want none", cookies)
+	}
+}
+
 func TestSessionStatusRecoversLocalHostSessionDuringActiveMeeting(t *testing.T) {
 	restore := snapshotAuthGlobals()
 	defer restore()
@@ -232,6 +255,7 @@ func TestSessionStatusRecoversLocalHostSessionDuringActiveMeeting(t *testing.T) 
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:3001/auth/session?identity=Scott_1&role=host", nil)
+	req.Header.Set(localSessionHeader, "1")
 	req.AddCookie(&http.Cookie{Name: authCookieName, Value: staleSession.ID})
 	rec := httptest.NewRecorder()
 	sessionStatusHandler(rec, req)
@@ -275,6 +299,7 @@ func TestSessionStatusDoesNotCreateLocalParticipantSessionDuringActiveMeeting(t 
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:3001/auth/session?identity=Participant_1&role=participant", nil)
+	req.Header.Set(localSessionHeader, "1")
 	rec := httptest.NewRecorder()
 	sessionStatusHandler(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -297,6 +322,7 @@ func TestSessionStatusDoesNotAutoCreateLocalSessionForNonLocalhost(t *testing.T)
 	authStore = newWebAuthStore(time.Hour)
 
 	req := httptest.NewRequest(http.MethodGet, "http://192.0.2.10:3001/auth/session?identity=Scott_1", nil)
+	req.Header.Set(localSessionHeader, "1")
 	rec := httptest.NewRecorder()
 	sessionStatusHandler(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -331,10 +357,19 @@ func snapshotAuthGlobals() func() {
 	oldLocalLoginToken := appLocalLoginToken
 	oldAuthStore := authStore
 	oldVoiceProvider := voiceProvider
+	voiceModels.mu.RLock()
+	oldVoiceModels := make(map[string]string, len(voiceModels.models))
+	for provider, model := range voiceModels.models {
+		oldVoiceModels[provider] = model
+	}
+	voiceModels.mu.RUnlock()
 	oldNovaSonic := novaSonic
+	oldKanbanApp := kanbanApp
 	oldValidateAWSRuntimeCredentials := validateAWSRuntimeCredentials
 	oldMeetingAccess := meetingAccess
 	oldSharedBoard := sharedBoard
+	oldJoinMeetingLimiter := joinMeetingLimiter
+	joinMeetingLimiter = newFixedWindowRateLimiter(joinRateLimit, time.Minute)
 	return func() {
 		apiToken = oldAPIToken
 		appAuthMode = oldAuthMode
@@ -344,9 +379,14 @@ func snapshotAuthGlobals() func() {
 		appLocalLoginToken = oldLocalLoginToken
 		authStore = oldAuthStore
 		voiceProvider = oldVoiceProvider
+		voiceModels.mu.Lock()
+		voiceModels.models = oldVoiceModels
+		voiceModels.mu.Unlock()
 		novaSonic = oldNovaSonic
+		kanbanApp = oldKanbanApp
 		validateAWSRuntimeCredentials = oldValidateAWSRuntimeCredentials
 		meetingAccess = oldMeetingAccess
 		sharedBoard = oldSharedBoard
+		joinMeetingLimiter = oldJoinMeetingLimiter
 	}
 }

@@ -24,7 +24,7 @@ Terragrunt can create the S3 bucket and DynamoDB table during init when your AWS
 
 ## Provider
 
-The root Terragrunt config generates the provider block and pins:
+The root Terragrunt config pins Terraform CLI `1.15.2`, generates the provider block, and pins provider releases:
 
 ```hcl
 hashicorp/aws = 6.45.0
@@ -32,6 +32,7 @@ hashicorp/cloudinit = 2.4.0
 ```
 
 The version was verified against the HashiCorp releases index on 2026-05-15.
+Provider checksums are committed in `live/dev/.terraform.lock.hcl`.
 
 ## Network And Security Shape
 
@@ -82,7 +83,7 @@ The version was verified against the HashiCorp releases index on 2026-05-15.
 
    To enable Jira in ECS, set `JIRA_API_TOKEN` and either `JIRA_CONFIG_JSON` or `JIRA_CONFIG_JSON_FILE` before running the script. The uploaded Jira config should use `"api_token_env": "JIRA_API_TOKEN"` instead of a local token file path. Set `JIRA_WEBHOOK_SECRET` as well if Jira will call `POST /jira/webhook`.
    To enable autonomous code-review agents, set `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_DEFAULT_REPO`, and `GITHUB_ALLOWED_REPOS` before running the script. The GitHub App should be installed only on the target repo with `Contents: read` and `Pull requests: read`; set `GITHUB_PR_COMMENTS_ENABLED=true` only after granting `Pull requests: write`. Agent Claude models use Bedrock US inference-profile IDs such as `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
-   To enable TURN/TLS, set `LIVEKIT_TURN_CERTIFICATE_ARN` and `LIVEKIT_TURN_DOMAIN_NAME`; the ACM certificate must match the TURN domain.
+   To enable TURN/TLS, set `LIVEKIT_TURN_CERTIFICATE_ARN`, set `LIVEKIT_TURN_DOMAIN_NAME`, and set the Terraform input `livekit_turn_tls_enabled = true` in `infra/env.hcl` or the live environment inputs. The ACM certificate must match the TURN domain. The dev wrapper does not currently wire a `LIVEKIT_TURN_TLS_ENABLED` environment variable.
 
 4. Bootstrap remote state and ECR:
 

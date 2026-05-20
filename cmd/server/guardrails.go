@@ -265,6 +265,14 @@ func sanitizeModelValue(value any, field string, warnings *[]string) any {
 		return sanitizeUntrustedWorklogs(typed, warnings)
 	case []kanbanRemoteLink:
 		return sanitizeUntrustedRemoteLinks(typed, warnings)
+	case []externalActionConfirmation:
+		out := make([]externalActionConfirmation, 0, len(typed))
+		for _, confirmation := range typed {
+			out = append(out, sanitizeExternalActionConfirmation(confirmation, warnings))
+		}
+		return out
+	case externalActionConfirmation:
+		return sanitizeExternalActionConfirmation(typed, warnings)
 	case map[string]kanbanField:
 		return sanitizeUntrustedCustomFields(typed, warnings)
 	case kanbanField:
@@ -286,6 +294,15 @@ func sanitizeModelValue(value any, field string, warnings *[]string) any {
 	default:
 		return value
 	}
+}
+
+func sanitizeExternalActionConfirmation(confirmation externalActionConfirmation, warnings *[]string) externalActionConfirmation {
+	confirmation.System = sanitizeUntrustedField("external.system", confirmation.System, warnings)
+	confirmation.Operation = sanitizeUntrustedField("external.operation", confirmation.Operation, warnings)
+	confirmation.Message = sanitizeUntrustedField("external.message", confirmation.Message, warnings)
+	confirmation.Error = sanitizeUntrustedField("external.error", confirmation.Error, warnings)
+	confirmation.Evidence = sanitizeUntrustedField("external.evidence", confirmation.Evidence, warnings)
+	return confirmation
 }
 
 func sanitizeUntrustedUser(prefix string, user kanbanUser, warnings *[]string) *kanbanUser {
@@ -516,7 +533,7 @@ func promptInjectionRisk(value string) (string, bool) {
 	case containsAny(
 		"delete_ticket", "move_ticket", "create_ticket", "create_subtask", "assign_ticket", "unassign_ticket",
 		"set_priority", "set_blocked", "set_story_points", "set_estimate", "add_worklog", "link_issues",
-		"set_sprint", "rank_issue", "set_components", "set_fix_versions", "set_custom_field", "add_remote_link",
+		"set_sprint", "rank_issue", "prioritize_ticket", "set_components", "set_fix_versions", "set_custom_field", "add_remote_link",
 		"set_reporter", "add_watcher", "start_meeting", "switch_meeting_type", "set_meeting_type", "record_participant_update", "end_meeting",
 	):
 		return "mentions internal tool names", true

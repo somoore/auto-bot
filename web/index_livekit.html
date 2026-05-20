@@ -210,11 +210,118 @@
 
       .transcription-scroll { flex: 1; overflow-y: auto; padding: 12px 14px; }
       .transcript-entry { margin-bottom: 12px; line-height: 1.5; }
+      .transcript-entry.chat-entry { padding-left: 8px; border-left: 2px solid rgba(138, 180, 248, 0.45); }
       .transcript-entry .speaker { font-weight: 700; font-size: 12px; margin-bottom: 2px; }
       .transcript-entry .speaker.user-speaker { color: #8ab4f8; }
       .transcript-entry .speaker.assistant-speaker { color: #81c995; }
       .transcript-entry .text { font-size: 13px; color: var(--text-primary); white-space: pre-wrap; }
+      .transcript-entry .translation {
+        margin-top: 4px;
+        padding-left: 8px;
+        border-left: 2px solid rgba(255, 255, 255, 0.12);
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+      .transcript-entry .translation-label {
+        display: block;
+        color: var(--text-muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        line-height: 1.2;
+        margin-bottom: 2px;
+        text-transform: uppercase;
+      }
+      .transcript-badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 16px;
+        border-radius: 999px;
+        background: rgba(138, 180, 248, 0.14);
+        color: #c7dafd;
+        font-size: 10px;
+        font-weight: 800;
+        line-height: 1;
+        margin-left: 6px;
+        padding: 2px 6px;
+        vertical-align: text-bottom;
+      }
       .transcript-entry .timestamp { font-size: 11px; color: var(--text-muted); margin-left: 8px; font-weight: 400; }
+
+      .chat-composer {
+        display: grid;
+        gap: 6px;
+        padding: 8px;
+        border-top: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .chat-composer textarea {
+        width: 100%;
+        min-height: 40px;
+        max-height: 96px;
+        resize: vertical;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 13px;
+        line-height: 1.35;
+        outline: none;
+        padding: 8px 9px;
+      }
+
+      .chat-composer textarea:focus {
+        border-color: rgba(138, 180, 248, 0.72);
+        box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.16);
+      }
+
+      .chat-composer textarea:disabled,
+      .chat-composer select:disabled {
+        opacity: 0.58;
+      }
+
+      .chat-composer-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .chat-composer select {
+        min-width: 0;
+        height: 32px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #202124;
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        outline: none;
+        padding: 0 8px;
+      }
+
+      .chat-composer button {
+        min-width: 64px;
+        height: 32px;
+        border-radius: 8px;
+        padding: 0 12px;
+        font-size: 12px;
+      }
+
+      .chat-send-status {
+        min-height: 14px;
+        color: var(--text-muted);
+        font-size: 11px;
+        line-height: 1.25;
+      }
+
+      .chat-send-status.warn { color: #fdd663; }
+      .chat-send-status.bad { color: #f28b82; }
 
       /* ── Kanban board ── */
       .board-surface {
@@ -260,7 +367,7 @@
       }
 
       .stack, .card { display: grid; gap: 10px; }
-      .card { padding: 11px; background: #fbfcfe; cursor: pointer; }
+      .card { position: relative; padding: 11px; background: #fbfcfe; cursor: pointer; }
       .card:focus-visible { outline: 3px solid rgba(26, 115, 232, 0.35); outline-offset: 2px; }
       .card-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; }
       .card-heading strong { min-width: 0; overflow-wrap: anywhere; }
@@ -281,6 +388,19 @@
         animation: card-move-wiggle 1100ms ease-in-out;
         border-color: var(--accent); box-shadow: 0 10px 24px rgba(26, 115, 232, 0.22);
         transform-origin: 50% 50%; will-change: transform;
+      }
+
+      .card.agent-work-target,
+      .column.agent-work-target {
+        outline: 2px solid rgba(26, 115, 232, 0.95);
+        outline-offset: 3px;
+        box-shadow: 0 0 0 8px rgba(26, 115, 232, 0.16), 0 14px 34px rgba(26, 115, 232, 0.24);
+      }
+
+      .card.agent-work-failed,
+      .column.agent-work-failed {
+        outline-color: rgba(234, 67, 53, 0.96);
+        box-shadow: 0 0 0 8px rgba(234, 67, 53, 0.16), 0 14px 34px rgba(234, 67, 53, 0.2);
       }
 
       .card strong { font-size: 14px; line-height: 1.3; }
@@ -642,6 +762,335 @@
       .comment-preview-latest { display: grid; gap: 6px; border-radius: 8px; background: #f1f7ff; padding: 10px; }
       .confetti-piece { position: fixed; z-index: 1000; width: 8px; height: 12px; border-radius: 2px; background: var(--confetti-color); pointer-events: none; animation: confetti-pop 1000ms ease-out forwards; }
 
+      .agent-cursor {
+        position: fixed;
+        left: 0;
+        top: 0;
+        z-index: 1600;
+        width: 30px;
+        height: 34px;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate3d(-80px, -80px, 0);
+        transition: opacity 160ms ease;
+        filter: drop-shadow(0 10px 18px rgba(0,0,0,0.42));
+      }
+
+      .agent-cursor.visible { opacity: 1; }
+
+      .agent-cursor-pointer {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 22px;
+        height: 28px;
+        background: #fff;
+        clip-path: polygon(0 0, 0 27px, 7px 21px, 12px 32px, 17px 30px, 12px 19px, 22px 19px);
+        border: 1px solid rgba(0,0,0,0.28);
+      }
+
+      .agent-cursor-label {
+        position: absolute;
+        left: 22px;
+        top: 22px;
+        max-width: 260px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border: 1px solid rgba(255,255,255,0.16);
+        border-radius: 999px;
+        background: rgba(15, 18, 22, 0.94);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1;
+        padding: 7px 9px;
+      }
+
+      .agent-cursor-pulse {
+        position: absolute;
+        left: -8px;
+        top: -8px;
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: 2px solid rgba(26, 115, 232, 0.9);
+        opacity: 0;
+        transform: scale(0.45);
+      }
+
+      .agent-cursor.clicking .agent-cursor-pulse {
+        animation: agent-click-pulse 420ms ease-out;
+      }
+
+      .agent-card-ghost {
+        position: fixed;
+        z-index: 1550;
+        pointer-events: none;
+        border: 1px solid #dde2eb;
+        border-radius: 8px;
+        background: #fbfcfe;
+        box-shadow: 0 24px 58px rgba(0,0,0,0.34);
+        color: #17191f;
+        opacity: 0.96;
+        transform-origin: 50% 50%;
+        will-change: transform, opacity;
+      }
+
+      .agent-inline-editor {
+        position: fixed;
+        z-index: 1540;
+        display: grid;
+        gap: 7px;
+        width: min(320px, calc(100vw - 32px));
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 8px;
+        background: rgba(17, 20, 24, 0.96);
+        box-shadow: 0 20px 54px rgba(0,0,0,0.42);
+        color: #fff;
+        padding: 10px;
+        pointer-events: none;
+      }
+
+      .agent-inline-editor strong {
+        color: #8ab4f8;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .agent-inline-editor pre {
+        min-height: 42px;
+        max-height: 112px;
+        overflow: hidden;
+        white-space: pre-wrap;
+        color: #f1f3f4;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .agent-inline-editor pre::after {
+        content: "";
+        display: inline-block;
+        width: 7px;
+        height: 14px;
+        margin-left: 2px;
+        background: #8ab4f8;
+        vertical-align: -2px;
+        animation: theater-caret-blink 780ms steps(2, start) infinite;
+      }
+
+      .agent-action-stamp {
+        display: grid;
+        gap: 5px;
+        margin-top: 2px;
+        border-radius: 8px;
+        border: 1px solid rgba(26,115,232,0.24);
+        background: rgba(26,115,232,0.08);
+        color: #174ea6;
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1.25;
+        padding: 7px;
+      }
+
+      .agent-action-stamp.bad {
+        border-color: rgba(234,67,53,0.32);
+        background: rgba(234,67,53,0.1);
+        color: #b3261e;
+      }
+
+      .agent-action-stamp.warn {
+        border-color: rgba(251,188,4,0.45);
+        background: rgba(251,188,4,0.14);
+        color: #7d5700;
+      }
+
+      .agent-action-stamp button {
+        justify-self: start;
+        min-width: 0;
+        border-radius: 6px;
+        background: rgba(23,78,166,0.1);
+        color: inherit;
+        font-size: 11px;
+        padding: 5px 7px;
+      }
+
+      .agent-theater-ribbon {
+        position: fixed;
+        left: 50%;
+        top: 68px;
+        z-index: 1130;
+        display: none;
+        width: min(760px, calc(100vw - 40px));
+        transform: translateX(-50%);
+        border: 1px solid rgba(255,255,255,0.16);
+        border-radius: 8px;
+        background: rgba(17, 20, 24, 0.94);
+        box-shadow: 0 18px 48px rgba(0,0,0,0.34);
+        color: #f1f3f4;
+        padding: 9px 10px;
+      }
+
+      .agent-theater-ribbon.visible { display: grid; gap: 8px; }
+      .agent-theater-ribbon.minimal { width: min(540px, calc(100vw - 40px)); }
+      .agent-theater-ribbon.collapsed {
+        width: min(360px, calc(100vw - 40px));
+        padding: 7px 8px;
+      }
+
+      .agent-theater-ribbon.collapsed .agent-theater-steps { display: none; }
+
+      .agent-theater-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .agent-theater-title strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+      }
+
+      .agent-theater-controls,
+      .agent-workspace-controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+      }
+
+      .agent-theater-controls button,
+      .agent-workspace-controls button,
+      .agent-theater-setting-actions button {
+        min-width: 0;
+        border-radius: 6px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        color: var(--text-primary);
+        font-size: 11px;
+        line-height: 1;
+        padding: 6px 8px;
+      }
+
+      .agent-theater-steps {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .agent-theater-steps::-webkit-scrollbar { display: none; }
+
+      .agent-theater-step {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: max-content;
+        border-radius: 999px;
+        background: #202124;
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1;
+        padding: 6px 8px;
+      }
+
+      .agent-theater-step::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--text-muted);
+      }
+
+      .agent-theater-step.ok::before { background: var(--green); box-shadow: 0 0 0 3px rgba(52,168,83,0.12); }
+      .agent-theater-step.warn::before { background: var(--yellow); box-shadow: 0 0 0 3px rgba(251,188,4,0.12); }
+      .agent-theater-step.bad::before { background: var(--red); box-shadow: 0 0 0 3px rgba(234,67,53,0.12); }
+      .agent-theater-step.pending::before { background: #8ab4f8; box-shadow: 0 0 0 3px rgba(138,180,248,0.12); animation: theater-pending-pulse 1100ms ease-in-out infinite; }
+
+      .agent-workspace {
+        position: fixed;
+        left: 18px;
+        bottom: 70px;
+        z-index: 1125;
+        display: none;
+        width: min(360px, calc(100vw - 36px));
+        max-height: min(360px, calc(100vh - 150px));
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.16);
+        border-radius: 8px;
+        background: rgba(15, 18, 22, 0.96);
+        box-shadow: 0 22px 54px rgba(0,0,0,0.42);
+        color: var(--text-primary);
+      }
+
+      .agent-workspace.visible { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+      .agent-workspace.collapsed {
+        width: min(300px, calc(100vw - 36px));
+        grid-template-rows: auto;
+      }
+      .agent-workspace.collapsed .agent-workspace-log { display: none; }
+
+      .agent-workspace header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        padding: 10px;
+      }
+
+      .agent-workspace header strong {
+        font-size: 12px;
+        line-height: 1.2;
+      }
+
+      .agent-theater-setting-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .agent-workspace-log {
+        display: grid;
+        gap: 7px;
+        overflow-y: auto;
+        padding: 10px;
+      }
+
+      .agent-workspace-row {
+        display: grid;
+        grid-template-columns: 82px minmax(0, 1fr);
+        gap: 8px;
+        border-radius: 8px;
+        background: #202124;
+        padding: 8px;
+      }
+
+      .agent-workspace-row span:first-child {
+        color: var(--text-secondary);
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 0.04em;
+        line-height: 1.35;
+        text-transform: uppercase;
+      }
+
+      .agent-workspace-row span:last-child {
+        color: #fff;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
       /* ── Operator experience ── */
       .operator-panel {
         display: grid;
@@ -673,7 +1122,7 @@
       .meeting-access-drawer {
         position: fixed;
         top: 64px;
-        right: 0;
+        right: -460px;
         z-index: 1200;
         display: grid;
         align-content: start;
@@ -686,13 +1135,15 @@
         border-left: 1px solid var(--border-strong);
         box-shadow: -24px 0 60px rgba(0,0,0,0.42);
         padding: 14px;
-        transform: translateX(calc(100% + 20px));
-        transition: transform 220ms ease;
+        transform: none;
+        transition: none;
         pointer-events: none;
       }
 
-      .meeting-access-drawer.open {
-        transform: translateX(0);
+      .meeting-access-drawer.open,
+      .meeting-access-drawer[aria-hidden="false"] {
+        right: 0 !important;
+        transform: none !important;
         pointer-events: auto;
       }
 
@@ -738,6 +1189,7 @@
 
       .operator-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
       .operator-stack { display: grid; gap: 8px; min-width: 0; }
+      .operator-grid-wide { grid-column: 1 / -1; }
 
       .field {
         display: grid;
@@ -978,6 +1430,16 @@
       @keyframes toast-in { 0% { opacity:0; transform: translate3d(0,8px,0) scale(0.98); } 100% { opacity:1; transform: translate3d(0,0,0) scale(1); } }
       @keyframes comment-preview-open { 0% { opacity:0; transform: translate3d(0,22px,0) scale(0.9) rotate(-1.5deg); } 72% { opacity:1; transform: translate3d(0,-4px,0) scale(1.025) rotate(0.5deg); } 100% { opacity:1; transform: translate3d(0,0,0) scale(1) rotate(0); } }
       @keyframes comment-preview-close { 0% { opacity:1; transform: translate3d(0,0,0) scale(1); } 100% { opacity:0; transform: translate3d(0,-18px,0) scale(0.96) rotate(1deg); } }
+      @keyframes agent-click-pulse { 0% { opacity: 0.9; transform: scale(0.45); } 100% { opacity: 0; transform: scale(1.8); } }
+      @keyframes theater-caret-blink { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
+      @keyframes theater-pending-pulse { 0%, 100% { opacity: 0.45; transform: scale(0.84); } 50% { opacity: 1; transform: scale(1); } }
+
+      @media (prefers-reduced-motion: reduce) {
+        .agent-cursor { transition: none; }
+        .agent-cursor.clicking .agent-cursor-pulse { animation: none; }
+        .agent-theater-step.pending::before,
+        .agent-inline-editor pre::after { animation: none; }
+      }
 
       /* ── Resize handles ── */
       .resize-h, .resize-v {
@@ -1036,7 +1498,10 @@
         main[data-layout="filmstrip"] .content-area .transcription-panel,
         main[data-layout="sidebar"] .content-area .transcription-panel,
         main[data-layout="grid"] .content-area .transcription-panel,
-        main[data-layout="spotlight"] .content-area .transcription-panel { width: auto; max-height: 160px; flex-shrink: 0; }
+        main[data-layout="spotlight"] .content-area .transcription-panel { width: auto; max-height: 220px; flex-shrink: 0; }
+
+        .chat-composer { padding: 6px; gap: 5px; }
+        .chat-composer textarea { min-height: 34px; max-height: 70px; padding: 6px 8px; }
 
         .operator-panel {
           width: auto;
@@ -1147,6 +1612,13 @@
               <span>Transcription</span>
             </div>
             <div id="transcriptionScroll" class="transcription-scroll"></div>
+            <form id="chatComposer" class="chat-composer" aria-label="Send chat message">
+              <textarea id="chatInput" rows="2" maxlength="1200" placeholder="Type to everyone" aria-label="Chat message"></textarea>
+              <div class="chat-composer-row">
+                <button id="chatSend" class="primary" type="submit">Send</button>
+              </div>
+              <div id="chatSendStatus" class="chat-send-status" aria-live="polite"></div>
+            </form>
           </aside>
 
           <div id="meetingAccessScrim" class="meeting-access-scrim"></div>
@@ -1181,6 +1653,21 @@
                     <option value="open_ended">Open-ended</option>
                   </select>
                 </label>
+                <label class="field operator-grid-wide">
+                  Voice model
+                  <select id="voiceModelSelect" disabled>
+                    <option>Authenticate as host to load models</option>
+                  </select>
+                </label>
+                <div id="voiceModelMeta" class="meeting-code-meta operator-grid-wide">The host can choose an available full-duplex model before participants join.</div>
+                <div class="field operator-grid-wide">
+                  <span>Join mode</span>
+                  <div class="segmented" role="radiogroup" aria-label="Join mode">
+                    <button id="joinModeFull" type="button" data-join-mode="full">Audio / video</button>
+                    <button id="joinModeChat" type="button" data-join-mode="chat">Chat only</button>
+                  </div>
+                </div>
+                <div id="joinModeMeta" class="meeting-code-meta operator-grid-wide">Audio/video joins LiveKit. Chat-only skips mic, camera, speakers, and still receives board and transcript updates.</div>
               </div>
               <div class="operator-stack" id="hostSetupFields">
                 <button id="createMeeting" class="compact-btn" type="button">Create meeting code</button>
@@ -1263,6 +1750,8 @@
                 <div class="health-row warn" data-health="livekit"><span class="health-dot"></span><span class="health-label">LiveKit waiting</span></div>
                 <div class="health-row warn" data-health="nova"><span class="health-dot"></span><span class="health-label">Nova Sonic waiting</span></div>
                 <div class="health-row warn" data-health="bedrock"><span class="health-dot"></span><span class="health-label">Bedrock stream waiting</span></div>
+                <div class="health-row warn" data-health="participant_audio"><span class="health-dot"></span><span class="health-label">Participant audio waiting</span></div>
+                <div class="health-row warn" data-health="agent_audio"><span class="health-dot"></span><span class="health-label">Agent audio pacing waiting</span></div>
                 <div class="health-row warn" data-health="transcription"><span class="health-dot"></span><span class="health-label">Transcription waiting</span></div>
                 <div class="health-row warn" data-health="jira"><span class="health-dot"></span><span class="health-label">Jira not checked</span></div>
                 <div class="health-row warn" data-health="agent"><span class="health-dot"></span><span class="health-label">Agent not present</span></div>
@@ -1282,6 +1771,29 @@
                 <p id="confidenceCopy" class="confidence-copy">Waiting for the next agent action.</p>
               </div>
               <div id="confidenceReasons" class="operator-list"></div>
+            </section>
+
+            <section class="operator-section" aria-label="Theater of work">
+              <div class="operator-heading">
+                <div>
+                  <div class="operator-eyebrow">Theater</div>
+                  <h2>Theater of Work</h2>
+                </div>
+                <span id="agentTheaterState" class="state-pill ok">Standard</span>
+              </div>
+              <label class="field">
+                Mode
+                <select id="agentTheaterModeSelect">
+                  <option value="standard">Standard</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="cinematic">Cinematic</option>
+                </select>
+              </label>
+              <div id="agentTheaterSummary" class="meeting-code-meta">Shows cursor motion, evidence, and API confirmation without claiming success early.</div>
+              <div class="agent-theater-setting-actions">
+                <button id="agentRibbonToggle" type="button">Hide action ribbon</button>
+                <button id="agentWorkspaceToggle" type="button">Hide workspace</button>
+              </div>
             </section>
 
             <section class="operator-section" aria-label="Multi-person validation">
@@ -1344,6 +1856,18 @@
     <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
     <div id="commentPreviewRegion" class="comment-preview-region" aria-live="polite" aria-atomic="true"></div>
     <div id="cardDetailRegion" class="card-detail-region"></div>
+    <div id="agentTheaterRibbon" class="agent-theater-ribbon" aria-live="polite" aria-atomic="true"></div>
+    <div id="agentWorkspace" class="agent-workspace" aria-live="polite" aria-atomic="true">
+      <header>
+        <strong>Agent workspace</strong>
+        <div class="agent-workspace-controls">
+          <span id="agentWorkspaceState" class="state-pill">Idle</span>
+          <button id="agentWorkspaceMinimize" type="button">Minimize</button>
+          <button id="agentWorkspaceHide" type="button">Hide</button>
+        </div>
+      </header>
+      <div id="agentWorkspaceLog" class="agent-workspace-log"></div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.19.0/dist/livekit-client.umd.min.js"
             integrity="sha384-4mvXH43KU6z6VglCgy9AF2YBxW2U6M++EIf5rAAKg/BDjOcaZ/zwG3cSjGdV4+MN"
@@ -1362,6 +1886,10 @@
       const toggleMicBtn = document.getElementById('toggleMic')
       const toggleCamBtn = document.getElementById('toggleCam')
       const transcriptionScroll = document.getElementById('transcriptionScroll')
+      const chatComposer = document.getElementById('chatComposer')
+      const chatInput = document.getElementById('chatInput')
+      const chatSend = document.getElementById('chatSend')
+      const chatSendStatus = document.getElementById('chatSendStatus')
       const liveDot = document.getElementById('liveDot')
       const toastRegion = document.getElementById('toastRegion')
       const commentPreviewRegion = document.getElementById('commentPreviewRegion')
@@ -1377,6 +1905,11 @@
       const meetingAccessClose = document.getElementById('meetingAccessClose')
       const identityInput = document.getElementById('identityInput')
       const meetingTypeSelect = document.getElementById('meetingTypeSelect')
+      const voiceModelSelect = document.getElementById('voiceModelSelect')
+      const voiceModelMeta = document.getElementById('voiceModelMeta')
+      const joinModeFullButton = document.getElementById('joinModeFull')
+      const joinModeChatButton = document.getElementById('joinModeChat')
+      const joinModeMeta = document.getElementById('joinModeMeta')
       const roleHostButton = document.getElementById('roleHost')
       const roleParticipantButton = document.getElementById('roleParticipant')
       const hostSetupFields = document.getElementById('hostSetupFields')
@@ -1409,12 +1942,24 @@
       const confidenceCopy = document.getElementById('confidenceCopy')
       const confidenceReasons = document.getElementById('confidenceReasons')
       const executiveRecap = document.getElementById('executiveRecap')
+      const agentTheaterModeSelect = document.getElementById('agentTheaterModeSelect')
+      const agentTheaterState = document.getElementById('agentTheaterState')
+      const agentTheaterSummary = document.getElementById('agentTheaterSummary')
+      const agentTheaterRibbon = document.getElementById('agentTheaterRibbon')
+      const agentWorkspace = document.getElementById('agentWorkspace')
+      const agentWorkspaceState = document.getElementById('agentWorkspaceState')
+      const agentWorkspaceLog = document.getElementById('agentWorkspaceLog')
+      const agentRibbonToggle = document.getElementById('agentRibbonToggle')
+      const agentWorkspaceToggle = document.getElementById('agentWorkspaceToggle')
+      const agentWorkspaceMinimize = document.getElementById('agentWorkspaceMinimize')
+      const agentWorkspaceHide = document.getElementById('agentWorkspaceHide')
 
       let cards = []
       let room
       let ws
       let wsReconnectTimer
       let authSession
+      let chatOnlyModeActive = false
       let hasBoardSnapshot = false
       let commentPreviewTimer
       let micEnabled = true
@@ -1424,6 +1969,7 @@
       let currentLayout = localStorage.getItem('kanban-layout') || 'filmstrip'
       let spotlightIdentity = null
       let meetingRole = localStorage.getItem('kanban-meeting-role') || 'host'
+      let meetingJoinMode = localStorage.getItem('kanban-meeting-join-mode') || 'full'
       let currentMeetingType = localStorage.getItem('kanban-meeting-type') || 'standup'
       let meetingSession = loadStoredMeetingSession()
       let meetingAccessDrawerOpen = false
@@ -1433,6 +1979,35 @@
       let lastTranscriptAt = 0
       let voiceStatusTimer
       let silenceTimer
+      let voiceModelState = null
+      let voiceModelOptions = []
+      let agentCursorEl
+      let agentCursorLabel
+      let agentCursorHideTimer
+      let agentCursorPosition = { x: 48, y: 48 }
+      let agentCursorQueue = Promise.resolve()
+      let agentTheaterMode = localStorage.getItem('kanban-agent-theater-mode') || 'standard'
+      let agentTheaterHideTimer
+      let agentWorkspaceHideTimer
+      let agentInlineEditor
+      let theaterLastUserUtterance = ''
+      let theaterLastResult = null
+      let lastJiraFailureAt = 0
+      let agentRibbonCollapsed = localStorage.getItem('kanban-agent-ribbon-collapsed') === 'true'
+      let agentRibbonHidden = localStorage.getItem('kanban-agent-ribbon-hidden') === 'true'
+      let agentWorkspaceCollapsed = localStorage.getItem('kanban-agent-workspace-collapsed') === 'true'
+      let agentWorkspaceHidden = localStorage.getItem('kanban-agent-workspace-hidden') === 'true'
+      const theaterRecentResults = []
+      const theaterState = {
+        title: 'Waiting for agent action',
+        subtitle: '',
+        status: 'idle',
+        eventId: '',
+        steps: [
+          { key: 'idle', label: 'Waiting for action', state: 'warn' },
+        ],
+        workspace: [],
+      }
       const cardSnapshots = new Map()
       const activeSpeakers = new Set()
       const spokenParticipants = new Set()
@@ -1459,6 +2034,8 @@
         livekit: { state: 'warn', label: 'LiveKit waiting' },
         nova: { state: 'warn', label: 'Nova Sonic waiting' },
         bedrock: { state: 'warn', label: 'Bedrock stream waiting' },
+        participant_audio: { state: 'warn', label: 'Participant audio waiting' },
+        agent_audio: { state: 'warn', label: 'Agent audio pacing waiting' },
         transcription: { state: 'warn', label: 'Transcription waiting' },
         jira: { state: 'warn', label: 'Jira not checked' },
         agent: { state: 'warn', label: 'Agent not present' },
@@ -1527,6 +2104,16 @@
       confirmBoardButton.addEventListener('click', confirmBoard)
       toggleMicBtn.addEventListener('click', toggleMic)
       toggleCamBtn.addEventListener('click', toggleCam)
+      chatComposer.addEventListener('submit', event => {
+        event.preventDefault()
+        sendChatMessage()
+      })
+      chatInput.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || event.shiftKey) return
+        event.preventDefault()
+        sendChatMessage()
+      })
+      chatInput.addEventListener('input', updateChatComposerState)
       window.addEventListener('beforeunload', () => notifyMeetingLeave(true))
       window.addEventListener('keydown', e => {
         if (e.key !== 'Escape') return
@@ -1536,9 +2123,12 @@
       cardDetailRegion.addEventListener('click', e => { if (e.target === cardDetailRegion) closeCardDetail() })
 
       renderBoard()
+      updateChatComposerState()
+      applyAgentTheaterMode(agentTheaterMode, { silent: true })
       renderOperatorPanels()
       refreshValidationPanel()
       refreshVoiceHealthPanel()
+      hydrateExistingAuthSession().catch(err => console.warn('Session hydration failed', err))
       startOperatorTimers()
 
       function avatarColor(name) {
@@ -1570,12 +2160,20 @@
         meetingAccessScrim.addEventListener('click', () => setMeetingAccessDrawerOpen(false))
         roleHostButton.addEventListener('click', () => setMeetingRole('host'))
         roleParticipantButton.addEventListener('click', () => setMeetingRole('participant'))
+        joinModeFullButton.addEventListener('click', () => setMeetingJoinMode('full'))
+        joinModeChatButton.addEventListener('click', () => setMeetingJoinMode('chat'))
         identityInput.addEventListener('input', () => {
           localIdentity = cleanIdentity(identityInput.value)
           localStorage.setItem('kanban-livekit-identity', localIdentity)
           renderOperatorPanels()
         })
         meetingTypeSelect.addEventListener('change', () => setMeetingType(meetingTypeSelect.value, { broadcast: true }))
+        voiceModelSelect.addEventListener('change', () => applyVoiceModelSelection())
+        agentTheaterModeSelect.addEventListener('change', () => applyAgentTheaterMode(agentTheaterModeSelect.value))
+        agentRibbonToggle.addEventListener('click', toggleAgentRibbonFromSettings)
+        agentWorkspaceToggle.addEventListener('click', toggleAgentWorkspaceFromSettings)
+        agentWorkspaceMinimize.addEventListener('click', () => setAgentWorkspaceVisibility({ collapsed: !agentWorkspaceCollapsed, hidden: false }))
+        agentWorkspaceHide.addEventListener('click', () => setAgentWorkspaceVisibility({ hidden: true }))
         joinCodeInput.addEventListener('input', () => {
           joinCodeInput.value = formatMeetingCode(joinCodeInput.value)
           if (meetingSession?.role === 'participant' && meetingSession.code !== joinCodeInput.value) storeMeetingSession(null)
@@ -1585,6 +2183,7 @@
             createMeetingButton.disabled = true
             localIdentity = cleanIdentity(identityInput.value)
             authSession = authSession || await ensureAuthenticated(localIdentity)
+            await refreshVoiceModelOptions(true)
             meetingSession = await setupHostMeeting(authSession)
             showToast(`Meeting code ${meetingSession.code} is ready`)
             hideFailureState()
@@ -1615,6 +2214,7 @@
         copyRecapButton.addEventListener('click', () => copyText(executiveRecap.textContent || ''))
 
         setMeetingRole(meetingRole, { silent: true })
+        setMeetingJoinMode(meetingJoinMode, { silent: true })
         setMeetingType(currentMeetingType, { silent: true })
         setMeetingAccessDrawerOpen(false)
       }
@@ -1645,6 +2245,8 @@
         meetingAccessDrawer.classList.toggle('open', meetingAccessDrawerOpen)
         meetingAccessScrim.classList.toggle('visible', meetingAccessDrawerOpen)
         meetingAccessDrawer.setAttribute('aria-hidden', String(!meetingAccessDrawerOpen))
+        meetingAccessDrawer.style.right = meetingAccessDrawerOpen ? '0px' : '-460px'
+        meetingAccessDrawer.style.transform = 'none'
         meetingConfigToggle.setAttribute('aria-expanded', String(meetingAccessDrawerOpen))
         if ('inert' in meetingAccessDrawer) meetingAccessDrawer.inert = !meetingAccessDrawerOpen
         if (meetingAccessDrawerOpen) {
@@ -1664,6 +2266,22 @@
         if (!opts.silent) renderOperatorPanels()
       }
 
+      function setMeetingJoinMode(mode, opts = {}) {
+        meetingJoinMode = mode === 'chat' ? 'chat' : 'full'
+        localStorage.setItem('kanban-meeting-join-mode', meetingJoinMode)
+        joinModeFullButton.classList.toggle('active', meetingJoinMode === 'full')
+        joinModeChatButton.classList.toggle('active', meetingJoinMode === 'chat')
+        if (!opts.silent) renderOperatorPanels()
+      }
+
+      function isChatOnlyJoinMode() {
+        return meetingJoinMode === 'chat'
+      }
+
+      function meetingConnectionActive() {
+        return Boolean(room || chatOnlyModeActive)
+      }
+
       function setMeetingType(type, opts = {}) {
         currentMeetingType = normalizeMeetingTypeKey(type)
         meetingTypeSelect.value = currentMeetingType
@@ -1680,6 +2298,173 @@
           showToast(`Meeting type changed to ${MEETING_TYPES[currentMeetingType]}`)
         }
         if (!opts.silent) renderOperatorPanels()
+      }
+
+      function applyAgentTheaterMode(mode, opts = {}) {
+        const value = ['minimal', 'standard', 'cinematic'].includes(mode) ? mode : 'standard'
+        agentTheaterMode = value
+        localStorage.setItem('kanban-agent-theater-mode', value)
+        document.body.dataset.agentTheaterMode = value
+        if (agentTheaterModeSelect) agentTheaterModeSelect.value = value
+        renderAgentTheaterControl()
+        renderAgentTheater()
+        if (!opts.silent) showToast(`Theater of work set to ${titleCase(value)}`)
+      }
+
+      function renderAgentTheaterControl() {
+        if (!agentTheaterModeSelect || !agentTheaterState || !agentTheaterSummary) return
+        agentTheaterModeSelect.value = agentTheaterMode
+        agentTheaterState.textContent = titleCase(agentTheaterMode)
+        agentTheaterState.className = `state-pill ${agentTheaterMode === 'minimal' ? 'warn' : 'ok'}`
+        const summaries = {
+          minimal: 'Shows a compact evidence ribbon and confirmation stamp with reduced motion.',
+          standard: 'Shows cursor motion, evidence, workspace notes, and API confirmation without claiming success early.',
+          cinematic: 'Adds typing, drag-copy movement, and richer work staging while still waiting for real API confirmation.',
+        }
+        agentTheaterSummary.textContent = summaries[agentTheaterMode] || summaries.standard
+        if (agentRibbonToggle) {
+          agentRibbonToggle.textContent = agentRibbonHidden ? 'Show action ribbon' : agentRibbonCollapsed ? 'Expand action ribbon' : 'Hide action ribbon'
+        }
+        if (agentWorkspaceToggle) {
+          agentWorkspaceToggle.textContent = agentWorkspaceHidden ? 'Show workspace' : agentWorkspaceCollapsed ? 'Expand workspace' : 'Hide workspace'
+        }
+      }
+
+      function toggleAgentRibbonFromSettings() {
+        if (agentRibbonHidden || agentRibbonCollapsed) setAgentRibbonVisibility({ hidden: false, collapsed: false })
+        else setAgentRibbonVisibility({ hidden: true })
+      }
+
+      function toggleAgentWorkspaceFromSettings() {
+        if (agentWorkspaceHidden || agentWorkspaceCollapsed) setAgentWorkspaceVisibility({ hidden: false, collapsed: false })
+        else setAgentWorkspaceVisibility({ hidden: true })
+      }
+
+      function setAgentRibbonVisibility(opts = {}) {
+        if (typeof opts.hidden === 'boolean') agentRibbonHidden = opts.hidden
+        if (typeof opts.collapsed === 'boolean') agentRibbonCollapsed = opts.collapsed
+        if (agentRibbonHidden) agentRibbonCollapsed = false
+        localStorage.setItem('kanban-agent-ribbon-hidden', String(agentRibbonHidden))
+        localStorage.setItem('kanban-agent-ribbon-collapsed', String(agentRibbonCollapsed))
+        renderAgentTheaterControl()
+        renderAgentTheaterRibbon()
+      }
+
+      function setAgentWorkspaceVisibility(opts = {}) {
+        if (typeof opts.hidden === 'boolean') agentWorkspaceHidden = opts.hidden
+        if (typeof opts.collapsed === 'boolean') agentWorkspaceCollapsed = opts.collapsed
+        if (agentWorkspaceHidden) agentWorkspaceCollapsed = false
+        localStorage.setItem('kanban-agent-workspace-hidden', String(agentWorkspaceHidden))
+        localStorage.setItem('kanban-agent-workspace-collapsed', String(agentWorkspaceCollapsed))
+        renderAgentTheaterControl()
+        renderAgentWorkspace()
+      }
+
+      async function refreshVoiceModelOptions(silent = false) {
+        if (!authSession) {
+          renderVoiceModelControl()
+          return null
+        }
+        const response = await fetch('/voice/model', { credentials: 'same-origin' })
+        if (!response.ok) {
+          if (!silent) showFailureState('Voice model options unavailable', `Voice model lookup returned ${response.status}.`)
+          return null
+        }
+        const status = await response.json()
+        applyVoiceModelStatus(status)
+        return status
+      }
+
+      function applyVoiceModelStatus(status) {
+        voiceModelState = status || null
+        voiceModelOptions = Array.isArray(status?.options) ? status.options : []
+        renderVoiceModelControl()
+      }
+
+      function renderVoiceModelControl() {
+        if (!voiceModelSelect || !voiceModelMeta) return
+        voiceModelSelect.replaceChildren()
+        if (!authSession) {
+          const option = document.createElement('option')
+          option.textContent = 'Authenticate as host to load models'
+          voiceModelSelect.appendChild(option)
+          voiceModelSelect.disabled = true
+          voiceModelMeta.textContent = 'Create or join as host to choose the full-duplex voice model.'
+          return
+        }
+        if (!voiceModelOptions.length) {
+          const option = document.createElement('option')
+          option.textContent = 'No voice models returned'
+          voiceModelSelect.appendChild(option)
+          voiceModelSelect.disabled = true
+          voiceModelMeta.textContent = 'The server did not return voice model options.'
+          return
+        }
+        const currentID = voiceModelState?.current_model_id || ''
+        voiceModelOptions.forEach(model => {
+          const option = document.createElement('option')
+          option.value = model.id
+          option.textContent = model.label || model.model
+          option.disabled = meetingRole !== 'host' || !model.selectable
+          if (model.id === currentID || model.current) option.selected = true
+          voiceModelSelect.appendChild(option)
+        })
+        const selected = voiceModelOptions.find(model => model.id === voiceModelSelect.value) ||
+          voiceModelOptions.find(model => model.id === currentID || model.current) ||
+          voiceModelOptions[0]
+        const bits = [
+          selected?.description || '',
+          selected?.cost_hint ? `Cost: ${selected.cost_hint}` : '',
+          selected?.requires_restart ? selected.disabled_reason || 'Restart required to use this model.' : '',
+          meetingRole !== 'host' ? 'Only the host can change the voice model.' : '',
+        ].filter(Boolean)
+        voiceModelSelect.disabled = meetingRole !== 'host' || !voiceModelOptions.some(model => model.selectable)
+        voiceModelMeta.textContent = bits.join(' ')
+      }
+
+      async function applyVoiceModelSelection() {
+        const selected = voiceModelOptions.find(model => model.id === voiceModelSelect.value)
+        if (!selected) return
+        if (meetingRole !== 'host') {
+          renderVoiceModelControl()
+          return
+        }
+        try {
+          voiceModelSelect.disabled = true
+          authSession = authSession || await ensureAuthenticated(localIdentity)
+          const response = await callMeetingEndpoint('/voice/model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+              id: selected.id,
+              provider: selected.provider,
+              model: selected.model,
+            }),
+          })
+          applyVoiceModelStatus(response)
+          if (response?.restart_started || response?.restartStarted) {
+            const model = response.restart_model || response.restartModel || selected.model
+            hideFailureState()
+            setStatus(`Restarting with ${selected.label || model}...`)
+            showToast(`Restarting local app with ${selected.label || model}`)
+            await waitForLocalAppAfterAWSRefresh()
+            window.location.reload()
+            return
+          }
+          if (response?.requires_restart) {
+            showFailureState('Voice model restart required', response.message || 'Restart the app to use that provider path.')
+          } else {
+            hideFailureState()
+            showToast(response?.stream_restarted ? 'Voice model updated; stream restarting' : 'Voice model updated')
+            await refreshVoiceStatus(true)
+          }
+        } catch (error) {
+          showFailureFromError(error)
+          await refreshVoiceModelOptions(true).catch(err => console.warn('Voice model refresh failed', err))
+        } finally {
+          renderVoiceModelControl()
+        }
       }
 
       async function ensureMeetingAccess(session) {
@@ -1851,9 +2636,9 @@
       }
 
       function formatMeetingCode(value) {
-        const raw = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8)
+        const raw = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16)
         if (!raw) return ''
-        return raw.length > 3 ? `${raw.slice(0, 3)}-${raw.slice(3)}` : raw
+        return raw.match(/.{1,4}/g).join('-')
       }
 
       function buildJoinLink() {
@@ -1883,10 +2668,10 @@
         clearInterval(silenceTimer)
         voiceStatusTimer = setInterval(() => {
           if (authSession) refreshVoiceStatus(true).catch(err => console.warn('Voice status refresh failed', err))
-          if (meetingSession && room) refreshMeetingStatusEndpoint().catch(err => console.warn('Meeting status refresh failed', err))
+          if (meetingSession && meetingConnectionActive()) refreshMeetingStatusEndpoint().catch(err => console.warn('Meeting status refresh failed', err))
         }, 5000)
         silenceTimer = setInterval(() => {
-          if (!room || !meetingStartedAt) return
+          if (!meetingConnectionActive() || !meetingStartedAt) return
           const last = lastTranscriptAt || meetingStartedAt
           if (Date.now() - last > 45000) {
             validationStateData.silence = true
@@ -1906,6 +2691,12 @@
         copyJoinCodeButton.disabled = !hasCode
         meetingAccessState.textContent = hasCode ? `${meetingRole === 'host' ? 'Hosting' : 'Joining'} ${active.code}` : 'Setup needed'
         meetingAccessState.className = `state-pill ${hasCode ? 'ok' : 'warn'}`
+        joinModeFullButton.classList.toggle('active', meetingJoinMode === 'full')
+        joinModeChatButton.classList.toggle('active', meetingJoinMode === 'chat')
+        joinModeMeta.textContent = meetingJoinMode === 'chat'
+          ? 'Chat-only skips LiveKit media. You can read the board, type to the agent, and follow the transcript.'
+          : 'Audio/video joins LiveKit with mic, camera, speaker playback, board sync, and chat.'
+        if (!meetingJoined) joinButton.textContent = meetingJoinMode === 'chat' ? 'Join chat' : 'Join room'
         const hasVisibleFailure = failurePanel.classList.contains('visible')
         meetingConfigLabel.textContent = hasVisibleFailure ? 'Settings issue' : 'Meeting Settings'
         meetingConfigToggle.className = `meeting-config-toggle ${hasVisibleFailure ? 'bad' : hasCode ? 'ok' : 'warn'}`
@@ -1914,6 +2705,8 @@
           : hasVisibleFailure ? 'Meeting settings need attention' : 'Open meeting settings'
         meetingConfigToggle.setAttribute('aria-label', meetingConfigToggle.title)
         meetingTypeState.textContent = MEETING_TYPES[currentMeetingType] || 'Standup'
+        renderVoiceModelControl()
+        renderAgentTheaterControl()
         riskState.textContent = meetingIntel.confidence.label
         riskState.className = `state-pill ${riskClass(meetingIntel.confidence.risk)}`
         renderSimpleList(spokenList, currentHumanParticipants().filter(p => spokenParticipants.has(p)), 'No one has spoken yet.')
@@ -1971,11 +2764,13 @@
           confirm.className = 'compact-btn'
           confirm.type = 'button'
           confirm.textContent = item.type === 'conflict' ? 'Use Jira latest' : 'Confirm'
+          confirm.disabled = meetingRole !== 'host'
           confirm.addEventListener('click', () => resolvePendingConfirmation(item.id, true))
           const cancel = document.createElement('button')
           cancel.className = 'compact-btn'
           cancel.type = 'button'
           cancel.textContent = item.type === 'conflict' ? 'Keep meeting update' : 'Cancel'
+          cancel.disabled = meetingRole !== 'host'
           cancel.addEventListener('click', () => resolvePendingConfirmation(item.id, false))
           actions.append(confirm, cancel)
           row.append(title, prompt, meta, actions)
@@ -2003,7 +2798,9 @@
           status.textContent = `${run.status || 'queued'}${pr ? ' · PR #' + pr : ''}`
           const meta = document.createElement('span')
           meta.className = 'meeting-code-meta'
-          meta.textContent = run.summary || run.error || run.current_step || run.currentStep || run.repo || 'Waiting for checkpoint.'
+          const lens = run.review_lens || run.reviewLens
+          const warnings = run.publish_warnings || run.publishWarnings || []
+          meta.textContent = [lens ? `${lens} lens` : '', warnings.length ? `Needs attention: ${warnings[0]}` : '', run.summary || run.error || run.current_step || run.currentStep || run.repo || 'Waiting for checkpoint.'].filter(Boolean).join(' · ')
           row.append(title, status, meta)
           agentRunsList.appendChild(row)
         })
@@ -2014,6 +2811,125 @@
         confidenceFill.style.setProperty('--confidence', `${score}%`)
         confidenceCopy.textContent = meetingIntel.confidence.summary || 'Waiting for the next agent action.'
         renderSimpleList(confidenceReasons, meetingIntel.confidence.reasons || [], 'No confidence evidence yet.')
+      }
+
+      function theaterStep(key, label, state = 'warn', detail = '') {
+        return { key, label, state, detail }
+      }
+
+      function startAgentTheater(next) {
+        theaterState.title = next.title || 'Agent action'
+        theaterState.subtitle = next.subtitle || ''
+        theaterState.status = next.status || 'pending'
+        theaterState.eventId = next.eventId || ''
+        theaterState.steps = Array.isArray(next.steps) && next.steps.length ? next.steps : [theaterStep('work', 'Working', 'pending')]
+        theaterState.workspace = Array.isArray(next.workspace) ? next.workspace : []
+        renderAgentTheater()
+      }
+
+      function updateAgentTheaterStep(key, state, detail) {
+        const step = theaterState.steps.find(item => item.key === key)
+        if (!step) return
+        step.state = state
+        if (detail !== undefined) step.detail = detail
+        renderAgentTheater()
+      }
+
+      function renderAgentTheater() {
+        renderAgentTheaterRibbon()
+        renderAgentWorkspace()
+      }
+
+      function renderAgentTheaterRibbon() {
+        if (!agentTheaterRibbon) return
+        agentTheaterRibbon.className = `agent-theater-ribbon ${agentTheaterMode}${agentRibbonCollapsed ? ' collapsed' : ''}`
+        agentTheaterRibbon.replaceChildren()
+        if (agentRibbonHidden || theaterState.status === 'idle') {
+          agentTheaterRibbon.classList.remove('visible')
+          return
+        }
+        const title = document.createElement('div')
+        title.className = 'agent-theater-title'
+        const strong = document.createElement('strong')
+        strong.textContent = theaterState.title || 'Agent action'
+        if (theaterState.subtitle && !agentRibbonCollapsed) strong.title = theaterState.subtitle
+        const pill = document.createElement('span')
+        pill.className = `state-pill ${theaterState.status === 'bad' ? 'bad' : theaterState.status === 'ok' ? 'ok' : 'warn'}`
+        pill.textContent = theaterState.status === 'bad' ? 'Needs attention' : theaterState.status === 'ok' ? 'Confirmed' : theaterState.status === 'warn' ? 'Evidence pending' : 'Working'
+        const controls = document.createElement('div')
+        controls.className = 'agent-theater-controls'
+        controls.append(pill)
+        const minimize = document.createElement('button')
+        minimize.type = 'button'
+        minimize.textContent = agentRibbonCollapsed ? 'Show' : 'Minimize'
+        minimize.addEventListener('click', event => {
+          event.stopPropagation()
+          setAgentRibbonVisibility({ collapsed: !agentRibbonCollapsed, hidden: false })
+        })
+        const hide = document.createElement('button')
+        hide.type = 'button'
+        hide.textContent = 'Hide'
+        hide.addEventListener('click', event => {
+          event.stopPropagation()
+          setAgentRibbonVisibility({ hidden: true })
+        })
+        controls.append(minimize, hide)
+        title.append(strong, controls)
+        const steps = document.createElement('div')
+        steps.className = 'agent-theater-steps'
+        theaterState.steps.forEach(step => {
+          const item = document.createElement(theaterState.eventId ? 'button' : 'span')
+          item.className = `agent-theater-step ${step.state || 'warn'}`
+          item.textContent = step.label
+          if (theaterState.eventId) {
+            item.type = 'button'
+            item.title = 'Replay evidence for this action'
+            item.addEventListener('click', () => sendKanbanCommand('replay_audit_event', { event_id: theaterState.eventId }))
+          }
+          steps.appendChild(item)
+        })
+        agentTheaterRibbon.append(title)
+        if (!agentRibbonCollapsed) agentTheaterRibbon.appendChild(steps)
+        agentTheaterRibbon.classList.add('visible')
+        scheduleAgentTheaterHide()
+      }
+
+      function renderAgentWorkspace() {
+        if (!agentWorkspace || !agentWorkspaceLog || !agentWorkspaceState) return
+        agentWorkspaceLog.replaceChildren()
+        const rows = theaterState.workspace || []
+        agentWorkspace.classList.toggle('collapsed', agentWorkspaceCollapsed)
+        if (agentWorkspaceMinimize) agentWorkspaceMinimize.textContent = agentWorkspaceCollapsed ? 'Show' : 'Minimize'
+        if (agentTheaterMode === 'minimal' || agentWorkspaceHidden || rows.length === 0) {
+          agentWorkspace.classList.remove('visible', 'collapsed')
+          return
+        }
+        agentWorkspaceState.textContent = theaterState.status === 'bad' ? 'Stopped' : theaterState.status === 'ok' ? 'Recorded' : 'Working'
+        agentWorkspaceState.className = `state-pill ${theaterState.status === 'bad' ? 'bad' : theaterState.status === 'ok' ? 'ok' : 'warn'}`
+        rows.slice(0, 6).forEach(([label, value]) => {
+          const row = document.createElement('div')
+          row.className = 'agent-workspace-row'
+          const left = document.createElement('span')
+          left.textContent = label
+          const right = document.createElement('span')
+          right.textContent = String(value || 'Not captured')
+          row.append(left, right)
+          agentWorkspaceLog.appendChild(row)
+        })
+        agentWorkspace.classList.add('visible')
+        scheduleAgentWorkspaceHide()
+      }
+
+      function scheduleAgentTheaterHide() {
+        clearTimeout(agentTheaterHideTimer)
+        if (theaterState.status === 'pending' || agentRibbonCollapsed) return
+        agentTheaterHideTimer = setTimeout(() => agentTheaterRibbon?.classList.remove('visible'), agentTheaterMode === 'cinematic' ? 9000 : 6500)
+      }
+
+      function scheduleAgentWorkspaceHide() {
+        clearTimeout(agentWorkspaceHideTimer)
+        if (theaterState.status === 'pending' || agentWorkspaceCollapsed) return
+        agentWorkspaceHideTimer = setTimeout(() => agentWorkspace?.classList.remove('visible'), agentTheaterMode === 'cinematic' ? 9000 : 6500)
       }
 
       function renderExecutiveRecap() {
@@ -2098,7 +3014,7 @@
         for (const [name, state] of participantPresence.entries()) {
           if (state.present && !isAgentIdentity(name)) names.push(name)
         }
-        if (room && localIdentity && !names.includes(localIdentity)) names.unshift(localIdentity)
+        if (meetingConnectionActive() && localIdentity && !names.includes(localIdentity)) names.unshift(localIdentity)
         return names.sort((a, b) => a.localeCompare(b))
       }
 
@@ -2295,11 +3211,33 @@
         const agentReady = status.agent_ready ?? status.agentReady ?? status.ready
         const bedrockReady = status.bedrock_stream_active ?? status.bedrock_ready ?? status.bedrockReady
         const jiraReady = status.jira_ready ?? status.jiraReachable
-        setVoiceHealth('nova', status.ready || agentReady ? 'ok' : 'bad', status.ready || agentReady ? 'Nova Sonic ready' : (status.message || 'Nova Sonic not ready'))
+        const audioTrackCount = Number(status.participant_audio_track_count ?? status.participantAudioTrackCount ?? 0)
+        const audioActive = Boolean(status.participant_audio_active ?? status.participantAudioActive ?? audioTrackCount > 0)
+        const activeSpeakers = status.active_speakers || status.activeSpeakers || []
+        const voiceModel = status.voice_model || status.voiceModel || ''
+        const novaOutput = status.nova_output || status.novaOutput || {}
+        const outputQueueMs = Number(novaOutput.queue_depth_ms ?? novaOutput.queueDepthMs ?? 0)
+        const outputDrops = Number(novaOutput.dropped_frames ?? novaOutput.droppedFrames ?? 0)
+        const outputUnderruns = Number(novaOutput.underrun_frames ?? novaOutput.underrunFrames ?? 0)
+        const outputPps = Number(novaOutput.publish_pps ?? novaOutput.publishPPS ?? novaOutput.publishPps ?? 0)
+        const outputJitter = Number(novaOutput.last_publish_jitter_ms ?? novaOutput.lastPublishJitterMs ?? 0)
+        setVoiceHealth('nova', status.ready || agentReady ? 'ok' : 'bad', status.ready || agentReady ? `Voice ready${voiceModel ? ' · ' + voiceModel : ''}` : (status.message || 'Voice model not ready'))
         setVoiceHealth('agent', agentReady ? 'ok' : 'bad', agentReady ? 'Agent participant present' : 'Agent participant missing')
         if (awsReady === false) setVoiceHealth('bedrock', 'bad', 'AWS credentials expired or missing')
         else if (bedrockReady === true) setVoiceHealth('bedrock', 'ok', 'Bedrock stream active')
         else if (bedrockReady === false) setVoiceHealth('bedrock', 'warn', 'Bedrock stream waiting for speech')
+        if (audioActive) setVoiceHealth('participant_audio', 'ok', activeSpeakers.length ? `Audio from ${activeSpeakers.join(', ')}` : `${audioTrackCount || 1} audio track${audioTrackCount === 1 ? '' : 's'} received`)
+        else if (agentReady) setVoiceHealth('participant_audio', 'warn', 'No participant audio reaching agent')
+        if (agentReady) {
+          const audioSummary = outputPps > 0
+            ? `Agent audio ${outputPps.toFixed(0)}pps · queue ${outputQueueMs}ms · jitter ${outputJitter.toFixed(1)}ms`
+            : `Agent audio pacing ready · queue ${outputQueueMs}ms`
+          const stabilitySuffix = outputDrops || outputUnderruns ? ` · ${outputDrops} drops/${outputUnderruns} underruns` : ''
+          const outputState = outputDrops > 0 ? 'bad' : outputUnderruns > 2 ? 'warn' : 'ok'
+          setVoiceHealth('agent_audio', outputState, audioSummary + stabilitySuffix)
+        } else {
+          setVoiceHealth('agent_audio', 'warn', 'Agent audio pacing waiting')
+        }
         if (jiraReady === true) setVoiceHealth('jira', 'ok', 'Jira reachable')
         else if (jiraReady === false) setVoiceHealth('jira', 'bad', 'Jira unreachable')
         if (status.message && /credential|expired|unauthorized/i.test(status.message)) {
@@ -2313,11 +3251,13 @@
         setLog(failure.title)
       }
 
-      function showFailureState(title, detail) {
+      function showFailureState(title, detail, options = {}) {
         failureTitle.textContent = title
         failureDetail.textContent = detail || 'Resolve the issue, then try again.'
         failurePanel.classList.add('visible')
-        setMeetingAccessDrawerOpen(true)
+        if (options.openDrawer !== false) {
+          setMeetingAccessDrawerOpen(true)
+        }
         renderOperatorPanels()
       }
 
@@ -2557,12 +3497,16 @@
 
       /* ── Join / Leave ── */
 
-      async function joinRoom() {
+      const AWS_REFRESH_RETRY_CODE = 'AUTO_BOT_AWS_REFRESH_RETRY'
+
+      async function joinRoom(options = {}) {
         joinButton.disabled = true
         setStatus('Authenticating')
         hideFailureState()
         localIdentity = cleanIdentity(identityInput.value || localStorage.getItem('kanban-livekit-identity') || 'User')
+        const chatOnly = isChatOnlyJoinMode()
         intentionalLeave = false
+        chatOnlyModeActive = false
         meetingJoined = false
         meetingLeaveNotified = false
         if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
@@ -2572,6 +3516,7 @@
           if (meetingRole === 'host') {
             authSession = await ensureAuthenticated(localIdentity)
             localIdentity = authSession.participant_identity || cleanIdentity(localIdentity)
+            await refreshVoiceModelOptions(true)
           }
           identityInput.value = localIdentity
           localStorage.setItem('kanban-livekit-identity', localIdentity)
@@ -2586,8 +3531,13 @@
           }
           currentMeetingType = normalizeMeetingTypeKey(access.meeting_type || currentMeetingType)
           setMeetingType(currentMeetingType, { silent: true })
-          setStatus('Checking voice agent...')
-          await ensureVoiceReady(authSession)
+          setStatus(chatOnly ? 'Checking meeting agent...' : 'Checking voice agent...')
+          await ensureVoiceReady(authSession, { allowAWSRefresh: !options.skipAWSRefresh, allowTextOnlyProvider: chatOnly })
+          if (chatOnly) {
+            activateChatOnlyMeeting()
+            refreshVoiceStatus(true).catch(err => console.warn('Voice status refresh failed', err))
+            return
+          }
           setStatus('Connecting...')
           const tokenURL = new URL('/livekit-token', window.location.origin)
           tokenURL.searchParams.set('identity', localIdentity)
@@ -2771,13 +3721,56 @@
           connectBoardWebSocket()
           refreshVoiceStatus(true).catch(err => console.warn('Voice status refresh failed', err))
         } catch (error) {
+          if (error?.code === AWS_REFRESH_RETRY_CODE) {
+            setStatus('Waiting for app restart...')
+            try {
+              await waitForLocalAppAfterAWSRefresh()
+              authSession = null
+              storeMeetingSession(null)
+              setStatus('Retrying with fresh AWS credentials...')
+              joinButton.disabled = false
+              return joinRoom({ skipAWSRefresh: true })
+            } catch (refreshWaitError) {
+              showFailureFromError(refreshWaitError)
+              joinButton.disabled = false
+              return
+            }
+          }
           showFailureFromError(error)
           const shouldNotifyFailedJoin = meetingJoined && !meetingLeaveNotified
           leaveRoom({ notify: shouldNotifyFailedJoin, clearMeetingSession: shouldNotifyFailedJoin })
         }
 	      }
 
-      async function ensureVoiceReady(session) {
+      function activateChatOnlyMeeting() {
+        chatOnlyModeActive = true
+        meetingStartedAt = meetingStartedAt || Date.now()
+        meetingJoined = true
+        meetingLeaveNotified = false
+        setMeetingAccessDrawerOpen(false)
+        markParticipant(localIdentity, true)
+        setStatus(`Connected as ${localIdentity} (chat only)`)
+        setLog('Chat-only mode · no mic, camera, or speaker playback')
+        setVoiceHealth('livekit', 'ok', 'Chat-only board channel')
+        setVoiceHealth('mic', 'ok', 'Chat-only: mic off')
+        setVoiceHealth('participant_audio', 'ok', 'Chat-only: no audio needed')
+        leaveButton.disabled = false
+        undoLastButton.disabled = false
+        auditLogButton.disabled = false
+        confirmBoardButton.disabled = false
+        toggleMicBtn.disabled = true
+        toggleCamBtn.disabled = true
+        toggleMicBtn.classList.add('off')
+        toggleCamBtn.classList.add('off')
+        liveDot.classList.add('live')
+        videoStrip.replaceChildren(createParticipantTile(localIdentity, true))
+        updateParticipantCount()
+        updateSpotlight()
+        joinButton.textContent = 'Chat joined'
+        connectBoardWebSocket()
+      }
+
+      async function ensureVoiceReady(session, options = {}) {
         const statusURL = new URL('/voice/status', window.location.origin)
         statusURL.searchParams.set('room_id', session.room_id)
         statusURL.searchParams.set('board_id', session.board_id)
@@ -2785,18 +3778,129 @@
         if (!response.ok) throw new Error(`Voice readiness check failed: ${response.status}`)
         const status = await response.json()
         applyVoiceStatus(status)
+        if (!isAWSVoiceStatus(status)) {
+          if (options.allowTextOnlyProvider) return status
+          const message = 'The meeting room is running in the unified LiveKit experience. OpenAI Realtime is selectable for configuration, but it cannot join this LiveKit room until the OpenAI-to-LiveKit bridge is enabled. Choose AWS Nova Sonic in Meeting Settings to join now.'
+          setLog(message)
+          throw new Error(message)
+        }
         if (status.ready) return status
+        if (options.allowAWSRefresh && shouldAttemptLocalAWSRefresh(status)) {
+          await attemptLocalAWSCredentialRefresh(status)
+          const retryError = new Error('AWS credentials are being refreshed. Retrying Join Room after the local app restarts.')
+          retryError.code = AWS_REFRESH_RETRY_CODE
+          throw retryError
+        }
 
         const message = status.message || 'Voice agent is not ready.'
         setLog(message)
         throw new Error(message)
       }
 
+      function isAWSVoiceStatus(status) {
+        const provider = String(status?.voice_provider || status?.voiceProvider || '').toLowerCase()
+        const model = String(status?.voice_model || status?.voiceModel || '').toLowerCase()
+        return provider.includes('nova') || provider.includes('aws') || model.includes('nova') || model.includes('bedrock') || model.startsWith('amazon.')
+      }
+
+      function shouldAttemptLocalAWSRefresh(status) {
+        if (meetingRole !== 'host') return false
+        if (!status || status.ready) return false
+        if (!isAWSVoiceStatus(status)) return false
+        const awsReady = status.aws_ready ?? status.awsReady
+        const message = String(status.message || status.last_error || status.lastError || '').toLowerCase()
+        return awsReady === false &&
+          /credential|expired|sts|unauthorized|expiredtoken/.test(message) &&
+          Boolean(status.recovery_command || status.recoveryCommand)
+      }
+
+      async function attemptLocalAWSCredentialRefresh(status) {
+        setStatus('Refreshing AWS credentials...')
+        setVoiceHealth('bedrock', 'warn', 'Refreshing AWS credentials')
+        showFailureState(
+          'Refreshing AWS credentials',
+          'The selected voice model uses AWS. I am refreshing local AWS credentials and restarting the app container automatically.'
+        )
+        const response = await fetch('/setup/aws/refresh', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            room_id: authSession?.room_id || status?.room_id || '',
+            board_id: authSession?.board_id || status?.board_id || '',
+            voice_provider: status?.voice_provider || status?.voiceProvider || '',
+            voice_model: status?.voice_model || status?.voiceModel || '',
+          }),
+        })
+        if (!response.ok && response.status !== 202) {
+          let detail = `AWS refresh failed: ${response.status}`
+          try {
+            const payload = await response.json()
+            if (payload?.message) detail = payload.message
+          } catch (_) {}
+          throw new Error(detail)
+        }
+        let payload = {}
+        try { payload = await response.json() } catch (_) {}
+        setLog(payload.message || 'AWS credential refresh started.')
+      }
+
+      async function waitForLocalAppAfterAWSRefresh() {
+        const startedAt = Date.now()
+        const deadline = startedAt + 120000
+        let sawRestart = false
+        await sleep(2500)
+        while (Date.now() < deadline) {
+          try {
+            const response = await fetch(`/healthz?aws_refresh=${Date.now()}`, {
+              cache: 'no-store',
+              credentials: 'same-origin',
+            })
+            if (response.ok && (sawRestart || Date.now() - startedAt > 8000)) {
+              await sleep(1000)
+              return true
+            }
+          } catch (_) {
+            sawRestart = true
+          }
+          await sleep(1000)
+        }
+        throw new Error('AWS credential refresh started, but the local app did not come back within 120 seconds. Run scripts/local-up.sh and try Join Room again.')
+      }
+
+      function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms))
+      }
+
+      async function hydrateExistingAuthSession() {
+        const sessionURL = new URL('/auth/session', window.location.origin)
+        sessionURL.searchParams.set('identity', cleanIdentity(identityInput.value || localIdentity))
+        sessionURL.searchParams.set('role', meetingRole)
+        const current = await fetch(sessionURL.toString(), {
+          credentials: 'same-origin',
+          headers: { 'X-Auto-Bot-Local-Session': '1' },
+        })
+        if (!current.ok) {
+          renderVoiceModelControl()
+          return null
+        }
+        authSession = await current.json()
+        localIdentity = authSession.participant_identity || cleanIdentity(identityInput.value || localIdentity)
+        identityInput.value = localIdentity
+        localStorage.setItem('kanban-livekit-identity', localIdentity)
+        await refreshVoiceModelOptions(true)
+        renderOperatorPanels()
+        return authSession
+      }
+
       async function ensureAuthenticated(preferredIdentity) {
         const sessionURL = new URL('/auth/session', window.location.origin)
         sessionURL.searchParams.set('identity', cleanIdentity(preferredIdentity))
         sessionURL.searchParams.set('role', meetingRole)
-        const current = await fetch(sessionURL.toString(), { credentials: 'same-origin' })
+        const current = await fetch(sessionURL.toString(), {
+          credentials: 'same-origin',
+          headers: { 'X-Auto-Bot-Local-Session': '1' },
+        })
         if (current.ok) return current.json()
 
         const token = await getLocalClipboardToken() || prompt('Enter app access token:')
@@ -2907,7 +4011,7 @@
         if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
         wsReconnectTimer = undefined
         joinButton.disabled = false
-        joinButton.textContent = 'Join room'
+        joinButton.textContent = meetingJoinMode === 'chat' ? 'Join chat' : 'Join room'
         leaveButton.disabled = true
         undoLastButton.disabled = true
         auditLogButton.disabled = true
@@ -2925,6 +4029,7 @@
         setVoiceHealth('mic', 'warn', 'Mic not checked')
         closeBoardWebSocket()
         meetingJoined = false
+        chatOnlyModeActive = false
         if (room) room.disconnect()
         room = undefined
         if (options.clearMeetingSession) storeMeetingSession(null)
@@ -2958,7 +4063,7 @@
       /* ── Signaling / Kanban ── */
 
       function connectBoardWebSocket() {
-        if (!authSession || !room || intentionalLeave) return
+        if (!authSession || !meetingConnectionActive() || intentionalLeave) return
         if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
         wsReconnectTimer = undefined
         closeBoardWebSocket()
@@ -2969,20 +4074,24 @@
         wsURL.searchParams.set('board_id', authSession.board_id)
         const socket = new WebSocket(wsURL.toString())
         ws = socket
+        updateChatComposerState()
         socket.onopen = () => {
-          setStatus(`Connected as ${localIdentity}`)
+          setStatus(chatOnlyModeActive ? `Connected as ${localIdentity} (chat only)` : `Connected as ${localIdentity}`)
+          updateChatComposerState()
           setVoiceHealth('jira', hasBoardSnapshot ? 'ok' : 'warn', hasBoardSnapshot ? 'Jira board syncing' : 'Board channel connected')
         }
         socket.onmessage = e => { try { handleSignal(JSON.parse(e.data)) } catch(err) { console.warn('Invalid WS message', err) } }
         socket.onclose = () => {
           if (ws === socket) ws = undefined
-          if (intentionalLeave || !room) return
+          updateChatComposerState()
+          if (intentionalLeave || !meetingConnectionActive()) return
           validationStateData.reconnect = true
           refreshValidationPanel()
           setLog('Board connection interrupted. Reconnecting...')
           wsReconnectTimer = setTimeout(connectBoardWebSocket, 1000)
         }
         socket.onerror = () => {
+          updateChatComposerState('Chat disconnected. Reconnecting...')
           setVoiceHealth('jira', 'bad', 'Board WebSocket error')
           setLog('Board connection error')
         }
@@ -2992,6 +4101,7 @@
         if (!ws) return
         const socket = ws
         ws = undefined
+        updateChatComposerState()
         socket.onclose = null
         if (socket.readyState !== WebSocket.CLOSED) socket.close()
       }
@@ -3010,10 +4120,12 @@
           case 'board':
             {
               const state = msg.data || {}
+              const previousLayout = captureBoardLayout()
               cards = Array.isArray(state.cards) ? state.cards : []
               const ch = cardChanges(cards)
               applyBoardSnapshot(state, ch)
               renderBoard(ch)
+              playAgentWorkTheater(ch.theaterActions || [], previousLayout)
               ch.messages.forEach(showToast)
               ch.commentPreviews.forEach(showCommentPreview)
             }
@@ -3022,6 +4134,7 @@
           case 'status': handleStatusMessage(String(msg.data || '')); break
           case 'voice_status': applyVoiceStatus(msg.data); break
           case 'meeting_status': applyMeetingStatusPayload(msg.data || {}); break
+          case 'action_result': handleActionResult(msg.data || {}); break
           case 'confidence': recordConfidence(msg.data || {}); break
           case 'transcription': addTranscriptEntry(msg.data); break
           case 'confirmation': handleConfirmation(msg.data); break
@@ -3038,6 +4151,7 @@
           case 'command_result':
             if (msg.data?.ok === false && msg.data?.error) {
               showToast(msg.data.error)
+              recordAgentTheaterFailure(msg.data.error)
               if (/prompt injection|guardrail|instruction/i.test(msg.data.error)) {
                 recordConfidence({
                   score: 100,
@@ -3047,7 +4161,7 @@
                   reasons: [msg.data.error],
                 })
               }
-              if (/jira/i.test(msg.data.error)) showFailureState('Jira write rejected by scope', msg.data.error)
+              if (/jira/i.test(msg.data.error)) showFailureState('Jira write rejected by scope', msg.data.error, { openDrawer: false })
             } else if (msg.data?.undo_summary) {
               showToast(msg.data.undo_summary)
               mergeIntelList('jiraMutations', msg.data.undo_summary)
@@ -3058,9 +4172,32 @@
         }
       }
 
+      function handleActionResult(result) {
+        recordAgentTheaterActionResult(result)
+        const status = result.external_action_status || result.externalActionStatus
+        const summary = result.api_confirmation_summary || result.apiConfirmationSummary
+        const auditId = result.audit_event_id || result.auditEventId
+        const jira = result.jira_sync || result.jiraSync
+        if (status === 'api_confirmed') {
+          lastJiraFailureAt = 0
+          if (summary) mergeIntelList('jiraMutations', `${summary}${auditId ? ` · ${auditId}` : ''}`)
+          setVoiceHealth('jira', 'ok', 'Jira write confirmed')
+          return
+        }
+        if (status === 'api_failed' || status === 'api_not_configured' || jira?.ok === false) {
+          lastJiraFailureAt = Date.now()
+          const message = jira?.error || summary || jira?.message || 'External write was not confirmed.'
+          mergeIntelList('jiraMutations', `Needs attention: ${message}${auditId ? ` · ${auditId}` : ''}`)
+          setVoiceHealth('jira', 'bad', status === 'api_not_configured' ? 'Jira not configured' : 'Jira write failed')
+          showFailureState(status === 'api_not_configured' ? 'Jira sync not configured' : 'Jira write was not confirmed', message, { openDrawer: false })
+          showToast(status === 'api_not_configured' ? 'Jira sync not configured' : 'Jira write was not confirmed')
+        }
+      }
+
       function applyBoardSnapshot(state, changes) {
         hasBoardSnapshot = true
-        setVoiceHealth('jira', 'ok', 'Jira board syncing')
+        if (Date.now() - lastJiraFailureAt < 12000) setVoiceHealth('jira', 'bad', 'Jira write failed; local board updated')
+        else setVoiceHealth('jira', 'ok', 'Jira board syncing')
         updateBoardIntel(changes)
 
         const meeting = state.meeting || {}
@@ -3191,15 +4328,19 @@
 
       function mutationSummary(mutation) {
         if (typeof mutation === 'string') return mutation
-        return mutation?.summary || `${mutation?.toolName || mutation?.tool_name || 'Jira update'}${mutation?.eventId ? ` (${mutation.eventId})` : ''}`
+        const api = mutation?.apiStatus || mutation?.api_status
+        const base = mutation?.summary || `${mutation?.toolName || mutation?.tool_name || 'Jira update'}${mutation?.eventId ? ` (${mutation.eventId})` : ''}`
+        return `${base}${api ? ` · ${api}` : ''}`
       }
 
       function recordConfidenceFromMutation(mutation) {
         const reasons = normalizeReasons(mutation.confidenceReasons || mutation.confidence_reasons)
         const matched = mutation.matchedCardId || mutation.matched_card_id
         const guardrail = mutation.guardrailDecision || mutation.guardrail_decision
+        const confirmations = mutation.externalConfirmations || mutation.external_confirmations || []
         if (matched) reasons.unshift(`Matched ${matched} from the live request and board state.`)
         if (guardrail) reasons.unshift(`Guardrail decision: ${guardrail}.`)
+        confirmations.forEach(item => reasons.push(`${item.system || 'external'} API ${item.ok ? 'confirmed' : 'not confirmed'}: ${item.message || item.error || 'No detail provided.'}`))
         recordConfidence({
           score: mutation.confidence || mutation.confidence_score,
           label: guardrail === 'blocked' ? 'Guardrail' : titleCase(mutation.riskLevel || mutation.risk_level || 'Reviewed'),
@@ -3212,38 +4353,120 @@
       function highlightCard(cardId) { if (!cardId) return; const c = cards.find(c => c.id === cardId); if (c) showCardDetail(c) }
 
       function addTranscriptEntry(data) {
+        if (typeof data === 'string') {
+          try { data = JSON.parse(data) } catch { data = { text: data } }
+        }
         if (!data) return
         lastTranscriptAt = Date.now()
         setVoiceHealth('transcription', 'ok', 'Transcription flowing')
         const entry = document.createElement('div'); entry.className = 'transcript-entry'
+        const inputMode = String(data.input_mode || data.inputMode || '').toLowerCase()
+        const isChat = inputMode === 'chat' || inputMode === 'typed' || inputMode === 'text' || inputMode === 'chat_message'
+        if (isChat) entry.classList.add('chat-entry')
         const speaker = document.createElement('div'); speaker.className = 'speaker'
         const role = (data.role || '').toLowerCase()
         speaker.classList.add(role === 'assistant' ? 'assistant-speaker' : 'user-speaker')
-        if (role !== 'assistant') markSpoken(data.speaker || localIdentity)
+        if (role !== 'assistant') {
+          markSpoken(data.speaker || localIdentity)
+          theaterLastUserUtterance = String(data.text || '').trim() || theaterLastUserUtterance
+        }
         extractTranscriptIntel(data)
         const now = new Date()
         const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
         const nameSpan = document.createElement('span')
         nameSpan.textContent = data.speaker || (role === 'assistant' ? 'Assistant' : 'User')
+        if (isChat) {
+          const badge = document.createElement('span')
+          badge.className = 'transcript-badge'
+          badge.textContent = 'chat'
+          nameSpan.appendChild(badge)
+        }
         const timeSpan = document.createElement('span')
         timeSpan.className = 'timestamp'
         timeSpan.textContent = timeStr
         speaker.append(nameSpan, timeSpan)
-        const text = document.createElement('div'); text.className = 'text'; text.textContent = data.text || ''
+        const originalText = String(data.original_text || data.originalText || data.text || data.translated_text || data.translatedText || '')
+        const translatedText = String(data.translated_text || data.translatedText || '')
+        const text = document.createElement('div'); text.className = 'text'; text.textContent = originalText
         entry.append(speaker, text)
+        if (shouldShowTranslation(originalText, translatedText, data.text, Boolean(data.original_text || data.originalText))) {
+          const translation = document.createElement('div')
+          translation.className = 'translation'
+          const label = document.createElement('span')
+          label.className = 'translation-label'
+          label.textContent = 'English'
+          const translated = document.createElement('span')
+          translated.textContent = translatedText
+          translation.append(label, translated)
+          entry.appendChild(translation)
+        }
         transcriptionScroll.appendChild(entry)
         transcriptionScroll.scrollTop = transcriptionScroll.scrollHeight
       }
 
+      function shouldShowTranslation(originalText, translatedText, fallbackText, hasOriginalField) {
+        const translated = normalizeTranscriptText(translatedText)
+        if (!translated) return false
+        const original = normalizeTranscriptText(originalText)
+        const fallback = normalizeTranscriptText(fallbackText)
+        return translated !== original && (hasOriginalField || translated !== fallback)
+      }
+
+      function normalizeTranscriptText(value) {
+        return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+      }
+
+      function boardWebSocketIsOpen() {
+        return Boolean(ws && ws.readyState === WebSocket.OPEN)
+      }
+
+      function updateChatComposerState(message) {
+        const connected = boardWebSocketIsOpen()
+        const hasText = Boolean(chatInput?.value.trim())
+        chatSend.disabled = !connected || !hasText
+        chatSendStatus.classList.remove('warn', 'bad')
+        if (message) {
+          chatSendStatus.textContent = message
+          chatSendStatus.classList.add(connected ? 'warn' : 'bad')
+        } else if (!connected) {
+          chatSendStatus.textContent = meetingConnectionActive() ? 'Chat reconnecting...' : 'Join the meeting to send chat.'
+          chatSendStatus.classList.add('bad')
+        } else {
+          chatSendStatus.textContent = 'Enter sends. Shift+Enter adds a line.'
+        }
+      }
+
+      function sendChatMessage() {
+        const text = chatInput.value.trim()
+        if (!text) {
+          updateChatComposerState()
+          return
+        }
+        if (!boardWebSocketIsOpen()) {
+          const message = 'Chat is not connected. Your message was not sent.'
+          updateChatComposerState(message)
+          showToast(message)
+          return
+        }
+        const payload = {
+          text,
+          language: 'auto',
+          speaker: localIdentity || identityInput.value.trim() || 'User',
+        }
+        ws.send(JSON.stringify({ event: 'chat_message', data: JSON.stringify(payload) }))
+        chatInput.value = ''
+        updateChatComposerState('Sent')
+      }
+
       function confirmBoard() {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return
+        if (!boardWebSocketIsOpen()) return
         ws.send(JSON.stringify({ event: 'confirm_board', data: '' }))
         confirmBoardButton.classList.add('confirmed'); confirmBoardButton.textContent = 'Confirmed'
         setTimeout(() => { confirmBoardButton.classList.remove('confirmed'); confirmBoardButton.textContent = 'Confirm Board' }, 3000)
       }
 
       function sendKanbanCommand(tool, args = {}) {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return
+        if (!boardWebSocketIsOpen()) return
         ws.send(JSON.stringify({ event: 'kanban_command', data: JSON.stringify({ tool, arguments: args }) }))
       }
 
@@ -3251,6 +4474,22 @@
         if (!(data?.confirmationId || data?.confirmation_id || data?.id)) return
         const item = normalizePendingConfirmation(data)
         pendingConfirmations.set(item.id, item)
+        startAgentTheater({
+          title: item.title || 'Action needs confirmation',
+          subtitle: item.prompt || 'Waiting for host confirmation.',
+          status: 'warn',
+          eventId: item.id,
+          steps: [
+            theaterStep('heard', 'Heard request', theaterLastUserUtterance ? 'ok' : 'warn'),
+            theaterStep('matched', 'Action selected', 'ok'),
+            theaterStep('confirm', 'Waiting for confirmation', 'pending'),
+          ],
+          workspace: [
+            ['Request', theaterLastUserUtterance || 'No speech evidence captured yet.'],
+            ['Risk', `${item.riskLabel || 'Risk unknown'} · ${item.confidenceLabel || 'confidence unknown'}`],
+            ['Gate', item.prompt || 'Confirm this action?'],
+          ],
+        })
         validationStateData.confirmation = true
         recordConfidence({
           score: item.confidence,
@@ -3296,7 +4535,10 @@
         if (events.length === 0) details.appendChild(renderPreviewDetail('Events', 'No mutation events yet.'))
         events.slice(0, 12).forEach(event => {
           const row = document.createElement('div'); row.className = 'comment-preview-detail-value'
-          const text = document.createElement('span'); text.textContent = `${event.summary || event.toolName} (${event.eventId})`
+          const text = document.createElement('span')
+          const api = event.apiStatus || event.api_status || ''
+          const confidence = event.confidence ? ` · ${Math.round(Number(event.confidence) * 100)}%` : ''
+          text.textContent = `${event.summary || event.toolName} (${event.eventId})${api ? ` · ${api}` : ''}${confidence}`
           const replay = document.createElement('button'); replay.type = 'button'; replay.textContent = 'Replay'; replay.addEventListener('click', () => sendKanbanCommand('replay_audit_event', { event_id: event.eventId }))
           const undo = document.createElement('button'); undo.type = 'button'; undo.textContent = 'Undo'; undo.addEventListener('click', () => sendKanbanCommand('undo_last_mutation', { event_id: event.eventId }))
           row.append(text, replay, undo)
@@ -3307,6 +4549,53 @@
 
       function showReplayPanel(data) {
         if (!data?.ok) { showToast(data?.error || 'Audit event not found'); return }
+        const replaySteps = data.replay_steps || data.replaySteps || []
+        startAgentTheater({
+          title: `Replay: ${data.event?.summary || 'Audit event'}`,
+          subtitle: data.transcript?.summary || '',
+          status: (data.api_status || data.apiStatus) === 'api_failed' ? 'bad' : 'ok',
+          eventId: data.event?.eventId || data.event?.event_id || '',
+          steps: replaySteps.length ? replaySteps.slice(0, 5).map((step, index) => theaterStep(`replay-${index}`, step.label || 'Replay step', replayStepClass(step.status), step.detail || '')) : [
+            theaterStep('speech', 'Speech evidence', 'ok'),
+            theaterStep('tool', 'Tool call', 'ok'),
+            theaterStep('api', data.api_status || data.apiStatus || 'API status', replayStepClass(data.api_status || data.apiStatus)),
+          ],
+          workspace: [
+            ['Speech', data.transcript?.summary || 'No transcript evidence captured.'],
+            ['Tool', data.tool_call?.tool_name || data.toolCall?.toolName || data.event?.toolName || 'unknown'],
+            ['API', data.api_status || data.apiStatus || data.event?.apiStatus || 'not required'],
+            ['Result', data.event?.summary || 'Audit event replayed'],
+          ],
+        })
+        const panel = document.createElement('article'); panel.className = 'card-detail'; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true')
+        const header = document.createElement('header'); header.className = 'card-detail-header'
+        const tg = document.createElement('div'); tg.className = 'card-detail-title'
+        const st = document.createElement('strong'); st.textContent = data.event?.summary || 'Audit replay'; tg.appendChild(st)
+        const cb = document.createElement('button'); cb.className = 'card-detail-close'; cb.type = 'button'; cb.textContent = 'x'; cb.addEventListener('click', closeCardDetail)
+        header.append(tg, cb)
+        const details = document.createElement('div'); details.className = 'comment-preview-details'
+        details.appendChild(renderPreviewDetail('Speech evidence', data.transcript?.summary || 'No transcript evidence captured.'))
+        const tool = data.tool_call || data.toolCall || {}
+        details.appendChild(renderPreviewDetail('Tool call', `${tool.tool_name || tool.toolName || data.event?.toolName || 'unknown'} · ${tool.risk_level || tool.riskLevel || data.event?.riskLevel || 'risk unknown'}`))
+        const apiStatus = data.api_status || data.apiStatus || data.event?.apiStatus || 'not required'
+        details.appendChild(renderPreviewDetail('API result', apiStatus))
+        const steps = replaySteps
+        if (steps.length) {
+          const list = document.createElement('div')
+          list.className = 'operator-list'
+          steps.forEach(step => {
+            const row = document.createElement('div')
+            row.className = 'operator-item'
+            const title = document.createElement('strong')
+            title.textContent = `${step.label || 'Step'} · ${step.status || 'recorded'}`
+            const detail = document.createElement('span')
+            detail.textContent = step.detail || ''
+            row.append(title, detail)
+            list.appendChild(row)
+          })
+          details.appendChild(renderPreviewDetail('Replay path', list))
+        }
+        panel.append(header, details); cardDetailRegion.replaceChildren(panel); cardDetailRegion.classList.add('visible')
         showToast(`${data.event?.summary || 'Audit replay'}: ${data.transcript?.summary || 'No transcript evidence captured.'}`)
       }
 
@@ -3315,10 +4604,11 @@
       function renderBoard(changes = { moved: new Set(), completed: new Set(), messages: [], commentPreviews: [] }) {
         boardEl.replaceChildren(...statuses.map(status => {
           const col = document.createElement('section'); col.className = 'column'; col.setAttribute('aria-label', `${status} cards`)
+          col.setAttribute('data-status', status)
           const header = document.createElement('header'); const title = document.createElement('h2'); title.textContent = status
           const count = document.createElement('span'); count.className = 'count'; count.textContent = String(cards.filter(c => c.status === status).length)
           header.append(title, count)
-          const stack = document.createElement('div'); stack.className = 'stack'
+          const stack = document.createElement('div'); stack.className = 'stack'; stack.setAttribute('data-status-stack', status)
           const colCards = cards.filter(c => c.status === status)
           if (colCards.length === 0) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Empty'; stack.appendChild(e) }
           else stack.append(...colCards.map(c => renderCard(c, changes.moved.has(c.id), changes.completed.has(c.id))))
@@ -3359,6 +4649,8 @@
         const details = document.createElement('div'); details.className = 'comment-preview-details'
         details.appendChild(renderPreviewDetail('Status', card.status || 'Unassigned'))
         details.appendChild(renderPreviewDetail('Card ID', card.id || 'No card id'))
+        details.appendChild(renderPreviewDetail('Issue type', card.issueType || 'Task'))
+        details.appendChild(renderPreviewDetail('Parent', card.parentId || 'No parent'))
         details.appendChild(renderPreviewDetail('Owner', owner.name))
         details.appendChild(renderPreviewDetail('Priority', card.priority || 'No priority set'))
         details.appendChild(renderPreviewDetail('ETA', card.dueDate || 'No ETA set'))
@@ -3390,6 +4682,7 @@
         const values = []
         if (card.priority) values.push(`Priority ${card.priority}`)
         if (card.dueDate) values.push(`ETA ${card.dueDate}`)
+        if (card.issueType === 'Sub-task' && card.parentId) values.push(`Sub-task of ${card.parentId}`)
         if (card.blockedReason) values.push('Blocked')
         if ((card.comments || []).length > 0) values.push(`${card.comments.length} comment${card.comments.length === 1 ? '' : 's'}`)
         if (values.length === 0) return null
@@ -3419,6 +4712,28 @@
         return tags
       }
 
+      function captureBoardLayout() {
+        const cardRects = new Map()
+        const columnRects = new Map()
+        boardEl.querySelectorAll('[data-card-id]').forEach(card => {
+          const rect = card.getBoundingClientRect()
+          cardRects.set(card.dataset.cardId, {
+            rect: plainRect(rect),
+            html: card.innerHTML,
+            text: card.textContent || '',
+            status: card.closest('[data-status]')?.dataset.status || '',
+          })
+        })
+        boardEl.querySelectorAll('[data-status]').forEach(column => {
+          columnRects.set(column.dataset.status, plainRect(column.getBoundingClientRect()))
+        })
+        return { cardRects, columnRects }
+      }
+
+      function plainRect(rect) {
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom }
+      }
+
       function renderPreviewDetail(labelText, value) {
         const d = document.createElement('div'); d.className = 'comment-preview-detail'
         const l = document.createElement('span'); l.className = 'comment-preview-detail-label'; l.textContent = labelText
@@ -3427,30 +4742,574 @@
       }
 
       function cardChanges(nextCards) {
-        const moved = new Set(), completed = new Set(), messages = [], commentPreviews = [], nextIds = new Set(), shouldToast = hasBoardSnapshot
+        const moved = new Set(), completed = new Set(), messages = [], commentPreviews = [], theaterActions = [], nextIds = new Set(), shouldToast = hasBoardSnapshot
+        const columnPositions = new Map()
         for (const c of nextCards) {
-          nextIds.add(c.id); const prev = cardSnapshots.get(c.id)
-          if (!prev) { if (shouldToast) messages.push(`Created "${c.title}" in ${c.status}`); cardSnapshots.set(c.id, cardSnapshot(c)); continue }
-          if (prev.status !== c.status) { moved.add(c.id); if (c.status === 'Done') completed.add(c.id); if (shouldToast) messages.push(`Moved "${c.title}" to ${c.status}`) }
-          if (prev.title !== c.title && shouldToast) messages.push(`Renamed "${prev.title}" to "${c.title}"`)
-          if (!sameTags(prev.tags, c.tags || []) && shouldToast) messages.push(`Updated tags on "${c.title}"`)
-          if (prev.notes !== (c.notes || '') && shouldToast) { const cm = addedComment(prev.notes, c.notes || ''); messages.push(cm ? `Added comment to "${c.title}"` : `Updated "${c.title}"`); if (cm) commentPreviews.push({ card: cardSnapshot(c), comment: cm }) }
-          if (prev.assigneeKey !== assigneeKey(c) && shouldToast) messages.push(c.assignee ? `Assigned "${c.title}" to ${cardOwner(c).name}` : `Unassigned "${c.title}"`)
-          if (prev.dueDate !== (c.dueDate || '') && shouldToast) messages.push(c.dueDate ? `Set ETA on "${c.title}" to ${c.dueDate}` : `Cleared ETA on "${c.title}"`)
-          if (prev.priority !== (c.priority || '') && shouldToast) messages.push(c.priority ? `Set "${c.title}" priority to ${c.priority}` : `Cleared priority on "${c.title}"`)
+          const columnKey = c.status || 'Backlog'
+          const columnIndex = columnPositions.get(columnKey) || 0
+          columnPositions.set(columnKey, columnIndex + 1)
+          nextIds.add(c.id)
+          const prev = cardSnapshots.get(c.id)
+          if (!prev) {
+            if (shouldToast) {
+              messages.push(`Created "${c.title}" in ${c.status}`)
+              theaterActions.push(agentWorkAction('create', c, { label: `Create ${cardDisplayName(c)}`, writeText: draftCardCreateText(c) }))
+            }
+            cardSnapshots.set(c.id, cardSnapshot(c, { columnIndex }))
+            continue
+          }
+
+          let updated = false
+          const draftLines = []
+          if (prev.status !== c.status) {
+            moved.add(c.id)
+            if (c.status === 'Done') completed.add(c.id)
+            if (shouldToast) {
+              messages.push(`Moved "${c.title}" to ${c.status}`)
+              theaterActions.push(agentWorkAction('move', c, { fromStatus: prev.status, toStatus: c.status, label: `Move ${cardDisplayName(c)} to ${c.status}`, fromIndex: prev.columnIndex, toIndex: columnIndex }))
+            }
+          } else if (prev.columnIndex !== columnIndex && shouldToast) {
+            moved.add(c.id)
+            messages.push(`Prioritized "${c.title}"`)
+            theaterActions.push(agentWorkAction('reorder', c, { fromStatus: prev.status, toStatus: c.status, label: `Prioritize ${cardDisplayName(c)}`, fromIndex: prev.columnIndex, toIndex: columnIndex }))
+          }
+          if (prev.title !== c.title && shouldToast) {
+            messages.push(`Renamed "${prev.title}" to "${c.title}"`)
+            draftLines.push(`Title: ${c.title}`)
+            updated = true
+          }
+          if (!sameTags(prev.tags, c.tags || []) && shouldToast) {
+            messages.push(`Updated tags on "${c.title}"`)
+            draftLines.push(`Tags: ${(c.tags || []).join(', ') || 'none'}`)
+            updated = true
+          }
+          if (prev.notes !== (c.notes || '') && shouldToast) {
+            const cm = addedComment(prev.notes, c.notes || '')
+            messages.push(cm ? `Added comment to "${c.title}"` : `Updated "${c.title}"`)
+            if (cm) commentPreviews.push({ card: cardSnapshot(c, { columnIndex }), comment: cm })
+            draftLines.push(`${cm ? 'Comment' : 'Notes'}: ${cm || c.notes || 'cleared'}`)
+            updated = true
+          }
+          if (prev.assigneeKey !== assigneeKey(c) && shouldToast) {
+            messages.push(c.assignee ? `Assigned "${c.title}" to ${cardOwner(c).name}` : `Unassigned "${c.title}"`)
+            draftLines.push(`Assignee: ${c.assignee ? cardOwner(c).name : 'unassigned'}`)
+            updated = true
+          }
+          if (prev.dueDate !== (c.dueDate || '') && shouldToast) {
+            messages.push(c.dueDate ? `Set ETA on "${c.title}" to ${c.dueDate}` : `Cleared ETA on "${c.title}"`)
+            draftLines.push(`ETA: ${c.dueDate || 'cleared'}`)
+            updated = true
+          }
+          if (prev.priority !== (c.priority || '') && shouldToast) {
+            messages.push(c.priority ? `Set "${c.title}" priority to ${c.priority}` : `Cleared priority on "${c.title}"`)
+            draftLines.push(`Priority: ${c.priority || 'cleared'}`)
+            updated = true
+          }
           const latestComment = latestCommentBody(c)
-          if (prev.latestComment !== latestComment && latestComment && shouldToast) { messages.push(`Added comment to "${c.title}"`); commentPreviews.push({ card: cardSnapshot(c), comment: latestComment }) }
-          cardSnapshots.set(c.id, cardSnapshot(c))
+          if (prev.latestComment !== latestComment && latestComment && shouldToast) {
+            messages.push(`Added comment to "${c.title}"`)
+            commentPreviews.push({ card: cardSnapshot(c, { columnIndex }), comment: latestComment })
+            draftLines.push(`Comment: ${latestComment}`)
+            updated = true
+          }
+          if (updated && prev.status === c.status && shouldToast) theaterActions.push(agentWorkAction('update', c, { label: `Update ${cardDisplayName(c)}`, writeText: draftLines.join('\n') }))
+          cardSnapshots.set(c.id, cardSnapshot(c, { columnIndex }))
         }
-        for (const [id, prev] of cardSnapshots.entries()) { if (!nextIds.has(id)) { if (shouldToast) messages.push(`Deleted "${prev.title}"`); cardSnapshots.delete(id) } }
-        hasBoardSnapshot = true; return { moved, completed, messages, commentPreviews }
+        for (const [id, prev] of cardSnapshots.entries()) {
+          if (!nextIds.has(id)) {
+            if (shouldToast) {
+              messages.push(`Deleted "${prev.title}"`)
+              theaterActions.push({
+                type: 'delete',
+                cardId: id,
+                title: prev.title,
+                fromStatus: prev.status,
+                targetStatus: prev.status,
+                label: `Delete ${prev.id || prev.title}`,
+                writeText: `Delete ${prev.id || prev.title}`,
+                beforeCard: { ...prev },
+              })
+            }
+            cardSnapshots.delete(id)
+          }
+        }
+        hasBoardSnapshot = true; return { moved, completed, messages, commentPreviews, theaterActions }
       }
 
-      function cardSnapshot(c) { return { id: c.id || '', title: c.title || '', status: c.status || '', notes: c.notes || '', tags: Array.isArray(c.tags) ? [...c.tags] : [], assignee: c.assignee ? { ...c.assignee } : null, assigneeKey: assigneeKey(c), dueDate: c.dueDate || '', priority: c.priority || '', blockedReason: c.blockedReason || '', latestComment: latestCommentBody(c) } }
+      function cardSnapshot(c, opts = {}) { return { id: c.id || '', title: c.title || '', status: c.status || '', columnIndex: Number.isFinite(opts.columnIndex) ? opts.columnIndex : -1, notes: c.notes || '', tags: Array.isArray(c.tags) ? [...c.tags] : [], assignee: c.assignee ? { ...c.assignee } : null, assigneeKey: assigneeKey(c), dueDate: c.dueDate || '', priority: c.priority || '', issueType: c.issueType || '', parentId: c.parentId || '', blockedReason: c.blockedReason || '', latestComment: latestCommentBody(c) } }
+      function agentWorkAction(type, card, opts = {}) { return { type, cardId: card.id, title: card.title, fromStatus: opts.fromStatus || card.status, toStatus: opts.toStatus || card.status, targetStatus: opts.toStatus || card.status, fromIndex: opts.fromIndex, toIndex: opts.toIndex, label: opts.label || `${type} ${cardDisplayName(card)}`, writeText: opts.writeText || '' } }
+      function cardDisplayName(card) { return card?.id || card?.title || 'task' }
+      function draftCardCreateText(card) {
+        return [
+          `Title: ${card.title || 'Untitled task'}`,
+          `Status: ${card.status || 'Backlog'}`,
+          card.issueType ? `Issue type: ${card.issueType}` : '',
+          card.parentId ? `Parent: ${card.parentId}` : '',
+          card.assignee ? `Assignee: ${cardOwner(card).name}` : '',
+          card.priority ? `Priority: ${card.priority}` : '',
+          card.dueDate ? `ETA: ${card.dueDate}` : '',
+          card.notes ? `Notes: ${card.notes}` : '',
+        ].filter(Boolean).join('\n')
+      }
       function assigneeKey(c) { return c?.assignee?.accountId || c?.assignee?.displayName || c?.assignee?.emailAddress || '' }
       function latestCommentBody(c) { const comments = Array.isArray(c?.comments) ? c.comments : []; return comments.length > 0 ? String(comments[comments.length - 1]?.body || '').trim() : '' }
       function sameTags(a, b) { return a.length === b.length && a.every((t, i) => t === b[i]) }
       function addedComment(p, n) { const a = String(p||'').trim(), b = String(n||'').trim(); if (!b || b === a) return ''; if (a && b.startsWith(a)) return b.slice(a.length).replace(/^[\s:;,.|-]+/,'').trim() || b; return b }
+
+      function playAgentWorkTheater(actions, previousLayout = captureBoardLayout()) {
+        const visibleActions = (Array.isArray(actions) ? actions : []).filter(Boolean).map(enrichAgentWorkAction).slice(0, 6)
+        if (!visibleActions.length) return
+        visibleActions.forEach(action => {
+          agentCursorQueue = agentCursorQueue
+            .then(() => runAgentWorkTheaterAction(action, previousLayout))
+            .catch(err => console.warn('Agent cursor theater failed:', err))
+        })
+      }
+
+      async function runAgentWorkTheaterAction(action, previousLayout = {}) {
+        startTheaterForBoardAction(action)
+        const target = resolveAgentWorkTarget(action)
+        const apiState = apiStateForAction(action)
+        if (!target && action.type !== 'delete') {
+          updateAgentTheaterStep('board', apiState.state === 'bad' ? 'bad' : 'warn', 'Target was not visible on the board.')
+          theaterState.status = apiState.state === 'bad' ? 'bad' : 'warn'
+          renderAgentTheater()
+          return
+        }
+        if (agentTheaterMode === 'minimal' || window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+          if (target?.element) placeAgentActionStamp(action, target.element)
+          updateAgentTheaterStep('board', 'ok', 'Board rendered the change.')
+          theaterState.status = apiState.state
+          renderAgentTheater()
+          return
+        }
+
+        const cursor = ensureAgentCursor()
+        clearTimeout(agentCursorHideTimer)
+        if (agentCursorLabel) agentCursorLabel.textContent = action.label || agentActionLabel(action)
+        cursor.classList.add('visible')
+
+        const element = target?.element
+        if (agentTheaterMode === 'cinematic' && (action.type === 'move' || action.type === 'reorder')) {
+          await animateAgentCardDrag(action, previousLayout, element)
+        }
+        if (agentTheaterMode === 'cinematic' && action.type === 'delete') {
+          await animateAgentCardDelete(action, previousLayout)
+        }
+        if (!element) {
+          updateAgentTheaterStep('board', apiState.state === 'bad' ? 'bad' : 'warn', 'Deleted card is no longer visible.')
+          theaterState.status = apiState.state
+          renderAgentTheater()
+          return
+        }
+
+        if (!elementIsMostlyVisible(element)) {
+          element.scrollIntoView({ block: 'center', inline: 'nearest' })
+          await sleep(120)
+        }
+
+        const destination = randomPointInElement(element)
+        await animateAgentCursorTo(destination, action)
+        if (action.writeText && (action.type === 'create' || action.type === 'update' || action.type === 'delete')) {
+          updateAgentTheaterStep('write', 'pending', 'Drafting visible write text.')
+          await showAgentTypingEditor(action, element)
+          updateAgentTheaterStep('write', 'ok', 'Draft text staged.')
+        }
+        element.classList.add(apiState.state === 'bad' ? 'agent-work-failed' : 'agent-work-target')
+        cursor.classList.add('clicking')
+        await sleep(420)
+        cursor.classList.remove('clicking')
+        placeAgentActionStamp(action, element)
+        await sleep(280)
+        element.classList.remove('agent-work-target', 'agent-work-failed')
+        updateAgentTheaterStep('board', 'ok', 'Board rendered the change.')
+        theaterState.status = apiState.state
+        renderAgentTheater()
+        agentCursorHideTimer = setTimeout(() => cursor.classList.remove('visible'), 1400)
+      }
+
+      function enrichAgentWorkAction(action) {
+        const proof = findTheaterProofForAction(action)
+        if (!proof) return { ...action, apiStatus: 'waiting', apiSummary: 'Waiting for API confirmation or audit evidence.' }
+        return {
+          ...action,
+          auditEventId: action.auditEventId || proof.auditEventId,
+          apiStatus: proof.apiStatus,
+          apiSummary: proof.apiSummary,
+          apiSystem: proof.apiSystem,
+          apiEvidence: proof.apiEvidence,
+          confidence: proof.confidence,
+        }
+      }
+
+      function startTheaterForBoardAction(action) {
+        const apiState = apiStateForAction(action)
+        const verb = action.type === 'move' || action.type === 'reorder' ? 'Drag' : action.type === 'delete' ? 'Delete' : action.writeText ? 'Write' : 'Update'
+        const steps = [
+          theaterStep('heard', 'Heard request', theaterLastUserUtterance ? 'ok' : 'warn'),
+          theaterStep('matched', action.cardId ? `Matched ${action.cardId}` : 'Matched board target', action.cardId ? 'ok' : 'warn'),
+          theaterStep('write', verb, action.type === 'move' || action.type === 'reorder' ? 'ok' : action.writeText ? 'pending' : 'ok'),
+          theaterStep('api-call', apiCallLabel(action), apiState.state === 'warn' ? 'pending' : 'ok'),
+          theaterStep('api', apiState.label, apiState.state, action.apiSummary || ''),
+          theaterStep('board', 'Board update', 'pending'),
+        ]
+        startAgentTheater({
+          title: action.label || agentActionLabel(action),
+          subtitle: action.apiSummary || '',
+          status: apiState.state === 'bad' ? 'bad' : 'pending',
+          eventId: action.auditEventId || '',
+          steps,
+          workspace: [
+            ['Request', theaterLastUserUtterance || 'No recent user transcript captured.'],
+            ['Target', action.cardId || action.title || action.targetStatus || 'Board'],
+            ['Draft', action.writeText || `${action.fromStatus || ''}${action.toStatus ? ' -> ' + action.toStatus : ''}`.trim() || action.type],
+            ['API', action.apiSummary || apiState.label],
+            ['Evidence', action.auditEventId ? `Audit ${action.auditEventId}` : 'Awaiting audit event'],
+          ],
+        })
+      }
+
+      function recordAgentTheaterActionResult(result) {
+        const proof = normalizeTheaterProof(result)
+        theaterLastResult = proof
+        theaterRecentResults.unshift(proof)
+        while (theaterRecentResults.length > 20) theaterRecentResults.pop()
+        const apiState = apiStateForAction(proof)
+        startAgentTheater({
+          title: proof.summary || 'Agent action result',
+          subtitle: proof.apiSummary || '',
+          status: apiState.state === 'bad' ? 'bad' : 'pending',
+          eventId: proof.auditEventId || '',
+          steps: [
+            theaterStep('heard', 'Heard request', theaterLastUserUtterance ? 'ok' : 'warn'),
+            theaterStep('matched', proof.cardIds.length ? `Matched ${proof.cardIds[0]}` : 'Matched target', proof.cardIds.length ? 'ok' : 'warn'),
+            theaterStep('tool', proof.toolName || 'Tool call', 'ok'),
+            theaterStep('api-call', apiCallLabel(proof), apiState.state === 'warn' ? 'pending' : 'ok'),
+            theaterStep('api', apiState.label, apiState.state),
+            theaterStep('board', 'Board update', 'pending'),
+          ],
+          workspace: [
+            ['Request', theaterLastUserUtterance || 'No recent user transcript captured.'],
+            ['Tool', proof.toolName || 'Tool result'],
+            ['Target', proof.cardIds.join(', ') || 'No card id returned'],
+            ['API', proof.apiSummary || apiState.label],
+            ['Evidence', proof.auditEventId ? `Audit ${proof.auditEventId}` : 'No audit id returned'],
+          ],
+        })
+      }
+
+      function recordAgentTheaterFailure(message) {
+        startAgentTheater({
+          title: 'Agent action stopped',
+          subtitle: message,
+          status: 'bad',
+          steps: [
+            theaterStep('heard', 'Heard request', theaterLastUserUtterance ? 'ok' : 'warn'),
+            theaterStep('guardrail', 'Guardrail/API check', 'bad'),
+          ],
+          workspace: [
+            ['Request', theaterLastUserUtterance || 'No recent user transcript captured.'],
+            ['Failure', message],
+          ],
+        })
+      }
+
+      function normalizeTheaterProof(result = {}) {
+        const jira = result.jira_sync || result.jiraSync || {}
+        const rawStatus = result.external_action_status || result.externalActionStatus || statusFromJiraSync(jira) || (result.ok === false ? 'api_failed' : 'local_only')
+        const cardIds = extractResultCardIds(result)
+        const confirmations = result.external_confirmations || result.externalConfirmations || []
+        const confirmation = Array.isArray(confirmations) ? confirmations[0] : confirmations
+        return {
+          auditEventId: result.audit_event_id || result.auditEventId || '',
+          apiStatus: rawStatus,
+          apiSummary: result.api_confirmation_summary || result.apiConfirmationSummary || jira.message || jira.error || result.error || '',
+          apiSystem: confirmation?.system || confirmation?.System || (jira.required ? 'jira' : ''),
+          apiEvidence: confirmation?.evidence || confirmation?.Evidence || jira.error || '',
+          cardIds,
+          toolName: result.original_tool_name || result.originalToolName || result.tool_name || result.toolName || '',
+          summary: result.summary || result.api_confirmation_summary || result.apiConfirmationSummary || result.assistant_instruction || result.assistantInstruction || '',
+          confidence: result.confidence || result.confidence_score || result.confidenceScore,
+          at: Date.now(),
+        }
+      }
+
+      function statusFromJiraSync(jira) {
+        if (!jira || typeof jira !== 'object' || jira.required === false) return ''
+        if (jira.ok === true) return 'api_confirmed'
+        if (jira.configured === false) return 'api_not_configured'
+        if (jira.ok === false) return 'api_failed'
+        return ''
+      }
+
+      function extractResultCardIds(result = {}) {
+        const ids = []
+        const push = value => { const text = String(value || '').trim(); if (text && !ids.includes(text)) ids.push(text) }
+        push(result.card_id || result.cardId)
+        push(result.matched_card_id || result.matchedCardId)
+        push(result.parent_id || result.parentId)
+        push(result.card?.id || result.card?.ID)
+        push(result.created_card?.id || result.createdCard?.id)
+        const cardIDs = result.card_ids || result.cardIds
+        if (Array.isArray(cardIDs)) cardIDs.forEach(push)
+        return ids
+      }
+
+      function findTheaterProofForAction(action) {
+        const id = String(action?.cardId || '').trim()
+        const now = Date.now()
+        return theaterRecentResults.find(proof => id && proof.cardIds.includes(id) && now - proof.at < 45000) ||
+          theaterRecentResults.find(proof => proof.cardIds.length === 0 && now - proof.at < 12000) ||
+          (theaterLastResult && theaterLastResult.cardIds.length === 0 && now - theaterLastResult.at < 12000 ? theaterLastResult : null)
+      }
+
+      function apiStateForAction(action = {}) {
+        const status = String(action.apiStatus || '').toLowerCase()
+        if (status === 'api_confirmed') return { state: 'ok', label: `${titleCase(action.apiSystem || 'jira')} confirmed` }
+        if (status === 'api_failed') return { state: 'bad', label: `${titleCase(action.apiSystem || 'jira')} failed` }
+        if (status === 'api_not_configured') return { state: 'bad', label: `${titleCase(action.apiSystem || 'jira')} not configured` }
+        if (status === 'local_only') return { state: 'ok', label: 'Local action recorded' }
+        return { state: 'warn', label: 'Waiting for API evidence' }
+      }
+
+      function apiCallLabel(action = {}) {
+        const status = String(action.apiStatus || '').toLowerCase()
+        if (status === 'local_only') return 'No external API'
+        return `Calling ${titleCase(action.apiSystem || 'jira')}`
+      }
+
+      function replayStepClass(status) {
+        const value = String(status || '').toLowerCase()
+        if (value.includes('fail') || value.includes('blocked') || value.includes('not_configured')) return 'bad'
+        if (value.includes('pending') || value.includes('waiting')) return 'pending'
+        if (value.includes('confirmed') || value.includes('captured') || value.includes('selected') || value.includes('recorded') || value.includes('local')) return 'ok'
+        return 'warn'
+      }
+
+      async function animateAgentCardDrag(action, previousLayout = {}, targetElement) {
+        const previous = previousLayout?.cardRects?.get?.(action.cardId)
+        if (!previous || !targetElement) return
+        const to = plainRect(targetElement.getBoundingClientRect())
+        const ghost = document.createElement('article')
+        ghost.className = 'agent-card-ghost'
+        ghost.innerHTML = previous.html || `<strong>${escapeHTML(action.title || action.cardId || 'Task')}</strong>`
+        ghost.style.left = `${previous.rect.left}px`
+        ghost.style.top = `${previous.rect.top}px`
+        ghost.style.width = `${previous.rect.width}px`
+        ghost.style.minHeight = `${previous.rect.height}px`
+        document.body.appendChild(ghost)
+        await nextFrame()
+        const dx = to.left - previous.rect.left
+        const dy = to.top - previous.rect.top
+        ghost.style.transition = 'transform 720ms cubic-bezier(0.2, 0.9, 0.2, 1), opacity 720ms ease'
+        ghost.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(0.98)`
+        await sleep(760)
+        ghost.style.opacity = '0'
+        await sleep(180)
+        ghost.remove()
+      }
+
+      async function animateAgentCardDelete(action, previousLayout = {}) {
+        const previous = previousLayout?.cardRects?.get?.(action.cardId)
+        if (!previous) return
+        const ghost = document.createElement('article')
+        ghost.className = 'agent-card-ghost'
+        ghost.innerHTML = previous.html || `<strong>${escapeHTML(action.title || action.cardId || 'Task')}</strong>`
+        ghost.style.left = `${previous.rect.left}px`
+        ghost.style.top = `${previous.rect.top}px`
+        ghost.style.width = `${previous.rect.width}px`
+        ghost.style.minHeight = `${previous.rect.height}px`
+        document.body.appendChild(ghost)
+        await sleep(180)
+        ghost.style.transition = 'transform 520ms ease, opacity 520ms ease, filter 520ms ease'
+        ghost.style.opacity = '0'
+        ghost.style.filter = 'grayscale(1)'
+        ghost.style.transform = 'translate3d(0, 10px, 0) scale(0.94)'
+        await sleep(560)
+        ghost.remove()
+      }
+
+      async function showAgentTypingEditor(action, element) {
+        const text = String(action.writeText || '').trim()
+        if (!text) return
+        removeAgentInlineEditor()
+        const rect = element.getBoundingClientRect()
+        agentInlineEditor = document.createElement('div')
+        agentInlineEditor.className = 'agent-inline-editor'
+        const label = document.createElement('strong')
+        label.textContent = action.type === 'create' ? 'Drafting task' : action.type === 'delete' ? 'Staging delete' : 'Drafting update'
+        const pre = document.createElement('pre')
+        agentInlineEditor.append(label, pre)
+        document.body.appendChild(agentInlineEditor)
+        const editorRect = agentInlineEditor.getBoundingClientRect()
+        const left = clamp(rect.left + Math.min(24, Math.max(0, rect.width - editorRect.width)), 12, window.innerWidth - editorRect.width - 12)
+        const top = clamp(rect.bottom + 8, 70, window.innerHeight - editorRect.height - 70)
+        agentInlineEditor.style.left = `${left}px`
+        agentInlineEditor.style.top = `${top}px`
+        const limit = agentTheaterMode === 'cinematic' ? 220 : 120
+        const clipped = text.length > limit ? `${text.slice(0, limit - 1)}...` : text
+        for (let i = 1; i <= clipped.length; i++) {
+          pre.textContent = clipped.slice(0, i)
+          await sleep(agentTheaterMode === 'cinematic' ? 12 : 5)
+        }
+        await sleep(agentTheaterMode === 'cinematic' ? 360 : 180)
+        removeAgentInlineEditor()
+      }
+
+      function removeAgentInlineEditor() {
+        if (!agentInlineEditor) return
+        agentInlineEditor.remove()
+        agentInlineEditor = null
+      }
+
+      function placeAgentActionStamp(action, element) {
+        if (!element) return
+        const apiState = apiStateForAction(action)
+        element.querySelectorAll('.agent-action-stamp').forEach(stamp => stamp.remove())
+        const stamp = document.createElement('div')
+        stamp.className = `agent-action-stamp ${apiState.state === 'bad' ? 'bad' : apiState.state === 'warn' ? 'warn' : ''}`
+        const title = document.createElement('span')
+        title.textContent = `${apiState.label}: ${action.label || agentActionLabel(action)}`
+        const detail = document.createElement('span')
+        detail.textContent = action.apiSummary || action.apiEvidence || (action.auditEventId ? `Audit ${action.auditEventId}` : 'Evidence pending')
+        stamp.append(title, detail)
+        if (action.auditEventId) {
+          const replay = document.createElement('button')
+          replay.type = 'button'
+          replay.textContent = 'Replay evidence'
+          replay.addEventListener('click', event => {
+            event.stopPropagation()
+            sendKanbanCommand('replay_audit_event', { event_id: action.auditEventId })
+          })
+          stamp.appendChild(replay)
+        }
+        element.appendChild(stamp)
+        setTimeout(() => stamp.remove(), apiState.state === 'bad' ? 12000 : 8000)
+      }
+
+      function escapeHTML(value) {
+        return String(value || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]))
+      }
+
+      function ensureAgentCursor() {
+        if (agentCursorEl) return agentCursorEl
+        agentCursorEl = document.createElement('div')
+        agentCursorEl.className = 'agent-cursor'
+        agentCursorEl.setAttribute('aria-hidden', 'true')
+        const pointer = document.createElement('span')
+        pointer.className = 'agent-cursor-pointer'
+        const pulse = document.createElement('span')
+        pulse.className = 'agent-cursor-pulse'
+        agentCursorLabel = document.createElement('span')
+        agentCursorLabel.className = 'agent-cursor-label'
+        agentCursorLabel.textContent = 'Agent working'
+        agentCursorEl.append(pulse, pointer, agentCursorLabel)
+        document.body.appendChild(agentCursorEl)
+        placeAgentCursor(agentCursorPosition)
+        return agentCursorEl
+      }
+
+      function resolveAgentWorkTarget(action) {
+        const cardId = String(action?.cardId || '').trim()
+        if (cardId) {
+          const card = Array.from(boardEl.querySelectorAll('[data-card-id]')).find(el => el.dataset.cardId === cardId)
+          if (card) return { element: card, kind: 'card' }
+        }
+        const status = String(action?.targetStatus || action?.toStatus || action?.fromStatus || '').trim()
+        if (status) {
+          const column = Array.from(boardEl.querySelectorAll('[data-status]')).find(el => el.dataset.status === status)
+          if (column) return { element: column, kind: 'column' }
+        }
+        return null
+      }
+
+      function agentActionLabel(action) {
+        const name = action?.cardId || action?.title || 'task'
+        switch (action?.type) {
+          case 'create': return `Create ${name}`
+          case 'move': return `Move ${name}`
+          case 'reorder': return `Prioritize ${name}`
+          case 'delete': return `Delete ${name}`
+          default: return `Update ${name}`
+        }
+      }
+
+      async function animateAgentCursorTo(destination, action = {}) {
+        const start = { ...agentCursorPosition }
+        const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+        if (prefersReducedMotion) {
+          placeAgentCursor(destination)
+          agentCursorPosition = destination
+          return
+        }
+        const route = ghostCursorPath(start, destination, action)
+        for (const point of route) {
+          placeAgentCursor(point)
+          await nextFrame()
+        }
+        agentCursorPosition = destination
+      }
+
+      function ghostCursorPath(from, to, action = {}) {
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        const distance = Math.hypot(dx, dy) || 1
+        const steps = Math.max(18, Math.min(84, Math.round(distance / 12)))
+        const normal = { x: -dy / distance, y: dx / distance }
+        const direction = (hashString(`${action.type || ''}:${action.cardId || action.title || ''}`) % 2 === 0) ? 1 : -1
+        const curve = Math.min(150, Math.max(28, distance * 0.22)) * direction
+        const cp1 = { x: from.x + dx * 0.28 + normal.x * curve, y: from.y + dy * 0.28 + normal.y * curve }
+        const cp2 = { x: from.x + dx * 0.72 - normal.x * curve * 0.45, y: from.y + dy * 0.72 - normal.y * curve * 0.45 }
+        const route = []
+        for (let index = 1; index <= steps; index++) {
+          const t = index / steps
+          const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+          const point = cubicBezierPoint(from, cp1, cp2, to, eased)
+          const jitter = Math.sin(Math.PI * t) * 1.8
+          route.push({
+            x: point.x + normal.x * jitter * Math.sin(index * 1.7),
+            y: point.y + normal.y * jitter * Math.cos(index * 1.3),
+          })
+        }
+        return route
+      }
+
+      function cubicBezierPoint(p0, p1, p2, p3, t) {
+        const mt = 1 - t
+        return {
+          x: mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x,
+          y: mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y,
+        }
+      }
+
+      function randomPointInElement(element) {
+        const rect = element.getBoundingClientRect()
+        const insetX = Math.min(26, rect.width * 0.2)
+        const insetY = Math.min(22, rect.height * 0.2)
+        const safeWidth = Math.max(4, rect.width - insetX * 2)
+        const safeHeight = Math.max(4, rect.height - insetY * 2)
+        return {
+          x: clamp(rect.left + insetX + safeWidth * (0.35 + Math.random() * 0.3), 8, window.innerWidth - 32),
+          y: clamp(rect.top + insetY + safeHeight * (0.32 + Math.random() * 0.36), 8, window.innerHeight - 40),
+        }
+      }
+
+      function elementIsMostlyVisible(element) {
+        const rect = element.getBoundingClientRect()
+        return rect.bottom > 64 && rect.top < window.innerHeight - 96 && rect.right > 0 && rect.left < window.innerWidth
+      }
+
+      function placeAgentCursor(point) {
+        ensureAgentCursor().style.transform = `translate3d(${point.x}px, ${point.y}px, 0)`
+      }
+
+      function nextFrame() {
+        return new Promise(resolve => requestAnimationFrame(resolve))
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value))
+      }
 
       function showToast(msg) {
         if (!msg) return; const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; toastRegion.appendChild(t)

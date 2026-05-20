@@ -20,7 +20,6 @@ import (
 	"github.com/livekit/protocol/auth"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/pion/webrtc/v4"
-	"github.com/pion/webrtc/v4/pkg/media"
 )
 
 type novaSonicApp struct {
@@ -50,6 +49,7 @@ type novaSonicApp struct {
 
 	// Published track for assistant audio output
 	outputTrack *webrtc.TrackLocalStaticSample
+	outputPacer *novaSonicOutputPacer
 
 	// Track whether the Bedrock stream is active
 	streamActive bool
@@ -59,6 +59,10 @@ type novaSonicApp struct {
 
 	speakerMu      sync.Mutex
 	activeSpeakers []string
+
+	audioMu                sync.Mutex
+	activeAudioTracks      map[string]string
+	lastParticipantAudioAt time.Time
 }
 
 const (
@@ -67,14 +71,17 @@ const (
 )
 
 func newNovaSonicApp(board *kanbanBoard) *novaSonicApp {
-	return &novaSonicApp{
-		board:          board,
-		mixer:          newNovaSonicMixer(),
-		sessionID:      uuid.New().String(),
-		promptID:       uuid.New().String(),
-		audioContentID: uuid.New().String(),
-		outputContexts: make(map[string]novaSonicOutputContext),
+	app := &novaSonicApp{
+		board:             board,
+		mixer:             newNovaSonicMixer(),
+		sessionID:         uuid.New().String(),
+		promptID:          uuid.New().String(),
+		audioContentID:    uuid.New().String(),
+		outputContexts:    make(map[string]novaSonicOutputContext),
+		activeAudioTracks: make(map[string]string),
 	}
+	app.outputPacer = newNovaSonicOutputPacer(app.writeOutputAudioFrame)
+	return app
 }
 
 func (app *novaSonicApp) JoinConferenceRoom() (err error) {
@@ -104,7 +111,7 @@ func (app *novaSonicApp) JoinConferenceRoom() (err error) {
 	}
 
 	app.brClient = bedrockruntime.NewFromConfig(cfg)
-	app.modelID = getEnvDefault("NOVA_SONIC_MODEL", "amazon.nova-2-sonic-v1:0")
+	app.modelID = selectedNovaSonicModel()
 
 	livekitURL := getEnvDefault("LIVEKIT_URL", "ws://localhost:7880")
 	apiKey := os.Getenv("LIVEKIT_API_KEY")
@@ -121,9 +128,6 @@ func (app *novaSonicApp) JoinConferenceRoom() (err error) {
 	if err != nil {
 		return fmt.Errorf("create opus encoder: %w", err)
 	}
-	app.opusDec = dec
-	app.opusEnc = enc
-
 	room, err := lksdk.ConnectToRoom(livekitURL, lksdk.ConnectInfo{
 		APIKey:              apiKey,
 		APISecret:           apiSecret,
@@ -169,10 +173,13 @@ func (app *novaSonicApp) JoinConferenceRoom() (err error) {
 
 	app.mu.Lock()
 	app.room = room
+	app.opusDec = dec
+	app.opusEnc = enc
 	app.outputTrack = outputTrack
 	app.lastJoinErr = ""
 	app.lastJoinAt = time.Now().UTC()
 	app.mu.Unlock()
+	app.outputPacer.Reset()
 
 	log.Infof("Nova Sonic agent connected to LiveKit room, waiting for participants...")
 	broadcastKanbanEvent("status", "Nova Sonic agent ready — waiting for participants")
@@ -192,10 +199,91 @@ func (app *novaSonicApp) LastJoinError() string {
 	return app.lastJoinErr
 }
 
+func (app *novaSonicApp) AgentConnectedAt() string {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.lastJoinAt.IsZero() || app.room == nil || app.room.ConnectionState() != lksdk.ConnectionStateConnected {
+		return ""
+	}
+	return app.lastJoinAt.Format(time.RFC3339Nano)
+}
+
 func (app *novaSonicApp) StreamActive() bool {
 	app.streamMu.Lock()
 	defer app.streamMu.Unlock()
 	return app.streamActive && app.stream != nil
+}
+
+func (app *novaSonicApp) waitForStreamReady(timeout time.Duration) error {
+	if app == nil || app.brClient == nil {
+		return fmt.Errorf("nova sonic bedrock client is not configured")
+	}
+	app.ensureBedrockStream()
+	deadline := time.Now().Add(timeout)
+	for {
+		if app.StreamActive() {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("nova sonic bedrock stream is not active")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (app *novaSonicApp) AudioHealth() (int, string) {
+	app.audioMu.Lock()
+	defer app.audioMu.Unlock()
+	last := ""
+	if !app.lastParticipantAudioAt.IsZero() {
+		last = app.lastParticipantAudioAt.Format(time.RFC3339Nano)
+	}
+	return len(app.activeAudioTracks), last
+}
+
+func (app *novaSonicApp) OutputAudioHealth() novaSonicOutputStats {
+	if app.outputPacer == nil {
+		return novaSonicOutputStats{}
+	}
+	return app.outputPacer.Stats()
+}
+
+func (app *novaSonicApp) ActiveSpeakerLabels() []string {
+	app.speakerMu.Lock()
+	defer app.speakerMu.Unlock()
+	return append([]string(nil), app.activeSpeakers...)
+}
+
+func (app *novaSonicApp) CurrentModelID() string {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	return firstNonEmpty(app.modelID, selectedNovaSonicModel())
+}
+
+func (app *novaSonicApp) SetModel(model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = selectedNovaSonicModel()
+	}
+	app.mu.Lock()
+	changed := app.modelID != model
+	app.modelID = model
+	app.mu.Unlock()
+	if !changed {
+		return false
+	}
+
+	app.streamMu.Lock()
+	stream := app.stream
+	active := app.streamActive
+	app.streamMu.Unlock()
+	if stream == nil {
+		return false
+	}
+	if err := stream.Close(); err != nil {
+		log.Warnf("Nova Sonic: close stream during model switch failed: %v", err)
+	}
+	return active
 }
 
 func (app *novaSonicApp) setLastJoinError(err error) {
@@ -215,9 +303,16 @@ func (app *novaSonicApp) clearLastJoinError() {
 func (app *novaSonicApp) markDisconnected(reason string) {
 	app.mu.Lock()
 	app.room = nil
+	app.outputTrack = nil
 	app.lastJoinErr = scrubStatusError(fmt.Errorf("%s", reason))
 	app.lastJoinAt = time.Now().UTC()
 	app.mu.Unlock()
+	if app.outputPacer != nil {
+		app.outputPacer.Reset()
+	}
+	app.audioMu.Lock()
+	app.activeAudioTracks = map[string]string{}
+	app.audioMu.Unlock()
 	log.Warnf("Nova Sonic: %s", reason)
 }
 
@@ -238,13 +333,14 @@ func (app *novaSonicApp) startBedrockStream() {
 	app.promptID = uuid.New().String()
 	app.audioContentID = uuid.New().String()
 	app.resetOutputContexts()
+	modelID := app.CurrentModelID()
 
-	log.Infof("Nova Sonic: starting Bedrock stream with model %s", app.modelID)
+	log.Infof("Nova Sonic: starting Bedrock stream with model %s", modelID)
 	broadcastKanbanEvent("status", "Nova Sonic is connecting to Bedrock")
 
 	stream, err := app.brClient.InvokeModelWithBidirectionalStream(context.Background(),
 		&bedrockruntime.InvokeModelWithBidirectionalStreamInput{
-			ModelId: aws.String(app.modelID),
+			ModelId: aws.String(modelID),
 		},
 	)
 	if err != nil {
@@ -275,7 +371,9 @@ func (app *novaSonicApp) startBedrockStream() {
 		log.Infof("Nova Sonic: renewing Bedrock stream before session limit")
 		app.streamMu.Lock()
 		if app.stream == eventStream {
-			eventStream.Close()
+			if err := eventStream.Close(); err != nil {
+				log.Warnf("Nova Sonic: close stream during renewal failed: %v", err)
+			}
 		}
 		app.streamMu.Unlock()
 	})
@@ -310,6 +408,12 @@ func (app *novaSonicApp) handleTrackSubscribed(track *webrtc.TrackRemote, rp *lk
 	trackKey := fmt.Sprintf("lk:%s:%s", rp.Identity(), track.ID())
 	log.Infof("Nova Sonic: accepting audio track %s from %s with codec %s", track.ID(), rp.Identity(), codec.MimeType)
 	broadcastKanbanEvent("status", fmt.Sprintf("Nova Sonic is receiving %s audio from %s", codec.MimeType, rp.Identity()))
+	app.audioMu.Lock()
+	if app.activeAudioTracks == nil {
+		app.activeAudioTracks = map[string]string{}
+	}
+	app.activeAudioTracks[trackKey] = rp.Identity()
+	app.audioMu.Unlock()
 	app.ensureBedrockStream()
 
 	dec, err := newOpusDecoder(roomAudioSampleRate, roomAudioChannels)
@@ -320,7 +424,12 @@ func (app *novaSonicApp) handleTrackSubscribed(track *webrtc.TrackRemote, rp *lk
 	decodeBuf := make([]int16, roomAudioDecodeBufferSize(roomAudioChannels))
 
 	go func() {
-		defer app.mixer.removeTrack(trackKey)
+		defer func() {
+			app.mixer.removeTrack(trackKey)
+			app.audioMu.Lock()
+			delete(app.activeAudioTracks, trackKey)
+			app.audioMu.Unlock()
+		}()
 		decodedAudioAnnounced := false
 		for {
 			pkt, _, err := track.ReadRTP()
@@ -345,6 +454,9 @@ func (app *novaSonicApp) handleTrackSubscribed(track *webrtc.TrackRemote, rp *lk
 				log.Infof("Nova Sonic: decoded first audio frame from %s", rp.Identity())
 				decodedAudioAnnounced = true
 			}
+			app.audioMu.Lock()
+			app.lastParticipantAudioAt = time.Now().UTC()
+			app.audioMu.Unlock()
 			stereo48 := decodeBuf[:samplesPerCh*roomAudioChannels]
 			mono16 := downsample48kStereoTo16kMono(stereo48)
 			app.mixer.submit(trackKey, mono16)
@@ -664,6 +776,7 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 	case "USER":
 		log.Infof("Nova Sonic ASR: user transcript received")
 		speaker := app.currentSpeakerLabel()
+		app.board.ClearResponseLanguagePolicy()
 		app.board.RecordTranscript("user", speaker, out.Content)
 		broadcastKanbanEvent("transcription", map[string]any{
 			"role":    "user",
@@ -709,28 +822,38 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 		return
 	}
 
-	result, changed, err := app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
-		Source: "nova-sonic",
-		CallID: tu.ToolUseID,
-	})
-	if err != nil {
-		log.Errorf("Nova Sonic tool call %q failed: %v", tu.ToolName, err)
-		result = map[string]any{
-			"ok":    false,
-			"error": "tool call failed",
+	var result map[string]any
+	var changed bool
+	var err error
+	if activeMeetingRequiresAuthenticatedHostForTool(tu.ToolName) {
+		result = hostOnlyToolResult(tu.ToolName)
+	} else {
+		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
+			Source: "nova-sonic",
+			CallID: tu.ToolUseID,
+		})
+		if err != nil {
+			log.Errorf("Nova Sonic tool call %q failed: %v", tu.ToolName, err)
+			result = map[string]any{
+				"ok":    false,
+				"error": "tool call failed",
+			}
 		}
 	}
 
 	if changed {
 		jiraRequired, syncErr := syncJiraToolCall(tu.ToolName, tu.Content, result)
 		annotateJiraSyncResult(result, jiraRequired, syncErr)
+		app.board.attachExternalConfirmationsToMutation(result)
 	}
+	app.board.annotateResponseLanguagePolicy(result)
 
 	app.sendToolResult(tu.ToolUseID, firstNonEmpty(tu.ContentID, tu.ContentName), result)
 
 	if changed {
 		state := app.board.SnapshotState()
 		auditBoardMutation("nova-sonic", tu.ToolName, result, state)
+		broadcastKanbanEvent("action_result", result)
 		broadcastKanbanEvent("board", state)
 		if err := app.sendBoardContextRefresh(); err != nil {
 			log.Errorf("Nova Sonic: failed to refresh board context: %v", err)
@@ -760,34 +883,10 @@ func (app *novaSonicApp) handleAudioOutput(raw json.RawMessage) {
 }
 
 func (app *novaSonicApp) publishAudioToRoom(mono16k []int16) {
-	app.mu.Lock()
-	outputTrack := app.outputTrack
-	enc := app.opusEnc
-	app.mu.Unlock()
-
-	if outputTrack == nil || enc == nil {
+	if app.outputPacer == nil {
 		return
 	}
-
-	stereo48 := upsample16kMonoTo48kStereo(mono16k)
-
-	const frameSamples = roomAudioSampleRate / 50 * roomAudioChannels // 1920
-	for offset := 0; offset+frameSamples <= len(stereo48); offset += frameSamples {
-		frame := stereo48[offset : offset+frameSamples]
-		opusData, err := enc.Encode(frame)
-		if err != nil {
-			log.Errorf("Nova Sonic: opus encode error: %v", err)
-			return
-		}
-
-		if err := outputTrack.WriteSample(media.Sample{
-			Data:     opusData,
-			Duration: roomAudioMixInterval,
-		}); err != nil {
-			log.Errorf("Nova Sonic: write audio sample error: %v", err)
-			return
-		}
-	}
+	app.outputPacer.EnqueueMono16(mono16k)
 }
 
 func (app *novaSonicApp) streamAudioInput(ctx context.Context, promptID string, audioContentID string) {
@@ -844,7 +943,7 @@ func (app *novaSonicApp) streamAudioInput(ctx context.Context, promptID string, 
 func (app *novaSonicApp) sendToolResult(toolUseID, contentID string, result map[string]any) {
 	resultContentID := uuid.New().String()
 
-	app.sendEvent(novaSonicEvent("contentStart", map[string]any{
+	if err := app.sendEvent(novaSonicEvent("contentStart", map[string]any{
 		"promptName":  app.promptID,
 		"contentName": resultContentID,
 		"interactive": false,
@@ -857,16 +956,24 @@ func (app *novaSonicApp) sendToolResult(toolUseID, contentID string, result map[
 				"mediaType": "text/plain",
 			},
 		},
-	}))
-	app.sendEvent(novaSonicEvent("toolResult", map[string]any{
+	})); err != nil {
+		log.Errorf("Nova Sonic: send tool result contentStart failed: %v", err)
+		return
+	}
+	if err := app.sendEvent(novaSonicEvent("toolResult", map[string]any{
 		"promptName":  app.promptID,
 		"contentName": resultContentID,
 		"content":     mustMarshalJSON(modelSafeToolResult(result)),
-	}))
-	app.sendEvent(novaSonicEvent("contentEnd", map[string]any{
+	})); err != nil {
+		log.Errorf("Nova Sonic: send toolResult failed: %v", err)
+		return
+	}
+	if err := app.sendEvent(novaSonicEvent("contentEnd", map[string]any{
 		"promptName":  app.promptID,
 		"contentName": resultContentID,
-	}))
+	})); err != nil {
+		log.Errorf("Nova Sonic: send tool result contentEnd failed: %v", err)
+	}
 }
 
 func (app *novaSonicApp) sendBoardContextRefresh() error {
@@ -879,6 +986,42 @@ func (app *novaSonicApp) sendBoardContextRefresh() error {
 	return nil
 }
 
+func (app *novaSonicApp) SendTextMessage(speaker string, normalized normalizedMeetingText) error {
+	if app == nil {
+		return fmt.Errorf("nova sonic agent is not initialized")
+	}
+	if err := app.waitForStreamReady(5 * time.Second); err != nil {
+		return err
+	}
+	contentID := uuid.New().String()
+	if err := app.sendEvent(novaSonicEvent("contentStart", map[string]any{
+		"promptName":  app.promptID,
+		"contentName": contentID,
+		"type":        "TEXT",
+		"interactive": true,
+		"role":        "USER",
+		"textInputConfiguration": map[string]any{
+			"mediaType": "text/plain",
+		},
+	})); err != nil {
+		return fmt.Errorf("send chat contentStart: %w", err)
+	}
+	if err := app.sendEvent(novaSonicEvent("textInput", map[string]any{
+		"promptName":  app.promptID,
+		"contentName": contentID,
+		"content":     meetingChatPrompt(speaker, normalized),
+	})); err != nil {
+		return fmt.Errorf("send chat textInput: %w", err)
+	}
+	if err := app.sendEvent(novaSonicEvent("contentEnd", map[string]any{
+		"promptName":  app.promptID,
+		"contentName": contentID,
+	})); err != nil {
+		return fmt.Errorf("send chat contentEnd: %w", err)
+	}
+	return nil
+}
+
 func novaSonicBoardContextRefreshEvents(board *kanbanBoard, promptID string, contentID string) [][]byte {
 	content := strings.Join([]string{
 		"Application-supplied board context refresh after a successful board mutation.",
@@ -887,12 +1030,16 @@ func novaSonicBoardContextRefreshEvents(board *kanbanBoard, promptID string, con
 		"Use this sequence number as the latest freshness marker before any next operation.",
 		fmt.Sprintf("Current sanitized Kanban board JSON: %s", board.ModelContextJSON()),
 	}, " ")
+	return novaSonicTextInputEvents(promptID, contentID, content, false)
+}
+
+func novaSonicTextInputEvents(promptID string, contentID string, content string, interactive bool) [][]byte {
 	return [][]byte{
 		novaSonicEvent("contentStart", map[string]any{
 			"promptName":  promptID,
 			"contentName": contentID,
 			"type":        "TEXT",
-			"interactive": false,
+			"interactive": interactive,
 			"role":        "USER",
 			"textInputConfiguration": map[string]any{
 				"mediaType": "text/plain",
@@ -918,7 +1065,7 @@ func (app *novaSonicApp) sendEvent(payload []byte) error {
 	stream := app.stream
 	app.streamMu.Unlock()
 	if stream == nil {
-		return fmt.Errorf("Nova Sonic stream is closed")
+		return fmt.Errorf("nova sonic stream is closed")
 	}
 
 	return stream.Send(context.Background(), &brtypes.InvokeModelWithBidirectionalStreamInputMemberChunk{
@@ -943,16 +1090,23 @@ func (app *novaSonicApp) Close() {
 		stream := app.stream
 		app.streamMu.Unlock()
 		if stream != nil {
-			stream.Close()
+			if err := stream.Close(); err != nil {
+				log.Warnf("Nova Sonic: close stream failed: %v", err)
+			}
 		}
 
 		app.mu.Lock()
 		room := app.room
+		app.room = nil
+		app.outputTrack = nil
 		app.mu.Unlock()
 		if room != nil {
 			room.Disconnect()
 		}
 
+		if app.outputPacer != nil {
+			app.outputPacer.Close()
+		}
 		app.mixer.close()
 		log.Infof("Nova Sonic agent closed")
 	})
@@ -972,7 +1126,7 @@ func generateLivekitToken(roomID string, identity string) (string, error) {
 		RoomJoin: true,
 		Room:     normalizeRuntimeID(roomID, appRoomID),
 	}
-	at.AddGrant(grant).SetIdentity(identity).SetValidFor(15 * time.Minute)
+	at.SetVideoGrant(grant).SetIdentity(identity).SetValidFor(15 * time.Minute)
 	return at.ToJWT()
 }
 
@@ -1054,32 +1208,45 @@ func unwrapAudioRED(payload []byte) ([]byte, error) {
 }
 
 // downsample48kStereoTo16kMono converts 48kHz stereo PCM to 16kHz mono by
-// taking every 3rd sample pair and averaging L+R.
+// averaging each 3-sample stereo window.
 func downsample48kStereoTo16kMono(stereo48 []int16) []int16 {
 	numPairs := len(stereo48) / 2
 	outLen := numPairs / 3
 	mono := make([]int16, outLen)
 	for i := 0; i < outLen; i++ {
 		srcIdx := i * 3 * 2
-		l := int32(stereo48[srcIdx])
-		r := int32(stereo48[srcIdx+1])
-		mono[i] = clampPCM16((l + r) / 2)
+		var sum int32
+		for pair := 0; pair < 3; pair++ {
+			l := int32(stereo48[srcIdx+pair*2])
+			r := int32(stereo48[srcIdx+pair*2+1])
+			sum += (l + r) / 2
+		}
+		mono[i] = clampPCM16(sum / 3)
 	}
 	return mono
 }
 
-// upsample16kMonoTo48kStereo converts 16kHz mono PCM to 48kHz stereo by
-// replicating each sample 3x and duplicating to both channels.
+// upsample16kMonoTo48kStereo converts 16kHz mono PCM to 48kHz stereo with
+// linear interpolation, then duplicates the mono sample to both channels.
 func upsample16kMonoTo48kStereo(mono16k []int16) []int16 {
 	stereo := make([]int16, len(mono16k)*3*2)
 	for i, s := range mono16k {
+		next := s
+		if i+1 < len(mono16k) {
+			next = mono16k[i+1]
+		}
+		s0 := int32(s)
+		s1 := int32(next)
+		interp := [3]int16{
+			s,
+			clampPCM16((2*s0 + s1) / 3),
+			clampPCM16((s0 + 2*s1) / 3),
+		}
 		base := i * 6
-		stereo[base] = s
-		stereo[base+1] = s
-		stereo[base+2] = s
-		stereo[base+3] = s
-		stereo[base+4] = s
-		stereo[base+5] = s
+		for j, sample := range interp {
+			stereo[base+j*2] = sample
+			stereo[base+j*2+1] = sample
+		}
 	}
 	return stereo
 }
@@ -1087,7 +1254,7 @@ func upsample16kMonoTo48kStereo(mono16k []int16) []int16 {
 func int16LEToBytes(samples []int16) []byte {
 	buf := make([]byte, len(samples)*2)
 	for i, s := range samples {
-		binary.LittleEndian.PutUint16(buf[i*2:], uint16(s))
+		binary.LittleEndian.PutUint16(buf[i*2:], uint16(s)) // #nosec G115 -- PCM serialization preserves the signed int16 bit pattern.
 	}
 	return buf
 }
@@ -1096,7 +1263,7 @@ func bytesToInt16LE(data []byte) []int16 {
 	n := len(data) / 2
 	samples := make([]int16, n)
 	for i := 0; i < n; i++ {
-		samples[i] = int16(binary.LittleEndian.Uint16(data[i*2:]))
+		samples[i] = int16(binary.LittleEndian.Uint16(data[i*2:])) // #nosec G115 -- PCM deserialization restores the signed int16 bit pattern.
 	}
 	return samples
 }

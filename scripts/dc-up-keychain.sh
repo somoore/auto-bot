@@ -70,6 +70,7 @@ LOCAL_LOGIN_ACCOUNT="${AUTO_BOT_LOCAL_LOGIN_ACCOUNT:-$USER}"
 JIRA_TOKEN_ACCOUNT="${AUTO_BOT_JIRA_TOKEN_ACCOUNT:-somoore2025@gmail.com}"
 WEBHOOK_SECRET_ACCOUNT="${AUTO_BOT_WEBHOOK_SECRET_ACCOUNT:-$USER}"
 GITHUB_ACCOUNT="${AUTO_BOT_GITHUB_APP_ACCOUNT:-$USER}"
+OPENAI_ACCOUNT="${AUTO_BOT_OPENAI_ACCOUNT:-$USER}"
 
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-$AWS_REGION}"
@@ -78,6 +79,24 @@ APP_API_TOKEN="$(keychain_get_required "${AUTO_BOT_APP_TOKEN_SERVICE:-auto-bot/a
 export APP_LOCAL_LOGIN_TOKEN
 APP_LOCAL_LOGIN_TOKEN="$(keychain_get_required "${AUTO_BOT_LOCAL_LOGIN_SERVICE:-auto-bot/local-login-token}" "$LOCAL_LOGIN_ACCOUNT")"
 export COMPOSE_DISABLE_ENV_FILE="${COMPOSE_DISABLE_ENV_FILE:-1}"
+
+OPENAI_KEY="$(keychain_get_optional "${AUTO_BOT_OPENAI_SERVICE:-auto-bot/openai-api-key}" "$OPENAI_ACCOUNT")"
+if [ -z "$OPENAI_KEY" ] && [ -z "${AUTO_BOT_OPENAI_SERVICE:-}" ]; then
+  OPENAI_KEY="$(keychain_get_optional "argus-openai-api-key" "$OPENAI_ACCOUNT")"
+fi
+if [ -z "$OPENAI_KEY" ] && [ -z "${AUTO_BOT_OPENAI_SERVICE:-}" ]; then
+  OPENAI_KEY="$(keychain_get_optional "argus-cli" "OPENAI_API_KEY")"
+fi
+if [ -z "$OPENAI_KEY" ] && [ -z "${AUTO_BOT_OPENAI_SERVICE:-}" ]; then
+  OPENAI_KEY="$(keychain_get_optional "argus-cli" "openai_api_key")"
+fi
+if [ -n "$OPENAI_KEY" ]; then
+  export OPENAI_API_KEY="$OPENAI_KEY"
+fi
+export OPENAI_REALTIME_MODEL="${OPENAI_REALTIME_MODEL:-gpt-realtime-2}"
+export OPENAI_REALTIME_TRANSCRIPTION_MODEL="${OPENAI_REALTIME_TRANSCRIPTION_MODEL:-gpt-realtime-whisper}"
+export OPENAI_REALTIME_TRANSLATION_MODEL="${OPENAI_REALTIME_TRANSLATION_MODEL:-gpt-realtime-translate}"
+export OPENAI_REALTIME_TRANSLATION_TARGET_LANGUAGE="${OPENAI_REALTIME_TRANSLATION_TARGET_LANGUAGE:-en}"
 
 JIRA_TOKEN="$(keychain_get_optional "${AUTO_BOT_JIRA_TOKEN_SERVICE:-auto-bot/jira-api-token}" "$JIRA_TOKEN_ACCOUNT")"
 if [ -n "$JIRA_TOKEN" ]; then

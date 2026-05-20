@@ -765,8 +765,10 @@
         setStatus('Authenticating')
 
         try {
-          const preferredIdentity = prompt('Enter your name:', 'User') || 'User'
+          const preferredIdentity = promptWithFallback('Enter your name:', 'User')
           authSession = await ensureAuthenticated(preferredIdentity)
+          setStatus('Checking voice agent')
+          await ensureVoiceReady()
           setStatus('Requesting camera and microphone')
           localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
           localVideo.srcObject = localStream
@@ -813,10 +815,13 @@
       async function ensureAuthenticated(preferredIdentity) {
         const sessionURL = new URL('/auth/session', window.location.origin)
         sessionURL.searchParams.set('identity', cleanIdentity(preferredIdentity))
-        const current = await fetch(sessionURL.toString(), { credentials: 'same-origin' })
+        const current = await fetch(sessionURL.toString(), {
+          credentials: 'same-origin',
+          headers: { 'X-Auto-Bot-Local-Session': '1' },
+        })
         if (current.ok) return current.json()
 
-        const token = await getLocalClipboardToken() || prompt('Enter app access token:')
+        const token = await getLocalClipboardToken() || promptWithFallback('Enter app access token:', '')
         if (!token) throw new Error('Access token is required. Run scripts/local-up.sh, then paste the copied local token.')
         const response = await fetch('/auth/session', {
           method: 'POST',
@@ -826,6 +831,36 @@
         })
         if (!response.ok) throw new Error(`Authentication failed: ${response.status}`)
         return response.json()
+      }
+
+      async function ensureVoiceReady() {
+        let lastStatus = null
+        for (let attempt = 0; attempt < 8; attempt++) {
+          const response = await fetch('/voice/status', { credentials: 'same-origin' })
+          if (!response.ok) throw new Error(`Voice readiness check failed: ${response.status}`)
+          lastStatus = await response.json()
+          if (lastStatus.ready) return lastStatus
+
+          const reason = `${lastStatus.last_error || ''} ${lastStatus.message || ''}`.toLowerCase()
+          const retryable = reason === ' ' || reason.includes('still connecting') || reason.includes('not been initialized')
+          if (!retryable) break
+          await sleep(1000)
+        }
+
+        const message = lastStatus?.message || lastStatus?.last_error || 'Voice agent is not ready.'
+        throw new Error(message)
+      }
+
+      function sleep(ms) {
+        return new Promise(resolve => window.setTimeout(resolve, ms))
+      }
+
+      function promptWithFallback(message, fallback) {
+        try {
+          return window.prompt(message, fallback) || fallback
+        } catch (_) {
+          return fallback
+        }
       }
 
       async function getLocalClipboardToken() {
@@ -1178,6 +1213,7 @@
         const values = []
         if (card.priority) values.push(`Priority ${card.priority}`)
         if (card.dueDate) values.push(`ETA ${card.dueDate}`)
+        if (card.issueType === 'Sub-task' && card.parentId) values.push(`Sub-task of ${card.parentId}`)
         if (card.blockedReason) values.push('Blocked')
         if ((card.comments || []).length > 0) values.push(`${card.comments.length} comment${card.comments.length === 1 ? '' : 's'}`)
         if (values.length === 0) return null
@@ -1286,6 +1322,8 @@
         details.className = 'comment-preview-details'
         details.appendChild(renderPreviewDetail('Status', card.status || 'Unassigned'))
         details.appendChild(renderPreviewDetail('Card ID', card.id || 'No card id'))
+        details.appendChild(renderPreviewDetail('Issue type', card.issueType || 'Task'))
+        details.appendChild(renderPreviewDetail('Parent', card.parentId || 'No parent'))
         details.appendChild(renderPreviewDetail('Owner', owner.name))
         details.appendChild(renderPreviewDetail('Priority', card.priority || 'No priority set'))
         details.appendChild(renderPreviewDetail('ETA', card.dueDate || 'No ETA set'))

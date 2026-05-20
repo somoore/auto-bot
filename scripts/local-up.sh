@@ -83,9 +83,11 @@ wait_for_docker() {
 
 build_compose_command() {
   local command
-  command="$ROOT_DIR/scripts/dc-up-keychain.sh"
+  local quoted
+  printf -v command '%q' "$ROOT_DIR/scripts/dc-up-keychain.sh"
   for arg in "$@"; do
-    command+=" $arg"
+    printf -v quoted '%q' "$arg"
+    command+=" $quoted"
   done
   printf '%s' "$command"
 }
@@ -104,6 +106,7 @@ export COMPOSE_DISABLE_ENV_FILE=1
 
 APP_TOKEN="$(ensure_generated_secret "${AUTO_BOT_APP_TOKEN_SERVICE:-auto-bot/app-api-token}" "${AUTO_BOT_APP_TOKEN_ACCOUNT:-$USER}")"
 LOCAL_LOGIN_TOKEN="$(ensure_generated_secret "${AUTO_BOT_LOCAL_LOGIN_SERVICE:-auto-bot/local-login-token}" "${AUTO_BOT_LOCAL_LOGIN_ACCOUNT:-$USER}")"
+AWS_REFRESH_TOKEN="$(ensure_generated_secret "${AUTO_BOT_LOCAL_AWS_REFRESH_SERVICE:-auto-bot/local-aws-refresh-token}" "${AUTO_BOT_LOCAL_AWS_REFRESH_ACCOUNT:-$USER}")"
 ensure_generated_secret "${AUTO_BOT_WEBHOOK_SECRET_SERVICE:-auto-bot/jira-webhook-secret}" "${AUTO_BOT_WEBHOOK_SECRET_ACCOUNT:-$USER}" >/dev/null
 ensure_jira_token
 
@@ -113,6 +116,13 @@ if command -v pbcopy >/dev/null 2>&1; then
 fi
 
 wait_for_docker
+
+export AUTO_BOT_LOCAL_AWS_REFRESH_TOKEN="$AWS_REFRESH_TOKEN"
+export AUTO_BOT_LOCAL_AWS_REFRESH_PORT="${AUTO_BOT_LOCAL_AWS_REFRESH_PORT:-38751}"
+export APP_LOCAL_AWS_REFRESH_URL="${APP_LOCAL_AWS_REFRESH_URL:-http://host.docker.internal:${AUTO_BOT_LOCAL_AWS_REFRESH_PORT}/refresh}"
+export APP_LOCAL_AWS_REFRESH_TOKEN="$AWS_REFRESH_TOKEN"
+"$ROOT_DIR/scripts/local-aws-refresh-broker.sh" stop >/dev/null 2>&1 || true
+"$ROOT_DIR/scripts/local-aws-refresh-broker.sh" start
 
 if [ $# -eq 0 ]; then
   set -- --build -d

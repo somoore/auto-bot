@@ -26,11 +26,11 @@ func newBedrockAgentModelClient(ctx context.Context) (agentModelClient, error) {
 
 func (client *bedrockAgentModelClient) CompleteJSON(ctx context.Context, modelID string, system string, prompt string, maxTokens int) ([]byte, error) {
 	if client == nil || client.client == nil {
-		return nil, fmt.Errorf("Bedrock client is not configured")
+		return nil, fmt.Errorf("bedrock client is not configured")
 	}
 	modelID = strings.TrimSpace(modelID)
 	if modelID == "" {
-		return nil, fmt.Errorf("Bedrock model id is required")
+		return nil, fmt.Errorf("bedrock model id is required")
 	}
 	if maxTokens <= 0 {
 		maxTokens = 1024
@@ -80,7 +80,7 @@ func (client *bedrockAgentModelClient) CompleteJSON(ctx context.Context, modelID
 		}
 	}
 	if strings.TrimSpace(buffer.String()) == "" {
-		return nil, fmt.Errorf("Bedrock response did not include text content")
+		return nil, fmt.Errorf("bedrock response did not include text content")
 	}
 	return []byte(strings.TrimSpace(buffer.String())), nil
 }

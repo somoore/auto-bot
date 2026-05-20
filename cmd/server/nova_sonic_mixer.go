@@ -116,7 +116,7 @@ func (m *novaSonicMixer) mixFrame() []int16 {
 		for _, src := range ready {
 			sum += int32(src.buffer[i])
 		}
-		mixed[i] = clampPCM16(sum / int32(len(ready)))
+		mixed[i] = clampPCM16(sum / audioMixDivisor(len(ready)))
 	}
 	for _, src := range ready {
 		src.buffer = src.buffer[novaSonicFrameSize:]

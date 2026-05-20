@@ -14,7 +14,7 @@ services:
     depends_on:
       - livekit
     environment:
-      - VOICE_PROVIDER=nova-sonic
+      - VOICE_PROVIDER=${VOICE_PROVIDER:-nova-sonic}
       - APP_ENV=local
       - APP_AUTH_MODE=${APP_AUTH_MODE:-token}
       - APP_API_TOKEN=${APP_API_TOKEN:?set APP_API_TOKEN via scripts/dc-up-keychain.sh or an exported environment variable}
@@ -27,12 +27,19 @@ services:
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
       - AWS_REGION=us-east-1
       - AWS_DEFAULT_REGION=us-east-1
+      - APP_LOCAL_AWS_REFRESH_URL=${APP_LOCAL_AWS_REFRESH_URL:-}
+      - APP_LOCAL_AWS_REFRESH_TOKEN=${APP_LOCAL_AWS_REFRESH_TOKEN:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_REALTIME_MODEL=${OPENAI_REALTIME_MODEL:-gpt-realtime-2}
+      - OPENAI_REALTIME_TRANSCRIPTION_MODEL=${OPENAI_REALTIME_TRANSCRIPTION_MODEL:-gpt-realtime-whisper}
+      - OPENAI_REALTIME_TRANSLATION_MODEL=${OPENAI_REALTIME_TRANSLATION_MODEL:-gpt-realtime-translate}
+      - OPENAI_REALTIME_TRANSLATION_TARGET_LANGUAGE=${OPENAI_REALTIME_TRANSLATION_TARGET_LANGUAGE:-en}
       - LIVEKIT_URL=ws://livekit:7880
       - LIVEKIT_BROWSER_URL=${LIVEKIT_BROWSER_URL:-ws://127.0.0.1:7880}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}
-      - NOVA_SONIC_MODEL=amazon.nova-2-sonic-v1:0
-      - NOVA_SONIC_VOICE=matthew
+      - NOVA_SONIC_MODEL=${NOVA_SONIC_MODEL:-amazon.nova-2-sonic-v1:0}
+      - NOVA_SONIC_VOICE=${NOVA_SONIC_VOICE:-matthew}
       - AGENT_PM_MODEL=${AGENT_PM_MODEL:-us.anthropic.claude-haiku-4-5-20251001-v1:0}
       - AGENT_REVIEW_MODEL=${AGENT_REVIEW_MODEL:-us.anthropic.claude-sonnet-4-6}
       - GITHUB_APP_ID=${GITHUB_APP_ID:-}
