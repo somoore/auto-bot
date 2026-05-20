@@ -74,6 +74,30 @@ func TestNormalizeMeetingTextAutoEnglishNoop(t *testing.T) {
 	}
 }
 
+func TestNormalizeMeetingTextAutoEnglishQuotedTitleNoop(t *testing.T) {
+	model := &fakeChatTranslationModel{
+		t:        t,
+		response: []byte(`{"language":"es","english_text":"should not be used"}`),
+	}
+
+	for _, original := range []string{
+		"Create a task named 'say hello to annie' and assign it to me.",
+		"I'm moving EMAL-38 to done.",
+	} {
+		got := normalizeMeetingText(context.Background(), original, "auto", model)
+
+		if got.OriginalText != original || got.EnglishText != original {
+			t.Fatalf("normalized text = %#v, want original English unchanged", got)
+		}
+		if got.Language != "en" || got.Translated || got.TranslationStatus != "not_needed" {
+			t.Fatalf("normalization metadata = %#v, want English not_needed", got)
+		}
+	}
+	if model.calls != 0 {
+		t.Fatalf("translation model calls = %d, want 0", model.calls)
+	}
+}
+
 func TestNormalizeMeetingTextExplicitSpanishHintUsesModel(t *testing.T) {
 	model := &fakeChatTranslationModel{
 		t:        t,
@@ -96,6 +120,29 @@ func TestNormalizeMeetingTextExplicitSpanishHintUsesModel(t *testing.T) {
 	}
 	if len(model.prompts) != 1 || !strings.Contains(model.prompts[0], "Language hint: es-do") {
 		t.Fatalf("translation prompt = %#v, want sanitized Spanish hint", model.prompts)
+	}
+}
+
+func TestNormalizeMeetingTextQuotedEnglishTitleDoesNotHideNonEnglishCommand(t *testing.T) {
+	model := &fakeChatTranslationModel{
+		t:        t,
+		response: []byte(`{"language":"de","english_text":"Create a new task named 'say hello to annie'. Assign it to me."}`),
+	}
+
+	original := "Erstelle eine neue Aufgabe mit dem Namen 'say hello to annie'. Weise sie mir zu"
+	got := normalizeMeetingText(context.Background(), original, "auto", model)
+
+	if model.calls != 1 {
+		t.Fatalf("translation model calls = %d, want 1", model.calls)
+	}
+	if got.OriginalText != original {
+		t.Fatalf("original text = %q, want source text preserved", got.OriginalText)
+	}
+	if got.EnglishText != "Create a new task named 'say hello to annie'. Assign it to me." {
+		t.Fatalf("English text = %q, want canonical English command", got.EnglishText)
+	}
+	if got.Language != "de" || !got.Translated || got.TranslationStatus != "translated" {
+		t.Fatalf("normalization metadata = %#v, want translated non-English command", got)
 	}
 }
 
@@ -265,7 +312,7 @@ func TestMeetingChatPromptRequiresBilingualReplyForTranslatedInput(t *testing.T)
 		TranslationStatus: "translated",
 	})
 
-	for _, want := range []string{"reply_language", "es-do", "For the room:", "every assistant message", "English-only follow-up fragments", "Use English for all Jira"} {
+	for _, want := range []string{"reply_language", "es-do", "For the room:", "every assistant message", "English-only follow-up fragments", "english_text as the canonical board/Jira command", "Default every create"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q: %s", want, prompt)
 		}
@@ -293,6 +340,50 @@ func TestResponseLanguagePolicyAnnotatesToolResult(t *testing.T) {
 	}
 }
 
+func TestResponseLanguagePolicyDoesNotSwitchOnShortConfirmationWithPendingAction(t *testing.T) {
+	board := newKanbanBoard()
+	board.UpdateResponseLanguagePolicy("Scott", normalizedMeetingText{
+		Language:          "es-DO",
+		OriginalText:      "Necesito crear una tarea nueva.",
+		EnglishText:       "I need to create a new task.",
+		TranslationStatus: "translated",
+	})
+	board.pendingConfirmations["confirm-1"] = pendingConfirmation{ConfirmationID: "confirm-1"}
+
+	board.UpdateResponseLanguagePolicy("Scott", normalizedMeetingText{
+		Language:          "pt",
+		OriginalText:      "sim",
+		EnglishText:       "yes",
+		TranslationStatus: "translated",
+	})
+
+	policy := board.activeResponseLanguagePolicy()
+	if policy == nil || policy.SourceLanguage != "es-do" || policy.ReplyLanguage != "es-do" {
+		t.Fatalf("response language policy = %#v, want existing non-English policy preserved", policy)
+	}
+}
+
+func TestResponseLanguagePolicyClearsShortConfirmationWithoutPendingAction(t *testing.T) {
+	board := newKanbanBoard()
+	board.UpdateResponseLanguagePolicy("Scott", normalizedMeetingText{
+		Language:          "es-DO",
+		OriginalText:      "Necesito crear una tarea nueva.",
+		EnglishText:       "I need to create a new task.",
+		TranslationStatus: "translated",
+	})
+
+	board.UpdateResponseLanguagePolicy("Scott", normalizedMeetingText{
+		Language:          "pt",
+		OriginalText:      "sim",
+		EnglishText:       "yes",
+		TranslationStatus: "translated",
+	})
+
+	if policy := board.activeResponseLanguagePolicy(); policy != nil {
+		t.Fatalf("response language policy = %#v, want cleared for confirmation-only input without pending action", policy)
+	}
+}
+
 func TestMeetingResponseLanguagePromptResetsEnglishAudioTurn(t *testing.T) {
 	prompt := meetingResponseLanguagePrompt("Scott", normalizedMeetingText{
 		OriginalText:      "hello",
@@ -309,6 +400,23 @@ func TestMeetingResponseLanguagePromptResetsEnglishAudioTurn(t *testing.T) {
 	}
 }
 
+func TestMeetingResponseLanguagePromptTreatsShortConfirmationAsLanguageAmbiguous(t *testing.T) {
+	prompt := meetingResponseLanguagePrompt("Scott", normalizedMeetingText{
+		OriginalText:      "sim",
+		EnglishText:       "yes",
+		Language:          "pt",
+		InputMode:         "audio",
+		Translated:        true,
+		TranslationStatus: "translated",
+	})
+
+	for _, want := range []string{"Short confirmation tokens are language-ambiguous", "Do not infer, start, or switch response languages", "stay silent or call do_nothing", "default to concise English", "Do not use markdown headings"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("confirmation-only policy prompt missing %q: %s", want, prompt)
+		}
+	}
+}
+
 func TestMeetingResponseLanguagePromptRequiresNativeAndRoomEnglishForNonEnglishAudio(t *testing.T) {
 	prompt := meetingResponseLanguagePrompt("Aylin", normalizedMeetingText{
 		OriginalText:      "Merhaba, yeni bir gorev olusturmam gerekiyor.",
@@ -319,10 +427,22 @@ func TestMeetingResponseLanguagePromptRequiresNativeAndRoomEnglishForNonEnglishA
 		TranslationStatus: "translated",
 	})
 
-	for _, want := range []string{"first answer Aylin in tr", "For the room:", "provide the English meaning or outcome", "speak both the native-language reply", "Use English for all Jira"} {
+	for _, want := range []string{"first answer Aylin in tr", "For the room:", "provide the English meaning or outcome", "speak both the native-language reply", "Do not say or imply that you can only respond in English", "english_text as the canonical board/Jira command"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("non-English policy prompt missing %q: %s", want, prompt)
 		}
+	}
+}
+
+func TestShouldClearResponseLanguagePolicyAfterConfirmationToolResult(t *testing.T) {
+	if !shouldClearResponseLanguagePolicyAfterToolResult("confirm_action", map[string]any{"ok": true}) {
+		t.Fatal("confirm_action should clear response language policy after its tool result is sent")
+	}
+	if !shouldClearResponseLanguagePolicyAfterToolResult("assign_ticket", map[string]any{"confirmed": true}) {
+		t.Fatal("confirmed tool result should clear response language policy after its tool result is sent")
+	}
+	if shouldClearResponseLanguagePolicyAfterToolResult("create_ticket", map[string]any{"ok": true}) {
+		t.Fatal("ordinary tool result should not clear response language policy")
 	}
 }
 

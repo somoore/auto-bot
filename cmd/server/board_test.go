@@ -135,7 +135,7 @@ func TestModelContextRedactsPromptInjectionInUntrustedBoardData(t *testing.T) {
 
 func TestSessionInstructionsRequireBilingualParticipantReplies(t *testing.T) {
 	instructions := newKanbanBoard().SessionInstructions()
-	for _, required := range []string{"For the room:", "every assistant message", "English-only follow-up fragments"} {
+	for _, required := range []string{"For the room:", "every assistant message", "English-only follow-up fragments", "Short yes/no confirmations", "markdown headings"} {
 		if !strings.Contains(instructions, required) {
 			t.Fatalf("SessionInstructions missing multilingual guard %q", required)
 		}

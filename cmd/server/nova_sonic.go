@@ -872,6 +872,9 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	app.board.annotateResponseLanguagePolicy(result)
 
 	app.sendToolResult(tu.ToolUseID, firstNonEmpty(tu.ContentID, tu.ContentName), result)
+	if shouldClearResponseLanguagePolicyAfterToolResult(tu.ToolName, result) {
+		app.board.ClearResponseLanguagePolicy()
+	}
 
 	if changed {
 		state := app.board.SnapshotState()

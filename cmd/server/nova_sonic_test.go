@@ -66,7 +66,7 @@ func TestNovaSonicSessionInstructionsAvoidFilterTriggerTerms(t *testing.T) {
 			t.Fatalf("Nova Sonic instructions missing %q", required)
 		}
 	}
-	for _, required := range []string{"For the room:", "every assistant message", "English-only follow-up fragments"} {
+	for _, required := range []string{"For the room:", "every assistant message", "English-only follow-up fragments", "Short yes/no confirmations", "markdown headings"} {
 		if !strings.Contains(instructions, required) {
 			t.Fatalf("Nova Sonic instructions missing multilingual guard %q", required)
 		}
@@ -398,6 +398,62 @@ func TestNovaSonicResponseLanguageRefreshEventsResetEnglishTurn(t *testing.T) {
 	for _, want := range []string{"reply in English only", "Do not continue any previous non-English language", "not a participant request"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("English language refresh missing %q: %s", want, content)
+		}
+	}
+}
+
+func TestNovaSonicResponseLanguageRefreshEventsRequireBilingualAudioForNonEnglishTurn(t *testing.T) {
+	events := novaSonicResponseLanguageRefreshEvents("prompt-1", "language-1", "Scott", normalizedMeetingText{
+		OriginalText:      "Erstelle eine Aufgabe.",
+		EnglishText:       "Create a task.",
+		Language:          "de",
+		InputMode:         "audio",
+		Translated:        true,
+		TranslationStatus: "translated",
+	})
+	if len(events) != 3 {
+		t.Fatalf("refresh event count = %d, want 3", len(events))
+	}
+	var text struct {
+		Event map[string]struct {
+			Content string `json:"content"`
+		} `json:"event"`
+	}
+	if err := json.Unmarshal(events[1], &text); err != nil {
+		t.Fatalf("unmarshal textInput: %v", err)
+	}
+	content := text.Event["textInput"].Content
+	for _, want := range []string{"first answer Scott in de", "For the room:", "Do not say or imply that you can only respond in English", "english_text as the canonical board/Jira command"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("non-English language refresh missing %q: %s", want, content)
+		}
+	}
+}
+
+func TestNovaSonicResponseLanguageRefreshEventsTreatShortConfirmationAsAmbiguous(t *testing.T) {
+	events := novaSonicResponseLanguageRefreshEvents("prompt-1", "language-1", "Scott", normalizedMeetingText{
+		OriginalText:      "sim",
+		EnglishText:       "yes",
+		Language:          "pt",
+		InputMode:         "audio",
+		Translated:        true,
+		TranslationStatus: "translated",
+	})
+	if len(events) != 3 {
+		t.Fatalf("refresh event count = %d, want 3", len(events))
+	}
+	var text struct {
+		Event map[string]struct {
+			Content string `json:"content"`
+		} `json:"event"`
+	}
+	if err := json.Unmarshal(events[1], &text); err != nil {
+		t.Fatalf("unmarshal textInput: %v", err)
+	}
+	content := text.Event["textInput"].Content
+	for _, want := range []string{"Short confirmation tokens are language-ambiguous", "Do not infer, start, or switch response languages", "stay silent or call do_nothing", "default to concise English"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("confirmation-only language refresh missing %q: %s", want, content)
 		}
 	}
 }

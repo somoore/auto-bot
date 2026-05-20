@@ -809,6 +809,9 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 	}); err != nil {
 		log.Errorf("Failed to send Kanban function output: %v", err)
 	}
+	if shouldClearResponseLanguagePolicyAfterToolResult(outputItem.Name, result) {
+		app.board.ClearResponseLanguagePolicy()
+	}
 
 	if !changed {
 		return
