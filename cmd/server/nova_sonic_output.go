@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	novaSonicOutputPreRollFrames = 4
-	novaSonicOutputMaxPreRoll    = 120 * time.Millisecond
-	novaSonicOutputMaxQueue      = 250
+	novaSonicOutputPreRollFrames      = 10
+	novaSonicOutputMaxPreRoll         = 240 * time.Millisecond
+	novaSonicOutputMaxQueue           = 1500
+	novaSonicOutputUnderrunFillFrames = 6
 )
 
 type novaSonicOutputFrameWriter func([]int16) error
@@ -31,11 +32,12 @@ type novaSonicOutputStats struct {
 }
 
 type novaSonicOutputPacer struct {
-	mu         sync.Mutex
-	writer     novaSonicOutputFrameWriter
-	frames     [][]int16
-	playing    bool
-	firstFrame time.Time
+	mu                    sync.Mutex
+	writer                novaSonicOutputFrameWriter
+	frames                [][]int16
+	playing               bool
+	firstFrame            time.Time
+	underrunFillRemaining int
 
 	stats      novaSonicOutputStats
 	lastWrite  time.Time
@@ -108,6 +110,7 @@ func (pacer *novaSonicOutputPacer) Reset() {
 	pacer.frames = nil
 	pacer.playing = false
 	pacer.firstFrame = time.Time{}
+	pacer.underrunFillRemaining = 0
 	pacer.lastWrite = time.Time{}
 	pacer.windowAt = time.Time{}
 	pacer.windowSent = 0
@@ -161,9 +164,15 @@ func (pacer *novaSonicOutputPacer) nextFrame(now time.Time) []int16 {
 	if len(pacer.frames) == 0 {
 		if pacer.playing {
 			pacer.stats.UnderrunFrames++
+			if pacer.underrunFillRemaining > 0 {
+				pacer.underrunFillRemaining--
+				pacer.updateQueueStatsLocked()
+				return make([]int16, roomAudioMixFrameSize)
+			}
 		}
 		pacer.playing = false
 		pacer.firstFrame = time.Time{}
+		pacer.underrunFillRemaining = 0
 		pacer.updateQueueStatsLocked()
 		return nil
 	}
@@ -176,6 +185,7 @@ func (pacer *novaSonicOutputPacer) nextFrame(now time.Time) []int16 {
 			return nil
 		}
 		pacer.playing = true
+		pacer.underrunFillRemaining = novaSonicOutputUnderrunFillFrames
 	}
 
 	frame := pacer.frames[0]
@@ -185,6 +195,7 @@ func (pacer *novaSonicOutputPacer) nextFrame(now time.Time) []int16 {
 	if len(pacer.frames) == 0 {
 		pacer.firstFrame = time.Time{}
 	}
+	pacer.underrunFillRemaining = novaSonicOutputUnderrunFillFrames
 	pacer.updateQueueStatsLocked()
 	return frame
 }

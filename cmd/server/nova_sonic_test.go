@@ -214,6 +214,48 @@ func TestNovaSonicOutputPacerPreRollCanTimeOutForShortUtterance(t *testing.T) {
 	}
 }
 
+func TestNovaSonicOutputPacerFillsBriefUnderrunWithSilence(t *testing.T) {
+	pacer := &novaSonicOutputPacer{
+		stats: novaSonicOutputStats{
+			PreRollFrames:  novaSonicOutputPreRollFrames,
+			MaxQueueFrames: novaSonicOutputMaxQueue,
+		},
+	}
+	speech := make([]int16, novaSonicFrameSize*novaSonicOutputPreRollFrames)
+	for i := range speech {
+		speech[i] = 1200
+	}
+	pacer.EnqueueMono16(speech)
+
+	now := time.Now()
+	for i := 0; i < novaSonicOutputPreRollFrames; i++ {
+		frame := pacer.nextFrame(now.Add(time.Duration(i) * roomAudioMixInterval))
+		if len(frame) != roomAudioMixFrameSize {
+			t.Fatalf("speech frame[%d] length = %d, want %d", i, len(frame), roomAudioMixFrameSize)
+		}
+		if frame[0] == 0 {
+			t.Fatalf("speech frame[%d] was silent, want queued audio", i)
+		}
+	}
+
+	for i := 0; i < novaSonicOutputUnderrunFillFrames; i++ {
+		frame := pacer.nextFrame(now.Add(time.Duration(novaSonicOutputPreRollFrames+i) * roomAudioMixInterval))
+		if len(frame) != roomAudioMixFrameSize {
+			t.Fatalf("underrun fill frame[%d] length = %d, want %d", i, len(frame), roomAudioMixFrameSize)
+		}
+		for sampleIndex, sample := range frame {
+			if sample != 0 {
+				t.Fatalf("underrun fill frame[%d][%d] = %d, want silence", i, sampleIndex, sample)
+			}
+		}
+	}
+
+	frame := pacer.nextFrame(now.Add(time.Duration(novaSonicOutputPreRollFrames+novaSonicOutputUnderrunFillFrames) * roomAudioMixInterval))
+	if len(frame) != 0 {
+		t.Fatalf("nextFrame after underrun fill returned %d samples, want none", len(frame))
+	}
+}
+
 func TestNovaSonicTextOutputUsesContentStartRoleAndStage(t *testing.T) {
 	board := newKanbanBoard()
 	app := newNovaSonicApp(board)
