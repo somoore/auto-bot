@@ -19,6 +19,11 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Dependency Review
+        # Some private/free repositories do not have GitHub dependency review
+        # support enabled. Keep this advisory so local govulncheck/gosec and the
+        # repository quality gate stay blocking while GitHub security features
+        # are being configured.
+        continue-on-error: true
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
