@@ -333,7 +333,7 @@ if [ -n "$LATEST_MATCHES" ]; then
 fi
 
 MODEL_LATEST_MATCHES=$(rg -n 'gpt-[A-Za-z0-9_.-]*latest' \
-  cmd/server docker-compose.yml .env.example infra scripts .github \
+  cmd/server docker-compose.yml infra scripts .github \
   --glob '!**/.terraform/**' \
   2>/dev/null || true)
 

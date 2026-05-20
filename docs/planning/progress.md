@@ -123,7 +123,7 @@ Do not commit or push until the current feature set has been locally validated a
   - `GET /meetings` lists archived report summaries, and `GET /meeting/intelligence?meeting_id=<id>` reloads an archived report.
   - `web/post_meeting.html` provides the post-meeting intelligence page with report selection, Jira mutation timeline, sprint signals, GitHub/PR context, setup checks, observability, transcript evidence, and copyable Slack recap.
   - Added admin/status endpoints for `/setup/status`, `/observability/status`, `/voice/providers`, and `/identity/status`.
-- Updated README and `.env.example` for Jira, audit, and rate-limit proxy behavior.
+- Updated README runtime variable reference for Jira, audit, and rate-limit proxy behavior.
 - Added Terragrunt/Terraform AWS deployment shape:
   - Root Terragrunt config generates S3 state, DynamoDB locking, and AWS provider config in `us-east-1`.
   - AWS provider is pinned to `hashicorp/aws = 6.45.0`; `hashicorp/cloudinit = 2.4.0` is pinned for the fck-nat module.

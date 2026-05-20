@@ -381,7 +381,7 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `AUDIT_LOG_PATH` | _unset_ | Both | Optional JSONL file for board mutation and Jira refresh audit events |
 | `TRUST_PROXY_HEADERS` | _unset_ | Both | Set to `1` behind a trusted reverse proxy so rate limiting uses forwarded client IP headers |
 
-Local development should use macOS Keychain via the scripts above. `.env.example` is retained only as an environment variable reference; do not copy it into a local `.env`.
+Local development should use macOS Keychain via the scripts above. The table above is the environment variable reference; do not create or copy a local project `.env` file.
 
 ## Speech-to-Speech Providers
 
@@ -509,7 +509,6 @@ public/
   screenshot.png        README screenshot
 Dockerfile              Multi-stage build (Go 1.26 + libopus)
 docker-compose.yml      LiveKit + app for local Nova Sonic dev
-.env.example            Environment variable reference only; do not copy to local .env
 ```
 
 ## Key Files

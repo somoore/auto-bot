@@ -116,7 +116,7 @@ fixtures.
 
 When changing behavior, update the docs nearest to the behavior:
 
-1. Public setup/runtime change: `README.md` and `.env.example`.
+1. Public setup/runtime change: `README.md` and the relevant Keychain/Secrets Manager scripts or docs.
 2. HTTP route change: `docs/api/openapi.yaml` and the README endpoint table when user-facing.
 3. Extension contract change: `internal/core` Go docs, `docs/extension-contracts.md`, templates, and contract tests.
 4. Provider or connector behavior change: relevant `examples/` README and evaluation fixture.
