@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "aws_livekit_hardening_checklist",
+  "id": "aws_livekit_hardening_proof_v1",
+  "description": "Evidence checklist for proving self-hosted LiveKit on AWS before public use.",
+  "areas": [
+    {
+      "id": "udp_turn",
+      "name": "UDP and TURN reachability",
+      "items": [
+        {
+          "id": "direct_udp_ice_candidate",
+          "status": "not_run",
+          "command": "Deploy with LIVEKIT_DEPLOYMENT_MODE=self-hosted, join from a home network, capture chrome://webrtc-internals, and confirm the selected pair uses the NLB UDP media port.",
+          "evidence_required": "webrtc-internals dump, selected ICE candidate pair, NLB target health, and LiveKit participant connection logs.",
+          "pass_criteria": "At least two external networks establish direct UDP media to the advertised LiveKit endpoint without TCP fallback."
+        },
+        {
+          "id": "turn_udp_relay",
+          "status": "not_run",
+          "command": "Join from a restricted network with direct UDP blocked and confirm embedded TURN/UDP relays audio and video.",
+          "evidence_required": "webrtc-internals relay candidate, TURN listener health, and uninterrupted audio/video for 10 minutes.",
+          "pass_criteria": "Participant media remains connected through relay candidates with no audible dropouts."
+        },
+        {
+          "id": "turn_tls_fallback",
+          "status": "not_run",
+          "command": "Enable LIVEKIT_TURN_TLS_ENABLED and join from a network that only permits TCP/TLS egress.",
+          "evidence_required": "TURN/TLS DNS record, ACM certificate ARN, relay candidate evidence, and LiveKit connection logs.",
+          "pass_criteria": "Browser connects through TURN/TLS and keeps media alive for 10 minutes."
+        }
+      ]
+    },
+    {
+      "id": "reconnect",
+      "name": "Reconnect behavior",
+      "items": [
+        {
+          "id": "browser_refresh_rejoin",
+          "status": "not_run",
+          "command": "Join a live meeting, refresh one participant browser, and verify the same participant identity rejoins without losing meeting state.",
+          "evidence_required": "browser console log, app WebSocket reconnect log, LiveKit participant leave/join log, and meeting control center state before/after.",
+          "pass_criteria": "Participant rejoins in under 10 seconds and the agent keeps prior spoken/not-spoken/blocker state."
+        },
+        {
+          "id": "network_drop_recovery",
+          "status": "not_run",
+          "command": "Disable Wi-Fi for 15 seconds during a meeting, re-enable it, and capture room recovery behavior.",
+          "evidence_required": "client timestamps, LiveKit reconnect events, transcript continuity, and absence of duplicate Jira mutations.",
+          "pass_criteria": "Client reconnects, duplicate suppression holds, and the agent does not repeat already-executed Jira writes."
+        }
+      ]
+    },
+    {
+      "id": "cloudwatch_alarms",
+      "name": "CloudWatch alarms",
+      "items": [
+        {
+          "id": "media_connection_failure_alarm",
+          "status": "not_run",
+          "command": "Create or verify alarms for LiveKit task restarts, unhealthy NLB targets, Redis saturation, and app LiveKit token failures.",
+          "evidence_required": "CloudWatch alarm ARNs, metric math or metric names, thresholds, and a forced-alarm screenshot or alarm history entry.",
+          "pass_criteria": "Each alarm enters ALARM during a controlled failure and returns OK after recovery."
+        },
+        {
+          "id": "bedrock_stream_alarm",
+          "status": "not_run",
+          "command": "Force Nova Sonic stream restart conditions and verify app logs/metrics produce an alarmable signal.",
+          "evidence_required": "CloudWatch log query, alarm definition, and alert history for Bedrock stream restart or failure count.",
+          "pass_criteria": "A failed or rapidly restarting Bedrock stream is visible within 2 minutes."
+        }
+      ]
+    },
+    {
+      "id": "livekit_cloud_switch",
+      "name": "LiveKit Cloud switch",
+      "items": [
+        {
+          "id": "terraform_bit_flip_plan",
+          "status": "not_run",
+          "command": "Run a Terraform/Terragrunt plan with LIVEKIT_DEPLOYMENT_MODE=cloud and LIVEKIT_CLOUD_URL set.",
+          "evidence_required": "Plan output showing self-hosted LiveKit ECS/NLB/Redis resources skipped and app configured with the LiveKit Cloud URL.",
+          "pass_criteria": "Plan contains no self-hosted LiveKit task, NLB, or Redis creation and keeps app service intact."
+        },
+        {
+          "id": "cloud_room_smoke",
+          "status": "not_run",
+          "command": "Deploy cloud mode, join two participants, and run a 10-minute standup smoke test.",
+          "evidence_required": "LiveKit Cloud room analytics, app logs, transcript events, and Jira mutation audit entries.",
+          "pass_criteria": "Both participants hear the agent, transcripts flow, and Jira write-through behavior matches the local fixture expectations."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "extension_contracts",
+  "id": "extension_contracts_v1",
+  "description": "Open-source extension surface that keeps voice providers, connectors, model providers, ledger replay, and import boundaries gradeable.",
+  "required_voice_providers": [
+    "nova-sonic",
+    "openai-realtime",
+    "openai-realtime-translate",
+    "openai-realtime-whisper",
+    "livekit-cloud"
+  ],
+  "required_connectors": [
+    "local-board",
+    "jira",
+    "github"
+  ],
+  "required_model_providers": [
+    "bedrock"
+  ],
+  "required_contracts": [
+    "voice_provider_contract",
+    "connector_contract",
+    "model_provider_contract",
+    "action_ledger_contract",
+    "import_boundary_check"
+  ],
+  "quality_gates": [
+    "go_mod_tidy_no_diff",
+    "go_mod_verify",
+    "go_list_deps",
+    "go_vet",
+    "go_test_all",
+    "goimports",
+    "golangci_lint_optional",
+    "govulncheck_optional",
+    "gosec_optional",
+    "pre_commit_hooks_pinned",
+    "github_actions_pinned_sha",
+    "openapi_documented",
+    "persistent_action_replay_ledger"
+  ]
+}

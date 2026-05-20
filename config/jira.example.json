@@ -1,0 +1,41 @@
+{
+  "base_url": "https://your-site.atlassian.net",
+  "email": "you@example.com",
+  "api_token_file": "/absolute/path/to/jira-api-token",
+  "project_key": "KAN",
+  "issue_type": "Task",
+  "board_id": 1,
+  "jql": "project = KAN ORDER BY updated DESC",
+  "status_mappings": {
+    "To Do": "Backlog",
+    "In Progress": "In Progress",
+    "Blocked": "Blocked",
+    "Done": "Done"
+  },
+  "transitions": {
+    "Backlog": "11",
+    "In Progress": "21",
+    "Blocked": "41",
+    "Done": "31",
+    "Deleted": "31"
+  },
+  "required_transition_fields": {
+    "Done": {
+      "resolution": {
+        "name": "Done"
+      }
+    }
+  },
+  "blocked_flag_field": "customfield_10021",
+  "blocked_flag_value": "Impediment",
+  "story_points_field": "customfield_10016",
+  "sprint_field": "customfield_10020",
+  "epic_link_field": "customfield_10014",
+  "rank_custom_field_id": 10019,
+  "custom_field_mappings": {
+    "Customer Impact": "customfield_10042"
+  },
+  "delete_transition": "31",
+  "poll_interval_seconds": 30,
+  "webhook_secret": "replace-with-random-shared-secret"
+}

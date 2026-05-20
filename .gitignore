@@ -1,6 +1,6 @@
 # ---------- Go ----------
 # Compiled binaries
-auto-bot
+/auto-bot
 /server
 openai-realtime-meeting-assistant
 *.exe
@@ -15,6 +15,24 @@ openai-realtime-meeting-assistant
 *.prof
 cover.html
 coverage.txt
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# ---------- Browser / test artifacts ----------
+.playwright-mcp/
+playwright-report/
+test-results/
+blob-report/
+
+# ---------- Local app data ----------
+*.sqlite
+*.sqlite3
+*.db
 
 # Module vendoring (uncomment if you vendor)
 # vendor/
@@ -72,3 +90,4 @@ $RECYCLE.BIN/
 # docker-compose.yml and Dockerfile are tracked;
 # ignore runtime volumes and overrides
 docker-compose.override.yml
+var/

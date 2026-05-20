@@ -1,0 +1,40 @@
+package examplevoice
+
+import (
+	"context"
+	"time"
+
+	"github.com/openai/openai-realtime-meeting-assistant/internal/core"
+)
+
+type Provider struct {
+	client *Client
+}
+
+func (provider Provider) Name() string {
+	return "example-voice"
+}
+
+func (provider Provider) DisplayName() string {
+	return "Example Voice"
+}
+
+func (provider Provider) Capabilities() core.VoiceCapabilities {
+	return core.VoiceCapabilities{
+		FullDuplex:      true,
+		Transport:       "example",
+		Modalities:      []string{"audio", "transcript"},
+		SupportsBargeIn: true,
+	}
+}
+
+func (provider Provider) Health(ctx context.Context) core.VoiceHealth {
+	return core.VoiceHealth{OK: provider.client != nil, Status: "ready", CheckedAt: time.Now().UTC()}
+}
+
+func (provider Provider) StartSession(ctx context.Context, request core.VoiceSessionRequest) (core.VoiceSession, error) {
+	// Create provider session, start streaming events, and return a closable handle.
+	return nil, nil
+}
+
+type Client struct{}

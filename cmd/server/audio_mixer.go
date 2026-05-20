@@ -197,7 +197,7 @@ func mixAudioFrame(sources map[string]*audioSource) []int16 {
 		for _, source := range readySources {
 			sampleSum += int32(source.buffer[sampleIndex])
 		}
-		mixedPCM[sampleIndex] = clampPCM16(sampleSum / int32(len(readySources)))
+		mixedPCM[sampleIndex] = clampPCM16(sampleSum / audioMixDivisor(len(readySources)))
 	}
 
 	for _, source := range readySources {
@@ -205,6 +205,16 @@ func mixAudioFrame(sources map[string]*audioSource) []int16 {
 	}
 
 	return mixedPCM
+}
+
+func audioMixDivisor(count int) int32 {
+	if count <= 0 {
+		return 1
+	}
+	if count > 1<<31-1 {
+		return 1<<31 - 1
+	}
+	return int32(count) // #nosec G115 -- count is bounded to int32 range immediately above.
 }
 
 func clampPCM16(sample int32) int16 {

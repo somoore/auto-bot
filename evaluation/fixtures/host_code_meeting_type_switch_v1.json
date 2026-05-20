@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "meeting_evaluation",
+  "id": "host_code_meeting_type_switch_v1",
+  "description": "Host creates a code-gated meeting, rejects a wrong participant code, accepts the generated code, and switches meeting modes in session.",
+  "meeting": {
+    "initial_type": "general",
+    "host": "Scott Moore",
+    "participants": [
+      {
+        "id": "host-scott",
+        "name": "Scott Moore",
+        "role": "host",
+        "expected_to_speak": true
+      },
+      {
+        "id": "eng-avery",
+        "name": "Avery Chen",
+        "role": "participant",
+        "expected_to_speak": true
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": "e01",
+      "type": "host_setup",
+      "speaker": "Scott Moore",
+      "text": "Create a general meeting and generate the participant join code.",
+      "tags": [
+        "host_code_required"
+      ]
+    },
+    {
+      "id": "e02",
+      "type": "join_attempt",
+      "speaker": "Casey Guest",
+      "text": "Casey tries to join with code 111111.",
+      "tags": [
+        "wrong_code_rejected"
+      ],
+      "metadata": {
+        "code_valid": false
+      }
+    },
+    {
+      "id": "e03",
+      "type": "join_attempt",
+      "speaker": "Avery Chen",
+      "text": "Avery joins using the generated meeting code.",
+      "tags": [
+        "participant_code_accepted"
+      ],
+      "metadata": {
+        "code_valid": true
+      }
+    },
+    {
+      "id": "e04",
+      "type": "meeting_type_switch",
+      "speaker": "Scott Moore",
+      "text": "Switch this into a standup.",
+      "tags": [
+        "meeting_type_switch"
+      ],
+      "metadata": {
+        "from": "general",
+        "to": "standup"
+      }
+    },
+    {
+      "id": "e05",
+      "type": "meeting_type_switch",
+      "speaker": "Scott Moore",
+      "text": "Now make this a one on one with Avery.",
+      "tags": [
+        "meeting_type_switch"
+      ],
+      "metadata": {
+        "from": "standup",
+        "to": "one_on_one"
+      }
+    },
+    {
+      "id": "e06",
+      "type": "meeting_type_switch",
+      "speaker": "Scott Moore",
+      "text": "Switch to sprint review mode.",
+      "tags": [
+        "meeting_type_switch"
+      ],
+      "metadata": {
+        "from": "one_on_one",
+        "to": "sprint_review"
+      }
+    },
+    {
+      "id": "e07",
+      "type": "meeting_type_switch",
+      "speaker": "Scott Moore",
+      "text": "Keep the rest open-ended for discussion.",
+      "tags": [
+        "meeting_type_switch"
+      ],
+      "metadata": {
+        "from": "sprint_review",
+        "to": "open_ended"
+      }
+    }
+  ],
+  "expected": {
+    "access_control": {
+      "requires_random_code": true,
+      "code_entropy_bits_min": 72,
+      "wrong_code_rejected": true,
+      "code_scoped_to_meeting": true,
+      "host_can_regenerate": true,
+      "participant_join_path": "participant enters generated code before LiveKit token is minted"
+    },
+    "meeting_type_transitions": [
+      {
+        "from": "general",
+        "to": "standup",
+        "trigger_event_id": "e04"
+      },
+      {
+        "from": "standup",
+        "to": "one_on_one",
+        "trigger_event_id": "e05"
+      },
+      {
+        "from": "one_on_one",
+        "to": "sprint_review",
+        "trigger_event_id": "e06"
+      },
+      {
+        "from": "sprint_review",
+        "to": "open_ended",
+        "trigger_event_id": "e07"
+      }
+    ],
+    "meeting_control_center": {
+      "spoken": [
+        "Scott Moore",
+        "Avery Chen"
+      ],
+      "not_spoken": [],
+      "blockers": [],
+      "decisions": [
+        "Meeting access requires the generated participant code.",
+        "The active meeting mode can change during the session."
+      ],
+      "action_items": [],
+      "pending_confirmations": [],
+      "jira_mutations": []
+    },
+    "voice_reliability_signals": [],
+    "failure_states": [],
+    "jira_actions": [],
+    "forbidden_actions": [],
+    "confirmations": [],
+    "extractions": [],
+    "recap": {
+      "slack_ready_summary": false,
+      "jira_changes_summary": false,
+      "blockers": [],
+      "action_items_by_owner": [],
+      "unresolved_questions": [],
+      "changed_since_start": []
+    },
+    "confidence_explanations": []
+  }
+}
