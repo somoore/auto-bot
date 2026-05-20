@@ -249,6 +249,117 @@ func TestNovaSonicTextOutputUsesContentStartRoleAndStage(t *testing.T) {
 	}
 }
 
+func TestNovaSonicTextOutputTranslatesAudioUserTranscriptForRoom(t *testing.T) {
+	board := newKanbanBoard()
+	app := newNovaSonicApp(board)
+	app.speakerMu.Lock()
+	app.activeSpeakers = []string{"scottmoore"}
+	app.speakerMu.Unlock()
+	model := useFakeAgentTranslationModel(t, `{"language":"es-DO","english_text":"I need to create a new task."}`)
+
+	app.handleContentStart(json.RawMessage(`{
+		"contentId":"content-es-user",
+		"type":"TEXT",
+		"role":"USER",
+		"additionalModelFields":"{\"generationStage\":\"FINAL\"}"
+	}`))
+	app.handleTextOutput(json.RawMessage(`{
+		"contentId":"content-es-user",
+		"content":"Necesito crear una tarea."
+	}`))
+
+	if model.calls != 1 {
+		t.Fatalf("translation model calls = %d, want 1", model.calls)
+	}
+	board.mu.Lock()
+	defer board.mu.Unlock()
+	if len(board.lastTranscripts) != 1 {
+		t.Fatalf("transcript count = %d, want 1", len(board.lastTranscripts))
+	}
+	got := board.lastTranscripts[0]
+	if got.Text != "I need to create a new task." {
+		t.Fatalf("working transcript text = %q, want English translation", got.Text)
+	}
+	if got.OriginalText != "Necesito crear una tarea." || got.TranslatedText != "I need to create a new task." {
+		t.Fatalf("translation metadata = %#v, want original Spanish and English translation", got)
+	}
+	if got.Language != "es-do" || got.InputMode != "audio" {
+		t.Fatalf("language/input mode = %q/%q, want es-do/audio", got.Language, got.InputMode)
+	}
+}
+
+func TestNovaSonicAssistantTranscriptGetsEnglishFallbackForRoom(t *testing.T) {
+	board := newKanbanBoard()
+	board.UpdateResponseLanguagePolicy("Scott", normalizedMeetingText{
+		Language:          "es-DO",
+		OriginalText:      "Necesito crear una tarea.",
+		EnglishText:       "I need to create a new task.",
+		TranslationStatus: "translated",
+	})
+	app := newNovaSonicApp(board)
+	model := useFakeAgentTranslationModel(t, `{"language":"es-DO","english_text":"Perfect! I created the task."}`)
+
+	app.handleContentStart(json.RawMessage(`{
+		"contentId":"content-es-assistant",
+		"type":"TEXT",
+		"role":"ASSISTANT",
+		"additionalModelFields":"{\"generationStage\":\"FINAL\"}"
+	}`))
+	app.handleTextOutput(json.RawMessage(`{
+		"contentId":"content-es-assistant",
+		"content":"Perfecto! He creado la tarea."
+	}`))
+
+	if model.calls != 1 {
+		t.Fatalf("translation model calls = %d, want 1", model.calls)
+	}
+	board.mu.Lock()
+	defer board.mu.Unlock()
+	if len(board.lastTranscripts) != 1 {
+		t.Fatalf("transcript count = %d, want 1", len(board.lastTranscripts))
+	}
+	got := board.lastTranscripts[0]
+	if got.Role != "assistant" {
+		t.Fatalf("transcript role = %q, want assistant", got.Role)
+	}
+	if got.Text != "Perfect! I created the task." {
+		t.Fatalf("working transcript text = %q, want English fallback", got.Text)
+	}
+	if got.OriginalText != "Perfecto! He creado la tarea." || got.TranslatedText != "Perfect! I created the task." {
+		t.Fatalf("assistant translation metadata = %#v, want original Spanish and English fallback", got)
+	}
+	if got.Language != "es-do" || got.InputMode != "audio" {
+		t.Fatalf("language/input mode = %q/%q, want es-do/audio", got.Language, got.InputMode)
+	}
+}
+
+func TestNovaSonicResponseLanguageRefreshEventsResetEnglishTurn(t *testing.T) {
+	events := novaSonicResponseLanguageRefreshEvents("prompt-1", "language-1", "Scott", normalizedMeetingText{
+		OriginalText:      "hello",
+		EnglishText:       "hello",
+		Language:          "en",
+		InputMode:         "audio",
+		TranslationStatus: "not_needed",
+	})
+	if len(events) != 3 {
+		t.Fatalf("refresh event count = %d, want 3", len(events))
+	}
+	var text struct {
+		Event map[string]struct {
+			Content string `json:"content"`
+		} `json:"event"`
+	}
+	if err := json.Unmarshal(events[1], &text); err != nil {
+		t.Fatalf("unmarshal textInput: %v", err)
+	}
+	content := text.Event["textInput"].Content
+	for _, want := range []string{"reply in English only", "Do not continue any previous non-English language", "not a participant request"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("English language refresh missing %q: %s", want, content)
+		}
+	}
+}
+
 func TestNovaSonicTextOutputSkipsSpeculativeAssistantPreview(t *testing.T) {
 	board := newKanbanBoard()
 	app := newNovaSonicApp(board)
@@ -269,4 +380,16 @@ func TestNovaSonicTextOutputSkipsSpeculativeAssistantPreview(t *testing.T) {
 	if len(board.lastTranscripts) != 0 {
 		t.Fatalf("transcript count = %d, want 0 for speculative text", len(board.lastTranscripts))
 	}
+}
+
+func useFakeAgentTranslationModel(t *testing.T, response string) *fakeChatTranslationModel {
+	t.Helper()
+	previous := agentOrchestrator
+	model := &fakeChatTranslationModel{
+		t:        t,
+		response: []byte(response),
+	}
+	agentOrchestrator = &agentRunOrchestrator{model: model}
+	t.Cleanup(func() { agentOrchestrator = previous })
+	return model
 }

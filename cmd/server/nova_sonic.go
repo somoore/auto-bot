@@ -57,8 +57,9 @@ type novaSonicApp struct {
 	outputMu       sync.Mutex
 	outputContexts map[string]novaSonicOutputContext
 
-	speakerMu      sync.Mutex
-	activeSpeakers []string
+	speakerMu       sync.Mutex
+	activeSpeakers  []string
+	lastUserSpeaker string
 
 	audioMu                sync.Mutex
 	activeAudioTracks      map[string]string
@@ -488,6 +489,25 @@ func (app *novaSonicApp) currentSpeakerLabel() string {
 	return strings.Join(app.activeSpeakers, ", ")
 }
 
+func (app *novaSonicApp) rememberUserSpeaker(speaker string) {
+	speaker = strings.TrimSpace(speaker)
+	if speaker == "" {
+		return
+	}
+	app.speakerMu.Lock()
+	app.lastUserSpeaker = speaker
+	app.speakerMu.Unlock()
+}
+
+func (app *novaSonicApp) currentOrLastSpeakerLabel() string {
+	app.speakerMu.Lock()
+	defer app.speakerMu.Unlock()
+	if len(app.activeSpeakers) > 0 {
+		return strings.Join(app.activeSpeakers, ", ")
+	}
+	return app.lastUserSpeaker
+}
+
 func (app *novaSonicApp) sendInitSequence() error {
 	voiceID := getEnvDefault("NOVA_SONIC_VOICE", "matthew")
 
@@ -776,27 +796,30 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 	case "USER":
 		log.Infof("Nova Sonic ASR: user transcript received")
 		speaker := app.currentSpeakerLabel()
-		app.board.ClearResponseLanguagePolicy()
-		app.board.RecordTranscript("user", speaker, out.Content)
-		broadcastKanbanEvent("transcription", map[string]any{
-			"role":    "user",
-			"speaker": speaker,
-			"text":    out.Content,
-		})
+		app.rememberUserSpeaker(speaker)
+		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+		normalized := normalizeTranscriptForRoom(context.Background(), app.board, "user", speaker, out.Content, "audio", "auto", chatTranslationModelClient())
+		recordRoomTranscript(app.board, "user", speaker, normalized, createdAt)
+		broadcastKanbanEvent("transcription", roomTranscriptPayload("user", speaker, normalized, createdAt))
+		if err := app.sendResponseLanguageRefresh(speaker, normalized); err != nil {
+			log.Errorf("Nova Sonic: failed to refresh response language policy: %v", err)
+		}
 	case "ASSISTANT":
 		log.Infof("Nova Sonic assistant: response text received")
-		app.board.RecordTranscript("assistant", "Assistant", out.Content)
-		broadcastKanbanEvent("transcription", map[string]any{
-			"role": "assistant",
-			"text": out.Content,
-		})
+		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+		languageHint := "auto"
+		if policy := app.board.activeResponseLanguagePolicy(); policy != nil {
+			languageHint = policy.SourceLanguage
+		}
+		normalized := normalizeTranscriptForRoom(context.Background(), app.board, "assistant", "Assistant", out.Content, "audio", languageHint, chatTranslationModelClient())
+		recordRoomTranscript(app.board, "assistant", "Assistant", normalized, createdAt)
+		broadcastKanbanEvent("transcription", roomTranscriptPayload("assistant", "Assistant", normalized, createdAt))
 	default:
 		log.Warnf("Nova Sonic: textOutput with unexpected role=%s; broadcasting as assistant text", role)
-		app.board.RecordTranscript("assistant", "Assistant", out.Content)
-		broadcastKanbanEvent("transcription", map[string]any{
-			"role": "assistant",
-			"text": out.Content,
-		})
+		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+		normalized := normalizeTranscriptForRoom(context.Background(), app.board, "assistant", "Assistant", out.Content, "audio", "auto", chatTranslationModelClient())
+		recordRoomTranscript(app.board, "assistant", "Assistant", normalized, createdAt)
+		broadcastKanbanEvent("transcription", roomTranscriptPayload("assistant", "Assistant", normalized, createdAt))
 	}
 }
 
@@ -825,7 +848,7 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	var result map[string]any
 	var changed bool
 	var err error
-	if activeMeetingRequiresAuthenticatedHostForTool(tu.ToolName) {
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, app.currentOrLastSpeakerLabel()) {
 		result = hostOnlyToolResult(tu.ToolName)
 	} else {
 		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
@@ -986,6 +1009,16 @@ func (app *novaSonicApp) sendBoardContextRefresh() error {
 	return nil
 }
 
+func (app *novaSonicApp) sendResponseLanguageRefresh(speaker string, normalized normalizedMeetingText) error {
+	contentID := uuid.New().String()
+	for _, event := range novaSonicResponseLanguageRefreshEvents(app.promptID, contentID, speaker, normalized) {
+		if err := app.sendEvent(event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (app *novaSonicApp) SendTextMessage(speaker string, normalized normalizedMeetingText) error {
 	if app == nil {
 		return fmt.Errorf("nova sonic agent is not initialized")
@@ -1031,6 +1064,10 @@ func novaSonicBoardContextRefreshEvents(board *kanbanBoard, promptID string, con
 		fmt.Sprintf("Current sanitized Kanban board JSON: %s", board.ModelContextJSON()),
 	}, " ")
 	return novaSonicTextInputEvents(promptID, contentID, content, false)
+}
+
+func novaSonicResponseLanguageRefreshEvents(promptID string, contentID string, speaker string, normalized normalizedMeetingText) [][]byte {
+	return novaSonicTextInputEvents(promptID, contentID, meetingResponseLanguagePrompt(speaker, normalized), false)
 }
 
 func novaSonicTextInputEvents(promptID string, contentID string, content string, interactive bool) [][]byte {

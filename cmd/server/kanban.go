@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ const (
 type kanbanRealtimeEvent struct {
 	Type       string `json:"type,omitempty"`
 	Transcript string `json:"transcript,omitempty"`
+	Text       string `json:"text,omitempty"`
 	Name       string `json:"name,omitempty"`
 	Arguments  string `json:"arguments,omitempty"`
 	CallID     string `json:"call_id,omitempty"`
@@ -714,12 +716,19 @@ func (app *kanbanBoardApp) handleRealtimeEvent(raw []byte) {
 		}
 	case "conversation.item.input_audio_transcription.completed", "input_audio_buffer.transcription.completed":
 		if strings.TrimSpace(event.Transcript) != "" {
-			app.board.ClearResponseLanguagePolicy()
-			app.board.RecordTranscript("user", "", event.Transcript)
-			broadcastKanbanEvent("transcription", map[string]any{
-				"role": "user",
-				"text": event.Transcript,
-			})
+			app.broadcastRealtimeTranscript("user", "", event.Transcript, "auto")
+			if err := app.SendEvent(app.sessionUpdateEvent()); err != nil {
+				log.Errorf("Failed to refresh Realtime response language policy: %v", err)
+			}
+		}
+	case "response.audio_transcript.done", "response.output_text.done":
+		text := firstNonEmpty(event.Transcript, event.Text)
+		if strings.TrimSpace(text) != "" {
+			languageHint := "auto"
+			if policy := app.board.activeResponseLanguagePolicy(); policy != nil {
+				languageHint = policy.SourceLanguage
+			}
+			app.broadcastRealtimeTranscript("assistant", "Assistant", text, languageHint)
 		}
 	case "response.output_item.done":
 		if event.Item != nil && event.Item.Type == "function_call" {
@@ -744,6 +753,16 @@ func (app *kanbanBoardApp) handleRealtimeEvent(raw []byte) {
 	}
 }
 
+func (app *kanbanBoardApp) broadcastRealtimeTranscript(role string, speaker string, text string, languageHint string) {
+	if app == nil || app.board == nil {
+		return
+	}
+	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+	normalized := normalizeTranscriptForRoom(context.Background(), app.board, role, speaker, text, "audio", languageHint, chatTranslationModelClient())
+	recordRoomTranscript(app.board, role, speaker, normalized, createdAt)
+	broadcastKanbanEvent("transcription", roomTranscriptPayload(role, speaker, normalized, createdAt))
+}
+
 func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 	if strings.TrimSpace(outputItem.CallID) == "" {
 		log.Errorf("Ignoring Kanban tool call %q without call_id", outputItem.Name)
@@ -757,7 +776,7 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 	var result map[string]any
 	var changed bool
 	var err error
-	if activeMeetingRequiresAuthenticatedHostForTool(outputItem.Name) {
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool(outputItem.Name, "") {
 		result = hostOnlyToolResult(outputItem.Name)
 	} else {
 		result, changed, err = app.board.ApplyToolCallWithMeta(outputItem.Name, outputItem.Arguments, toolCallMeta{

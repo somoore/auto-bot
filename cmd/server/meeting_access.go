@@ -467,6 +467,77 @@ func (m *meetingAccessManager) isHost(ctx requestAuthContext) bool {
 	return ok && session.Role == meetingRoleHost
 }
 
+func (m *meetingAccessManager) voiceSpeakerHasHostAccess(speakerLabel string) bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if appAuthMode == "disabled" || !m.active {
+		return true
+	}
+
+	speakers := speakerIdentitiesFromLabel(speakerLabel)
+	if len(speakers) == 1 {
+		return m.identityIsHostLocked(speakers[0])
+	}
+	if len(speakers) == 0 {
+		return m.onlyHostSessionLocked()
+	}
+	return false
+}
+
+func (m *meetingAccessManager) identityIsHostLocked(identity string) bool {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return false
+	}
+	if identityEqual(identity, m.hostIdentity) {
+		return true
+	}
+	for _, session := range m.sessions {
+		if session.Role == meetingRoleHost && identityEqual(identity, session.Identity) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *meetingAccessManager) onlyHostSessionLocked() bool {
+	if len(m.sessions) == 0 {
+		return false
+	}
+	for _, session := range m.sessions {
+		if session.Role != meetingRoleHost {
+			return false
+		}
+	}
+	return true
+}
+
+func speakerIdentitiesFromLabel(label string) []string {
+	seen := map[string]string{}
+	for _, part := range strings.Split(label, ",") {
+		identity := normalizeParticipantIdentity(strings.TrimSpace(part))
+		if identity == "" {
+			continue
+		}
+		key := strings.ToLower(identity)
+		if _, ok := seen[key]; !ok {
+			seen[key] = identity
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for _, identity := range seen {
+		out = append(out, identity)
+	}
+	return out
+}
+
+func identityEqual(left string, right string) bool {
+	return strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right))
+}
+
 func (m *meetingAccessManager) isActive() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

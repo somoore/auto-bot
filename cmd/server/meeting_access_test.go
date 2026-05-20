@@ -186,7 +186,7 @@ func TestParticipantCannotRunHostOnlyKanbanCommands(t *testing.T) {
 		t.Fatal("host was not authorized")
 	}
 
-	for _, toolName := range []string{"confirm_action", "cancel_confirmation", "resolve_jira_conflict", "undo_last_mutation", "switch_meeting_type", "end_meeting"} {
+	for _, toolName := range []string{"confirm_action", "cancel_confirmation", "resolve_jira_conflict", "undo_last_mutation", "switch_meeting_type", "start_meeting", "end_meeting"} {
 		if kanbanCommandAllowed(participantCtx, toolName) {
 			t.Fatalf("participant was allowed to run host-only tool %q", toolName)
 		}
@@ -196,6 +196,84 @@ func TestParticipantCannotRunHostOnlyKanbanCommands(t *testing.T) {
 	}
 	if !kanbanCommandAllowed(participantCtx, "move_ticket") {
 		t.Fatal("participant should still be allowed to run non-host-only board commands")
+	}
+}
+
+func TestVoiceHostToolAllowedForAuthenticatedHostSpeaker(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	apiToken = "host-token"
+	appAuthMode = "token"
+	appEnvironment = "production"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+	meetingAccess = newMeetingAccessManager()
+	sharedBoard = newKanbanBoard()
+
+	hostCookie := createTestSessionCookie(t, "host-token", "scott")
+	setupRec := httptest.NewRecorder()
+	setupReq := httptest.NewRequest(http.MethodPost, "/meeting/setup", strings.NewReader(`{"meeting_type":"standup"}`))
+	setupReq.AddCookie(hostCookie)
+	setupMeetingHandler(setupRec, setupReq)
+	if setupRec.Code != http.StatusOK {
+		t.Fatalf("setup status = %d, body = %s", setupRec.Code, setupRec.Body.String())
+	}
+
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "scott") {
+		t.Fatal("host speaker was blocked from start_meeting")
+	}
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "scott, scott") {
+		t.Fatal("duplicate host speaker labels should still authorize start_meeting")
+	}
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("move_ticket", "sarah") {
+		t.Fatal("non-host-only voice tool should not require host")
+	}
+}
+
+func TestVoiceHostToolRejectsParticipantAndOverlappingSpeakers(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	apiToken = "host-token"
+	appAuthMode = "token"
+	appEnvironment = "production"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+	meetingAccess = newMeetingAccessManager()
+	sharedBoard = newKanbanBoard()
+
+	hostCookie := createTestSessionCookie(t, "host-token", "scott")
+	setupRec := httptest.NewRecorder()
+	setupReq := httptest.NewRequest(http.MethodPost, "/meeting/setup", strings.NewReader(`{"meeting_type":"standup"}`))
+	setupReq.AddCookie(hostCookie)
+	setupMeetingHandler(setupRec, setupReq)
+	if setupRec.Code != http.StatusOK {
+		t.Fatalf("setup status = %d, body = %s", setupRec.Code, setupRec.Body.String())
+	}
+	var setupResponse struct {
+		Meeting meetingAccessSnapshot `json:"meeting"`
+	}
+	if err := json.Unmarshal(setupRec.Body.Bytes(), &setupResponse); err != nil {
+		t.Fatal(err)
+	}
+	joinReq := httptest.NewRequest(http.MethodPost, "/meeting/join", strings.NewReader(`{"join_code":"`+setupResponse.Meeting.JoinCode+`","identity":"sarah"}`))
+	joinRec := httptest.NewRecorder()
+	joinMeetingHandler(joinRec, joinReq)
+	if joinRec.Code != http.StatusOK {
+		t.Fatalf("join status = %d, body = %s", joinRec.Code, joinRec.Body.String())
+	}
+
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "sarah") {
+		t.Fatal("participant speaker should be blocked from start_meeting")
+	}
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "scott, sarah") {
+		t.Fatal("overlapping host and participant speakers should not authorize host-only voice action")
+	}
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "") {
+		t.Fatal("unknown voice speaker should be blocked when participants are present")
 	}
 }
 

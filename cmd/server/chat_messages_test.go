@@ -49,6 +49,31 @@ func TestNormalizeMeetingTextEnglishNoop(t *testing.T) {
 	}
 }
 
+func TestNormalizeMeetingTextAutoEnglishNoop(t *testing.T) {
+	model := &fakeChatTranslationModel{
+		t:        t,
+		response: []byte(`{"language":"en","english_text":"should not be used"}`),
+	}
+
+	got := normalizeMeetingText(context.Background(), "I need to move EMAL-14 to in progress.", "auto", model)
+
+	if got.OriginalText != "I need to move EMAL-14 to in progress." || got.EnglishText != got.OriginalText {
+		t.Fatalf("normalized text = %#v, want original English unchanged", got)
+	}
+	if got.Language != "en" {
+		t.Fatalf("language = %q, want en", got.Language)
+	}
+	if got.Translated {
+		t.Fatalf("translated = true, want false")
+	}
+	if got.TranslationStatus != "not_needed" {
+		t.Fatalf("translation status = %q, want not_needed", got.TranslationStatus)
+	}
+	if model.calls != 0 {
+		t.Fatalf("translation model calls = %d, want 0", model.calls)
+	}
+}
+
 func TestNormalizeMeetingTextExplicitSpanishHintUsesModel(t *testing.T) {
 	model := &fakeChatTranslationModel{
 		t:        t,
@@ -74,7 +99,7 @@ func TestNormalizeMeetingTextExplicitSpanishHintUsesModel(t *testing.T) {
 	}
 }
 
-func TestNormalizeMeetingTextAutoDetectedSpanishAndIcelandicRequireTranslation(t *testing.T) {
+func TestNormalizeMeetingTextAutoDetectedNonEnglishRequiresTranslation(t *testing.T) {
 	tests := []struct {
 		name     string
 		original string
@@ -95,6 +120,27 @@ func TestNormalizeMeetingTextAutoDetectedSpanishAndIcelandicRequireTranslation(t
 			response: `{"language":"is","english_text":"I need to move EMAL-15 to done."}`,
 			language: "is",
 			english:  "I need to move EMAL-15 to done.",
+		},
+		{
+			name:     "turkish",
+			original: "Merhaba, yeni bir gorev olusturmam gerekiyor.",
+			response: `{"language":"tr","english_text":"Hello, I need to create a new task."}`,
+			language: "tr",
+			english:  "Hello, I need to create a new task.",
+		},
+		{
+			name:     "hindi",
+			original: "मुझे EMAL-15 को done में ले जाना है।",
+			response: `{"language":"hi","english_text":"I need to move EMAL-15 to done."}`,
+			language: "hi",
+			english:  "I need to move EMAL-15 to done.",
+		},
+		{
+			name:     "finnish",
+			original: "Tarvitsen uuden tehtavan CrowdStrike-skannausta varten.",
+			response: `{"language":"fi","english_text":"I need a new task for CrowdStrike scanning."}`,
+			language: "fi",
+			english:  "I need a new task for CrowdStrike scanning.",
 		},
 	}
 
@@ -243,6 +289,62 @@ func TestResponseLanguagePolicyAnnotatesToolResult(t *testing.T) {
 	for _, want := range []string{"response_language_policy", "es-do", "For the room:", "every assistant message", "English-only follow-up fragment"} {
 		if !strings.Contains(lowered, strings.ToLower(want)) {
 			t.Fatalf("model-safe result missing %q: %s", want, raw)
+		}
+	}
+}
+
+func TestMeetingResponseLanguagePromptResetsEnglishAudioTurn(t *testing.T) {
+	prompt := meetingResponseLanguagePrompt("Scott", normalizedMeetingText{
+		OriginalText:      "hello",
+		EnglishText:       "hello",
+		Language:          "en",
+		InputMode:         "audio",
+		TranslationStatus: "not_needed",
+	})
+
+	for _, want := range []string{"reply in English only", "Do not continue any previous non-English language", "Use the bilingual native-language plus 'For the room:' English pattern only when the latest live participant input is non-English"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("English policy prompt missing %q: %s", want, prompt)
+		}
+	}
+}
+
+func TestMeetingResponseLanguagePromptRequiresNativeAndRoomEnglishForNonEnglishAudio(t *testing.T) {
+	prompt := meetingResponseLanguagePrompt("Aylin", normalizedMeetingText{
+		OriginalText:      "Merhaba, yeni bir gorev olusturmam gerekiyor.",
+		EnglishText:       "Hello, I need to create a new task.",
+		Language:          "tr",
+		InputMode:         "audio",
+		Translated:        true,
+		TranslationStatus: "translated",
+	})
+
+	for _, want := range []string{"first answer Aylin in tr", "For the room:", "provide the English meaning or outcome", "speak both the native-language reply", "Use English for all Jira"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("non-English policy prompt missing %q: %s", want, prompt)
+		}
+	}
+}
+
+func TestCurrentResponseLanguageInstructionDefaultsToEnglishAfterClear(t *testing.T) {
+	board := newKanbanBoard()
+	board.UpdateResponseLanguagePolicy("Scott", normalizedMeetingText{
+		Language:          "es-DO",
+		OriginalText:      "Necesito crear una tarea nueva.",
+		EnglishText:       "I need to create a new task.",
+		TranslationStatus: "translated",
+	})
+	board.UpdateResponseLanguagePolicy("Scott", normalizedMeetingText{
+		Language:          "en",
+		OriginalText:      "why are you speaking Spanish?",
+		EnglishText:       "why are you speaking Spanish?",
+		TranslationStatus: "not_needed",
+	})
+
+	instruction := board.currentResponseLanguageInstruction()
+	for _, want := range []string{"Current response-language policy: English", "Do not carry over a non-English language"} {
+		if !strings.Contains(instruction, want) {
+			t.Fatalf("English current policy missing %q: %s", want, instruction)
 		}
 	}
 }
