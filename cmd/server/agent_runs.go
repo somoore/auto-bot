@@ -10,32 +10,55 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/somoore/auto-bot/internal/agent"
 )
 
+// Default Bedrock model IDs for the PM (classification) and review passes are
+// aliased to the canonical constants in internal/agent.
 const (
-	defaultAgentPMModel     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-	defaultAgentReviewModel = "us.anthropic.claude-sonnet-4-6"
+	defaultAgentPMModel     = agent.DefaultPMModel
+	defaultAgentReviewModel = agent.DefaultReviewModel
 )
 
-type agentRunStatus string
+// agentRunStatus and the canonical Run lifecycle constants are aliased to the
+// pure domain types in internal/agent. Behavior in cmd/server is unchanged;
+// the aliases let existing code keep referring to the local names.
+type agentRunStatus = agent.RunStatus
 
 const (
-	agentRunQueued          agentRunStatus = "queued"
-	agentRunClassifying     agentRunStatus = "classifying"
-	agentRunFetchingContext agentRunStatus = "fetching_context"
-	agentRunReviewing       agentRunStatus = "reviewing"
-	agentRunPublishing      agentRunStatus = "publishing"
-	agentRunRetrying        agentRunStatus = "retrying"
-	agentRunNeedsInput      agentRunStatus = "needs_input"
-	agentRunCompleted       agentRunStatus = "completed"
-	agentRunFailed          agentRunStatus = "failed"
-	agentRunUnsupported     agentRunStatus = "unsupported"
-	agentRunCancelled       agentRunStatus = "cancelled"
-	agentRunTakenOver       agentRunStatus = "taken_over"
+	agentRunQueued          = agent.StatusQueued
+	agentRunClassifying     = agent.StatusClassifying
+	agentRunFetchingContext = agent.StatusFetchingContext
+	agentRunReviewing       = agent.StatusReviewing
+	agentRunPublishing      = agent.StatusPublishing
+	agentRunRetrying        = agent.StatusRetrying
+	agentRunNeedsInput      = agent.StatusNeedsInput
+	agentRunCompleted       = agent.StatusCompleted
+	agentRunFailed          = agent.StatusFailed
+	agentRunUnsupported     = agent.StatusUnsupported
+	agentRunCancelled       = agent.StatusCancelled
+	agentRunTakenOver       = agent.StatusTakenOver
+)
+
+// agentRun sub-types (Classification, CodeReviewFinding, Checkpoint, RunView)
+// are aliased to internal/agent so the JSON shape, field tags, and value
+// identity are shared with future internal packages. See internal/agent/
+// types.go for the canonical definitions.
+//
+// agentRun itself stays here because it carries methods (addCheckpoint, View)
+// tied to cmd/server helpers; promoting it to internal/agent would require
+// renaming the unexported methods and is deferred to Sprint 1.
+type (
+	agentClassification = agent.Classification
+	codeReviewFinding   = agent.CodeReviewFinding
+	agentRunCheckpoint  = agent.Checkpoint
+	agentRunView        = agent.RunView
 )
 
 // agentRun is the persisted internal state for an autonomous Bedrock-backed
-// Jira/GitHub run.
+// Jira/GitHub run. Field layout mirrors agent.Run; the two are kept in sync
+// until the cmd/server-bound methods on agentRun move alongside it.
 type agentRun struct {
 	RunID              string               `json:"run_id"`
 	BoardID            string               `json:"board_id"`
@@ -58,79 +81,6 @@ type agentRun struct {
 	ReviewModel        string               `json:"review_model,omitempty"`
 	Classification     agentClassification  `json:"classification,omitempty"`
 	ReviewLens         string               `json:"review_lens,omitempty"`
-	Findings           []codeReviewFinding  `json:"findings,omitempty"`
-	Summary            string               `json:"summary,omitempty"`
-	PublishWarnings    []string             `json:"publish_warnings,omitempty"`
-	CostBudgetCents    int                  `json:"cost_budget_cents,omitempty"`
-	EstimatedCostCents int                  `json:"estimated_cost_cents,omitempty"`
-	ModelCalls         int                  `json:"model_calls,omitempty"`
-	JiraCommentPosted  bool                 `json:"jira_comment_posted"`
-	PRReviewPosted     bool                 `json:"pr_review_posted"`
-	Error              string               `json:"error,omitempty"`
-	Checkpoints        []agentRunCheckpoint `json:"checkpoints,omitempty"`
-	CreatedAt          string               `json:"created_at"`
-	UpdatedAt          string               `json:"updated_at"`
-	StartedAt          string               `json:"started_at,omitempty"`
-	CompletedAt        string               `json:"completed_at,omitempty"`
-}
-
-type agentClassification struct {
-	RequestType string   `json:"request_type,omitempty"`
-	Specialist  string   `json:"specialist,omitempty"`
-	Confidence  float64  `json:"confidence,omitempty"`
-	Reasons     []string `json:"reasons,omitempty"`
-	Needs       []string `json:"needs,omitempty"`
-}
-
-// codeReviewFinding is the normalized finding shape used for Jira comments,
-// optional GitHub PR reviews, and meeting intelligence.
-type codeReviewFinding struct {
-	Severity        string   `json:"severity"`
-	Category        string   `json:"category,omitempty"`
-	CWE             string   `json:"cwe,omitempty"`
-	Title           string   `json:"title"`
-	File            string   `json:"file,omitempty"`
-	Line            int      `json:"line,omitempty"`
-	Body            string   `json:"body"`
-	Evidence        string   `json:"evidence,omitempty"`
-	Impact          string   `json:"impact,omitempty"`
-	ExploitScenario string   `json:"exploit_scenario,omitempty"`
-	SuggestedFix    string   `json:"suggested_fix,omitempty"`
-	Tests           []string `json:"tests,omitempty"`
-	Confidence      float64  `json:"confidence,omitempty"`
-}
-
-type agentRunCheckpoint struct {
-	At      string         `json:"at"`
-	Status  agentRunStatus `json:"status"`
-	Step    string         `json:"step,omitempty"`
-	Message string         `json:"message"`
-}
-
-// agentRunView is the client-safe run timeline shape shown in the live drawer
-// and post-meeting intelligence report.
-type agentRunView struct {
-	RunID              string               `json:"run_id"`
-	CardID             string               `json:"card_id"`
-	JiraIssueKey       string               `json:"jira_issue_key,omitempty"`
-	CardTitle          string               `json:"card_title,omitempty"`
-	Objective          string               `json:"objective,omitempty"`
-	RequestedBy        string               `json:"requested_by,omitempty"`
-	RetryOf            string               `json:"retry_of,omitempty"`
-	AgentProfile       string               `json:"agent_profile,omitempty"`
-	RequestType        string               `json:"request_type,omitempty"`
-	Specialist         string               `json:"specialist,omitempty"`
-	Status             agentRunStatus       `json:"status"`
-	CurrentStep        string               `json:"current_step,omitempty"`
-	Repo               string               `json:"repo,omitempty"`
-	Branch             string               `json:"branch,omitempty"`
-	PullRequestNumber  int                  `json:"pull_request_number,omitempty"`
-	PullRequestURL     string               `json:"pull_request_url,omitempty"`
-	PMModel            string               `json:"pm_model,omitempty"`
-	ReviewModel        string               `json:"review_model,omitempty"`
-	Classification     agentClassification  `json:"classification,omitempty"`
-	ReviewLens         string               `json:"review_lens,omitempty"`
-	FindingCount       int                  `json:"finding_count"`
 	Findings           []codeReviewFinding  `json:"findings,omitempty"`
 	Summary            string               `json:"summary,omitempty"`
 	PublishWarnings    []string             `json:"publish_warnings,omitempty"`
