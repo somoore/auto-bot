@@ -1,25 +1,64 @@
-import { useMemo } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useBoardSocket } from "./lib/useBoardSocket"
 import { BoardHeader } from "./components/BoardHeader"
 import { BoardSubBar } from "./components/BoardSubBar"
 import { BoardColumn } from "./components/BoardColumn"
+import { CardDrawer } from "./components/CardDrawer"
 import { EmptyState } from "./components/EmptyState"
 import { SignInGate } from "./components/SignInGate"
 import {
   CARD_STATUSES,
+  type AgentRunView,
   type Card,
   type CardStatus,
-  type RunQuestion,
 } from "./types/board"
 
+const URL_PARAM_CARD = "card"
+
 function App(): JSX.Element {
-  const { state } = useBoardSocket()
+  const { state, dispatch } = useBoardSocket()
   // Hooks run on every render — keep them above any early return.
   const cards = state.board?.cards ?? []
   const cardsByStatus = useMemoBucketByStatus(cards)
-  const questionsByCard = useMemoQuestionsByCard(state.openRunQuestions)
+  const questionsByCard = state.openRunQuestionsByCard
+  const runsByCard = state.agentRunsByCardId
   const activeRun = state.lastAgentRun
   const agentActiveColumn = activeRunColumn(activeRun, cards)
+
+  // selectedCardId drives the CardDrawer mount. It is initialized from
+  // ?card=... so the drawer state is shareable, and kept in sync with the
+  // URL on open/close. popstate (browser back) closes the drawer.
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(() =>
+    readCardParam(),
+  )
+
+  const openCard = useCallback((cardId: string): void => {
+    setSelectedCardId(cardId)
+    pushCardParam(cardId)
+  }, [])
+
+  const closeCard = useCallback((): void => {
+    setSelectedCardId(null)
+    clearCardParam()
+  }, [])
+
+  useEffect(() => {
+    const onPop = (): void => setSelectedCardId(readCardParam())
+    window.addEventListener("popstate", onPop)
+    return (): void => window.removeEventListener("popstate", onPop)
+  }, [])
+
+  // If the selected card disappears from the board (server cleanup), close
+  // the drawer instead of rendering against a stale snapshot.
+  const selectedCard = useMemo<Card | undefined>(() => {
+    if (!selectedCardId) return undefined
+    return cards.find((c) => c.id === selectedCardId)
+  }, [cards, selectedCardId])
+  useEffect(() => {
+    if (selectedCardId && cards.length > 0 && !selectedCard) {
+      closeCard()
+    }
+  }, [cards.length, closeCard, selectedCard, selectedCardId])
 
   if (state.session.loading) {
     return (
@@ -63,6 +102,7 @@ function App(): JSX.Element {
                 cards={cardsByStatus.get(status) ?? []}
                 questionsByCard={questionsByCard}
                 agentActive={agentActiveColumn === status}
+                onOpenCard={openCard}
               />
             ))}
           </div>
@@ -71,6 +111,16 @@ function App(): JSX.Element {
           <p className="mx-auto mt-4 max-w-[1400px] text-[10px] text-magnetar">{state.lastError}</p>
         ) : null}
       </main>
+      {selectedCard ? (
+        <CardDrawer
+          card={selectedCard}
+          question={questionsByCard.get(selectedCard.id)}
+          run={runsByCard.get(selectedCard.id) ?? activeRunForCard(activeRun, selectedCard.id)}
+          dispatch={dispatch}
+          currentUserId={state.session.participantIdentity}
+          onClose={closeCard}
+        />
+      ) : null}
     </div>
   )
 }
@@ -103,17 +153,6 @@ function useMemoBucketByStatus(cards: Card[]): Map<CardStatus, Card[]> {
   }, [cards])
 }
 
-function useMemoQuestionsByCard(questions: RunQuestion[]): Map<string, RunQuestion> {
-  return useMemo(() => {
-    const map = new Map<string, RunQuestion>()
-    for (const q of questions) {
-      if (q.status !== "open") continue
-      map.set(q.card_id, q)
-    }
-    return map
-  }, [questions])
-}
-
 function isAgentActive(status?: string): boolean {
   if (!status) return false
   switch (status) {
@@ -133,6 +172,39 @@ function isAgentActive(status?: string): boolean {
 function activeRunColumn(run: { card_id?: string } | undefined, cards: Card[]): CardStatus | undefined {
   if (!run?.card_id) return undefined
   return cards.find((c) => c.id === run.card_id)?.status
+}
+
+function activeRunForCard(
+  run: AgentRunView | undefined,
+  cardId: string,
+): AgentRunView | undefined {
+  if (!run || run.card_id !== cardId) return undefined
+  return run
+}
+
+function readCardParam(): string | null {
+  if (typeof window === "undefined") return null
+  const params = new URLSearchParams(window.location.search)
+  const v = params.get(URL_PARAM_CARD)
+  return v && v.length > 0 ? v : null
+}
+
+function pushCardParam(cardId: string): void {
+  if (typeof window === "undefined") return
+  const params = new URLSearchParams(window.location.search)
+  params.set(URL_PARAM_CARD, cardId)
+  const next = `${window.location.pathname}?${params.toString()}`
+  window.history.pushState({ cardId }, "", next)
+}
+
+function clearCardParam(): void {
+  if (typeof window === "undefined") return
+  const params = new URLSearchParams(window.location.search)
+  if (!params.has(URL_PARAM_CARD)) return
+  params.delete(URL_PARAM_CARD)
+  const query = params.toString()
+  const next = query ? `${window.location.pathname}?${query}` : window.location.pathname
+  window.history.pushState({}, "", next)
 }
 
 export default App
