@@ -105,6 +105,7 @@ func main() {
 	if err := configureAppSecurity(); err != nil {
 		panic(err)
 	}
+	configureIntakeFromEnv()
 
 	upgrader.CheckOrigin = makeOriginChecker(*allowedOrigins)
 
@@ -226,6 +227,11 @@ func main() {
 	mux.HandleFunc("/internal/tools/dispatch", internalToolsDispatchHandler)
 	mux.HandleFunc("/internal/board/cards", internalBoardCardsHandler)
 	mux.HandleFunc("/internal/board/cards/", internalBoardCardsHandler)
+
+	// Async-standup intake (Daria persona, docs/persona-feedback/
+	// daria-first-week.md). The /intake/slack route lands with the
+	// Slack adapter in the next commit.
+	mux.HandleFunc("/intake/standup", intakeStandupHandler)
 
 	// Serve the React SPA built by `web/app/npm run build` under /app/*.
 	// If web/app/dist does not exist (frontend not built), http.FileServer
