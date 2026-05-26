@@ -255,6 +255,188 @@ func TestIntakeStandupGetIsTenantScoped(t *testing.T) {
 	}
 }
 
+// TestIntakeStandupCreatesBlockerCards asserts the runIntakeFollowups
+// wiring lands: each unanchored blocker becomes a new Blocked-column
+// card with the submitter as the assignee, and the response echoes
+// the created cards back.
+func TestIntakeStandupCreatesBlockerCards(t *testing.T) {
+	restoreAuth := snapshotAuthGlobals()
+	defer restoreAuth()
+	restoreIntake := snapshotIntakeGlobals()
+	defer restoreIntake()
+
+	apiToken = "intake-secret"
+	appAuthMode = "token"
+	appRoomID = "kanban-meeting"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+
+	cardsBefore := len(sharedBoard.SnapshotState().Cards)
+
+	postBody := []byte(`{
+		"submitter":"daria",
+		"today":"working on auth",
+		"blockers":[{"text":"need Linear creds"}],
+		"source":"form"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/intake/standup", bytes.NewReader(postBody))
+	req.Header.Set("Authorization", "Bearer intake-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	intakeStandupHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body = %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Created []kanbanCard `json:"created"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Created) != 1 {
+		t.Fatalf("expected 1 created card, got %d: %+v", len(resp.Created), resp.Created)
+	}
+	created := resp.Created[0]
+	if created.Status != kanbanStatusBlocked {
+		t.Errorf("created card status = %q, want Blocked", created.Status)
+	}
+	if created.Title != "need Linear creds" {
+		t.Errorf("created card title = %q", created.Title)
+	}
+	if !containsTag(created.Tags, "intake") || !containsTag(created.Tags, "blocker") {
+		t.Errorf("created card missing intake/blocker tags: %+v", created.Tags)
+	}
+
+	// The board snapshot should now have one more card.
+	cardsAfter := sharedBoard.SnapshotState().Cards
+	if len(cardsAfter) != cardsBefore+1 {
+		t.Errorf("board cards = %d, want %d", len(cardsAfter), cardsBefore+1)
+	}
+
+	// The card must be assignable to the submitter — assignTicket with
+	// account_id set short-circuits the Jira resolution path so this
+	// works even without jiraSync.
+	foundAssigned := false
+	for _, c := range cardsAfter {
+		if c.ID == created.ID && c.Assignee != nil && c.Assignee.DisplayName == "daria" {
+			foundAssigned = true
+		}
+	}
+	if !foundAssigned {
+		t.Errorf("created card not assigned to submitter; cards = %+v", cardsAfter)
+	}
+}
+
+// TestIntakeStandupCommentsOnMentionedCards asserts that MentionedCards
+// references that resolve to real cards get a thread comment carrying
+// the intake snippet.
+func TestIntakeStandupCommentsOnMentionedCards(t *testing.T) {
+	restoreAuth := snapshotAuthGlobals()
+	defer restoreAuth()
+	restoreIntake := snapshotIntakeGlobals()
+	defer restoreIntake()
+
+	apiToken = "intake-secret"
+	appAuthMode = "token"
+	appRoomID = "kanban-meeting"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+
+	// card-001 is one of the seed cards in newKanbanBoard.
+	existing := sharedBoard.SnapshotState().Cards
+	if len(existing) == 0 {
+		t.Fatalf("seed board produced 0 cards")
+	}
+	targetID := existing[0].ID
+
+	postBody := []byte(fmt.Sprintf(`{
+		"submitter":"daria",
+		"today":"following up on %s",
+		"mentioned_cards":["%s","does-not-exist"],
+		"source":"form"
+	}`, targetID, targetID))
+	req := httptest.NewRequest(http.MethodPost, "/intake/standup", bytes.NewReader(postBody))
+	req.Header.Set("Authorization", "Bearer intake-secret")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	intakeStandupHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Comments []postedIntakeComment `json:"comments"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Comments) != 1 {
+		t.Fatalf("expected 1 comment on existing card; got %d: %+v", len(resp.Comments), resp.Comments)
+	}
+	if resp.Comments[0].CardID != targetID {
+		t.Errorf("comment posted to wrong card: %+v", resp.Comments[0])
+	}
+	if !strings.Contains(resp.Comments[0].Body, "Async intake from daria") {
+		t.Errorf("comment body missing attribution: %q", resp.Comments[0].Body)
+	}
+}
+
+// TestIntakeFoldsIntoBoardSnapshot asserts intakes recorded in the
+// intakeStore surface on kanbanBoardState.RecentIntakes when the board
+// snapshot is taken (the broadcast path).
+func TestIntakeFoldsIntoBoardSnapshot(t *testing.T) {
+	restoreAuth := snapshotAuthGlobals()
+	defer restoreAuth()
+	restoreIntake := snapshotIntakeGlobals()
+	defer restoreIntake()
+
+	apiToken = "intake-secret"
+	appAuthMode = "token"
+	appRoomID = "kanban-meeting"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+
+	now := time.Now()
+	intakeStore.Put(intake.Intake{
+		TenantID:    sharedBoard.tenantID,
+		BoardID:     sharedBoard.boardID,
+		Submitter:   "daria",
+		Today:       "auth refactor",
+		Source:      intake.SourceForm,
+		SubmittedAt: now.Add(-1 * time.Hour),
+	})
+	// Older than 24h — should NOT appear.
+	intakeStore.Put(intake.Intake{
+		TenantID:    sharedBoard.tenantID,
+		BoardID:     sharedBoard.boardID,
+		Submitter:   "stale",
+		Today:       "old standup",
+		Source:      intake.SourceForm,
+		SubmittedAt: now.Add(-72 * time.Hour),
+	})
+
+	state := sharedBoard.SnapshotState()
+	if len(state.RecentIntakes) != 1 {
+		t.Fatalf("RecentIntakes = %d, want 1 (24h window): %+v",
+			len(state.RecentIntakes), state.RecentIntakes)
+	}
+	if state.RecentIntakes[0].Submitter != "daria" {
+		t.Errorf("wrong intake surfaced: %+v", state.RecentIntakes[0])
+	}
+}
+
+func containsTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
 // TestIntakeSlackRejectsMissingSecret asserts that with
 // slackSigningSecret unset, /intake/slack rejects every request.
 func TestIntakeSlackRejectsMissingSecret(t *testing.T) {
