@@ -62,12 +62,15 @@ while IFS= read -r pkg; do
 done < <(go list ./internal/agent/...)
 
 # internal/mocks: test-only fakes. May import internal/core, internal/agent,
-# and itself.
+# internal/board, internal/mcp, and itself. The board + mcp allowances are
+# required by mocks.BoardClient (an in-memory mcp.BoardClient used by tests
+# and by cmd/mcpd's offline fallback); the rest of the mocks remain
+# provider-neutral.
 while IFS= read -r pkg; do
   case "$pkg" in
     "$MODULE/internal/mocks"|"$MODULE/internal/mocks/"*)
       check_internal_package "$pkg" mocks \
-        "^$MODULE/internal/(core|agent|mocks)(/.*)?\$"
+        "^$MODULE/internal/(core|agent|board|mcp|mocks)(/.*)?\$"
       ;;
   esac
 done < <(go list ./internal/mocks/...)

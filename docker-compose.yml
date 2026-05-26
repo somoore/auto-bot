@@ -76,7 +76,15 @@ services:
       - MCPD_TOKEN=${MCPD_TOKEN:-dev-mcp-token-change-me}
       - APP_TENANT_ID=${APP_TENANT_ID:-default}
       - APP_BOARD_ID=${APP_BOARD_ID:-default}
-      - BOARD_SQLITE_PATH=${BOARD_SQLITE_PATH:-/srv/data/board.sqlite}
+      # mcpd dispatches every MCP tool call through cmd/server's
+      # /internal/tools/dispatch endpoint so ActionLedger + risk gates
+      # apply uniformly to voice, UI, and MCP callers. BOARD_TOKEN is the
+      # shared APP_API_TOKEN that authenticates the dispatch.
+      - BOARD_URL=${BOARD_URL:-http://app:3000}
+      - BOARD_TOKEN=${APP_API_TOKEN:?set APP_API_TOKEN via scripts/dc-up-keychain.sh or an exported environment variable}
+    # board-data is retained for future direct-access optimizations but
+    # is not load-bearing for S2.1; the live board state is fetched via
+    # HTTP from the app service.
     volumes:
       - board-data:/srv/data
 
