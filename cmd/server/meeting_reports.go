@@ -952,6 +952,10 @@ func (board *kanbanBoard) archiveMeetingReport(source string) meetingIntelligenc
 	report := board.BuildMeetingIntelligenceReport(source)
 	board.persistMeetingReport(report)
 	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "meeting_report", report.SummaryView())
+	// Sprint 4.1: post-meeting closer materializes follow-ups + blockers
+	// as cards and kicks Runs for agent-assigned items. Failures are
+	// non-fatal — the report has already been archived above.
+	runClosersOnReport(report)
 	return report
 }
 
