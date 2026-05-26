@@ -92,9 +92,11 @@ func (orchestrator *agentRunOrchestrator) Checkpoint(ctx context.Context, runID 
 		}
 	}
 
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	if err := orchestrator.board.updateAgentRun(ctx, runID, func(next *agentRun) {
 		agent.ApplyCheckpointToPlan(next, cp)
-	})
+	}); err != nil {
+		return fmt.Errorf("checkpoint: persist run plan: %w", err)
+	}
 	return nil
 }
 
@@ -137,7 +139,7 @@ func (orchestrator *agentRunOrchestrator) AskHuman(ctx context.Context, runID st
 	}
 
 	ref := agent.RunQuestionRef{QuestionID: q.ID, Prompt: q.Prompt, AskedAt: q.AskedAt}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	if err := orchestrator.board.updateAgentRun(ctx, runID, func(next *agentRun) {
 		if agentRunIsTerminal(next.Status) {
 			return
 		}
@@ -150,7 +152,9 @@ func (orchestrator *agentRunOrchestrator) AskHuman(ctx context.Context, runID st
 			Kind:      agent.CheckpointKindPaused,
 			CreatedAt: q.AskedAt,
 		})
-	})
+	}); err != nil {
+		return "", fmt.Errorf("ask_human: persist waiting state: %w", err)
+	}
 
 	// Surface the ask-the-human pause over WebSocket. run_question_asked
 	// carries the full question for drawers/MCP consumers; run_paused
@@ -204,13 +208,15 @@ func (orchestrator *agentRunOrchestrator) Resume(ctx context.Context, answer age
 		return agent.Run{}, fmt.Errorf("mark run question answered: %w", err)
 	}
 
-	orchestrator.board.updateAgentRun(existing.RunID, func(next *agentRun) {
+	if err := orchestrator.board.updateAgentRun(ctx, existing.RunID, func(next *agentRun) {
 		next.WaitingOn = nil
 		if next.Status == agentRunWaitingOnHuman {
 			next.Status = agentRunReviewing
 		}
 		next.AddCheckpoint(next.Status, "resume", fmt.Sprintf("Resumed after answer from %s via %s.", answer.AnsweredBy, answer.AnsweredVia))
-	})
+	}); err != nil {
+		return agent.Run{}, fmt.Errorf("resume: persist run state: %w", err)
+	}
 	run, ok := orchestrator.board.agentRunByID(existing.RunID)
 	if !ok {
 		return agent.Run{}, fmt.Errorf("run %s vanished during resume", existing.RunID)
@@ -258,7 +264,7 @@ func (orchestrator *agentRunOrchestrator) Cancel(ctx context.Context, runID stri
 	if reason == "" {
 		reason = "Cancelled by coordinator."
 	}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	if err := orchestrator.board.updateAgentRun(ctx, runID, func(next *agentRun) {
 		if agentRunIsTerminal(next.Status) {
 			return
 		}
@@ -267,7 +273,9 @@ func (orchestrator *agentRunOrchestrator) Cancel(ctx context.Context, runID stri
 		next.Summary = reason
 		next.CompletedAt = nowRFC3339Nano()
 		next.AddCheckpoint(agentRunCancelled, "cancelled", reason)
-	})
+	}); err != nil {
+		return fmt.Errorf("cancel: persist run state: %w", err)
+	}
 	return nil
 }
 
