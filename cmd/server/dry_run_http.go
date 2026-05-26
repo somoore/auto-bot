@@ -184,6 +184,58 @@ var handleAgentsPausedTransition = func(ctx context.Context, tenantID string, pa
 	_ = paused
 }
 
+// undoMutationHandler accepts POST /tenant/mutations/{event_id}/undo and runs
+// the existing undo_last_mutation tool through the trusted in-process path.
+// The body is ignored; the {event_id} segment scopes which mutation to revert.
+func undoMutationHandler(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	authCtx, ok := authorizeBaseRequest(r)
+	if !ok {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/tenant/mutations/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 2 || parts[1] != "undo" {
+		http.Error(w, "expected /tenant/mutations/{event_id}/undo", http.StatusBadRequest)
+		return
+	}
+	eventID := parts[0]
+	if eventID == "" {
+		http.Error(w, "missing event_id", http.StatusBadRequest)
+		return
+	}
+	board := sharedBoard
+	if board == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "board not initialized"})
+		return
+	}
+	args, err := json.Marshal(map[string]any{"event_id": eventID})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	result, changed, err := board.ApplyToolCallWithMeta("undo_last_mutation", string(args), toolCallMeta{
+		Dispatcher:       "ui-undo",
+		Actor:            authCtx.Identity,
+		SkipConfirmation: true,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"changed": changed,
+		"result":  result,
+	})
+}
+
 // resolveTenantBoardFromRequest returns the tenant/board pair the request is
 // scoped to. Today auto-bot runs as a single tenant, so we return the default
 // pair; query overrides are honored for multi-tenant testing.

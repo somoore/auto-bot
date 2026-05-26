@@ -1051,7 +1051,48 @@ func boardMutationToView(record boardMutationRecord) boardMutationView {
 		Sequence:              record.Sequence,
 		Reverted:              record.Reverted,
 		UndoOf:                record.UndoOf,
+		Undoable:              mutationIsUndoable(record),
 	}
+}
+
+// mutationIsUndoable returns true when the React timeline should render a
+// 1-click undo button next to this entry. We surface undo for any record
+// that has not been reverted, is not itself an undo, has at least one
+// before-card snapshot to restore from, and uses a tool that mutates board
+// state. The connector capability list in extensions.go remains the source
+// of truth for tool-level support; this function captures the runtime
+// "we have the data to roll it back" condition.
+func mutationIsUndoable(record boardMutationRecord) bool {
+	if record.Reverted {
+		return false
+	}
+	if record.ToolName == "undo_last_mutation" {
+		return false
+	}
+	if record.ToolName == "" {
+		return false
+	}
+	// Connector list of tools that explicitly opt out of undo (no-op /
+	// audit-only). Everything else gets the button.
+	switch record.ToolName {
+	case "get_board", "get_card", "get_audit_events", "replay_audit_event",
+		"list_pending_confirmations", "list_priorities", "list_agent_runs",
+		"get_agent_run", "search_jira_users", "record_meeting_memory":
+		return false
+	}
+	// We need the BeforeCards snapshot to roll back; without it the undo
+	// path has nothing to restore. Mutation records persisted via
+	// persistMutationRecord always include BeforeCards.
+	if len(record.BeforeCards) == 0 && record.BeforeMeeting == nil {
+		// Allow undo of create_ticket even when BeforeCards is empty —
+		// removing the created card is the rollback.
+		switch record.ToolName {
+		case "create_ticket", "create_subtask":
+			return true
+		}
+		return false
+	}
+	return true
 }
 
 func confidenceForMutation(record boardMutationRecord) (float64, []string) {

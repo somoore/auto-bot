@@ -236,6 +236,7 @@ func main() {
 	mux.HandleFunc("/tenant/settings", tenantSettingsHandler)
 	mux.HandleFunc("/tenant/pending_actions", pendingActionsHandler)
 	mux.HandleFunc("/tenant/pending_actions/", pendingActionDecisionHandler)
+	mux.HandleFunc("/tenant/mutations/", undoMutationHandler)
 
 	// Serve the React SPA built by `web/app/npm run build` under /app/*.
 	// If web/app/dist does not exist (frontend not built), http.FileServer
