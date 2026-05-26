@@ -62,5 +62,23 @@ services:
       - ./config:/srv/config:ro
       - board-data:/srv/data
 
+  mcpd:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcpd
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      - app
+    environment:
+      - MCPD_TRANSPORT=http
+      - MCPD_PORT=4000
+      - MCPD_TOKEN=${MCPD_TOKEN:-dev-mcp-token-change-me}
+      - APP_TENANT_ID=${APP_TENANT_ID:-default}
+      - APP_BOARD_ID=${APP_BOARD_ID:-default}
+      - BOARD_SQLITE_PATH=${BOARD_SQLITE_PATH:-/srv/data/board.sqlite}
+    volumes:
+      - board-data:/srv/data
+
 volumes:
   board-data:

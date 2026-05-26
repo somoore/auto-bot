@@ -1,0 +1,18 @@
+FROM golang:1.26@sha256:313faae491b410a35402c05d35e7518ae99103d957308e940e1ae2cfa0aac29b AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/ cmd/
+COPY internal/ internal/
+RUN CGO_ENABLED=0 go build -o /out/mcpd ./cmd/mcpd
+
+FROM debian:bookworm-slim@sha256:67b30a61dc87758f0caf819646104f29ecbda97d920aaf5edc834128ac8493d3
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates=20230311+deb12u1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN groupadd -r -g 10001 mcpd && useradd -r -u 10001 -g mcpd -d /srv mcpd
+RUN mkdir -p /srv/data && chown -R mcpd:mcpd /srv
+COPY --from=builder /out/mcpd /usr/local/bin/mcpd
+USER 10001:10001
+EXPOSE 4000
+ENTRYPOINT ["/usr/local/bin/mcpd"]
