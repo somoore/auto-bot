@@ -1,4 +1,5 @@
 import type { Card as CardModel, RunQuestion } from "../types/board"
+import { RunQuestionBanner } from "./RunQuestionBanner"
 
 interface Props {
   card: CardModel
@@ -7,15 +8,37 @@ interface Props {
   // derives this from `assignee.kind === 'agent'` as a proxy until
   // F1.1/F1.2 surfaces a real checkpoints last-toucher field.
   agentMoved?: boolean
+  // onOpen wires the drawer mount in App.tsx. The card surface becomes a
+  // button so it's keyboard-reachable.
+  onOpen?: (cardId: string) => void
 }
 
-export function Card({ card, question, agentMoved }: Props): JSX.Element {
+export function Card({ card, question, agentMoved, onOpen }: Props): JSX.Element {
   const assignee = card.assignee
   const isAgentAssignee = assignee?.kind === "agent"
+  const clickable = Boolean(onOpen)
   return (
     <article
-      className="group relative rounded-lg border border-edge/80 bg-atmos px-3 py-3 shadow-sm transition hover:border-edge hover:bg-atmos/80"
+      className={
+        clickable
+          ? "group relative cursor-pointer rounded-lg border border-edge/80 bg-atmos px-3 py-3 text-left shadow-sm transition hover:border-edge hover:bg-atmos/80 focus-within:border-comet"
+          : "group relative rounded-lg border border-edge/80 bg-atmos px-3 py-3 shadow-sm transition hover:border-edge hover:bg-atmos/80"
+      }
       data-card-id={card.id}
+      onClick={clickable ? (): void => onOpen?.(card.id) : undefined}
+      onKeyDown={
+        clickable
+          ? (e): void => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                onOpen?.(card.id)
+              }
+            }
+          : undefined
+      }
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-label={clickable ? `Open card ${card.id}: ${card.title}` : undefined}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -48,7 +71,7 @@ export function Card({ card, question, agentMoved }: Props): JSX.Element {
         </span>
       ) : null}
 
-      {question ? <RunQuestionBanner question={question} /> : null}
+      {question ? <RunQuestionBanner question={question} variant="card" /> : null}
 
       <CardFooter card={card} />
     </article>
@@ -71,25 +94,6 @@ function AssigneeBadge({ assignee }: { assignee?: CardModel["assignee"] }): JSX.
     <span title={display} className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-comet/30 bg-comet/15 text-[10px] font-semibold text-comet">
       {initials}
     </span>
-  )
-}
-
-function RunQuestionBanner({ question }: { question: RunQuestion }): JSX.Element {
-  return (
-    <div className="mt-3 rounded-md border border-solar/40 bg-solar/10 p-2 text-xs">
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-solar">
-        <span aria-hidden>?</span>
-        Nova needs an answer
-      </div>
-      <p className="mt-1 line-clamp-3 text-star">{question.prompt}</p>
-      {question.suggestions && question.suggestions.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {question.suggestions.slice(0, 3).map((suggestion) => (
-            <span key={suggestion} className="rounded border border-solar/30 bg-void/40 px-1.5 py-0.5 text-[10px] text-star">{suggestion}</span>
-          ))}
-        </div>
-      ) : null}
-    </div>
   )
 }
 

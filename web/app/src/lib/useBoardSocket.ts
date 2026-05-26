@@ -12,12 +12,27 @@ export interface SessionState {
   error?: string
 }
 
+export interface DispatchResult {
+  ok: boolean
+  status: number
+  body: unknown
+  error?: string
+}
+
 export interface BoardSocketState {
   status: WsStatus
   board?: BoardState
   lastAgentRun?: AgentRunView
   lastActionResult?: unknown
   openRunQuestions: RunQuestion[]
+  // openRunQuestionsByCard is a last-write-wins lookup keyed by card_id, so
+  // both the board-row banner (Card.tsx) and the drawer (CardDrawer.tsx)
+  // can find the question for a given card in O(1).
+  openRunQuestionsByCard: Map<string, RunQuestion>
+  // agentRunsByCardId is the per-card view of the most recent agent_run
+  // event we received. Driven by the inbound "agent_run" stream and seeded
+  // from any agentRuns slice carried on the board snapshot.
+  agentRunsByCardId: Map<string, AgentRunView>
   reconnectAttempt: number
   lastError?: string
   session: SessionState
@@ -39,13 +54,20 @@ function wsURL(): string {
 
 export interface BoardSocketAPI {
   state: BoardSocketState
+  // send is the legacy WebSocket-frame sender. It returns false when the
+  // socket is not open. Existing call sites (none today) keep working.
   send: (event: string, data: unknown) => boolean
+  // dispatch posts a tool call through HTTP to /internal/tools/dispatch.
+  // Returns a structured result with `ok` + error text instead of throwing
+  // so call sites can render the error inline without try/catch boilerplate.
+  dispatch: (tool: string, args: Record<string, unknown>) => Promise<DispatchResult>
 }
 
 export function useBoardSocket(): BoardSocketAPI {
   const [status, setStatus] = useState<WsStatus>("connecting")
   const [board, setBoard] = useState<BoardState | undefined>(undefined)
   const [openRunQuestions, setOpenRunQuestions] = useState<RunQuestion[]>([])
+  const [agentRunsByCard, setAgentRunsByCard] = useState<Map<string, AgentRunView>>(() => new Map())
   const [lastAgentRun, setLastAgentRun] = useState<AgentRunView | undefined>(undefined)
   const [lastActionResult, setLastActionResult] = useState<unknown>(undefined)
   const [reconnectAttempt, setReconnectAttempt] = useState(0)
@@ -101,6 +123,15 @@ export function useBoardSocket(): BoardSocketAPI {
         if (Array.isArray(next.open_run_questions)) {
           setOpenRunQuestions(next.open_run_questions)
         }
+        if (Array.isArray(next.agentRuns)) {
+          setAgentRunsByCard(() => {
+            const map = new Map<string, AgentRunView>()
+            for (const run of next.agentRuns ?? []) {
+              if (run.card_id) map.set(run.card_id, run)
+            }
+            return map
+          })
+        }
         break
       }
       case "run_question_asked": {
@@ -118,7 +149,15 @@ export function useBoardSocket(): BoardSocketAPI {
         break
       }
       case "agent_run": {
-        setLastAgentRun(inner.data as AgentRunView)
+        const run = inner.data as AgentRunView
+        setLastAgentRun(run)
+        if (run.card_id) {
+          setAgentRunsByCard((prev) => {
+            const next = new Map(prev)
+            next.set(run.card_id, run)
+            return next
+          })
+        }
         break
       }
       case "action_result": {
@@ -218,10 +257,83 @@ export function useBoardSocket(): BoardSocketAPI {
     return true
   }, [])
 
-  const state = useMemo<BoardSocketState>(() => ({
-    status, board, openRunQuestions, lastAgentRun, lastActionResult,
-    reconnectAttempt, lastError, session,
-  }), [status, board, openRunQuestions, lastAgentRun, lastActionResult, reconnectAttempt, lastError, session])
+  // dispatch posts a tool call to /internal/tools/dispatch. Auth flows
+  // through the existing session cookie (credentials: include).
+  const dispatch = useCallback(
+    async (tool: string, args: Record<string, unknown>): Promise<DispatchResult> => {
+      try {
+        const res = await fetch("/internal/tools/dispatch", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tool, args, dispatcher: "ui" }),
+        })
+        let body: unknown
+        try {
+          body = await res.json()
+        } catch {
+          body = undefined
+        }
+        if (!res.ok) {
+          const err =
+            (body && typeof body === "object" && "error" in body
+              ? String((body as { error?: unknown }).error)
+              : undefined) || `HTTP ${res.status}`
+          return { ok: false, status: res.status, body, error: err }
+        }
+        return { ok: true, status: res.status, body }
+      } catch (err) {
+        return {
+          ok: false,
+          status: 0,
+          body: undefined,
+          error: err instanceof Error ? err.message : "network error",
+        }
+      }
+    },
+    [],
+  )
 
-  return { state, send }
+  // openRunQuestionsByCard derives a card_id → question lookup so the
+  // drawer and the board-row banner can both find a question in O(1).
+  // Last-write-wins: later entries in the openRunQuestions array overwrite
+  // earlier ones, which matches the server's expectation that only one
+  // question per card is open at a time.
+  const openRunQuestionsByCard = useMemo<Map<string, RunQuestion>>(() => {
+    const map = new Map<string, RunQuestion>()
+    for (const q of openRunQuestions) {
+      if (q.status !== "open") continue
+      map.set(q.card_id, q)
+    }
+    return map
+  }, [openRunQuestions])
+
+  const state = useMemo<BoardSocketState>(
+    () => ({
+      status,
+      board,
+      openRunQuestions,
+      openRunQuestionsByCard,
+      agentRunsByCardId: agentRunsByCard,
+      lastAgentRun,
+      lastActionResult,
+      reconnectAttempt,
+      lastError,
+      session,
+    }),
+    [
+      status,
+      board,
+      openRunQuestions,
+      openRunQuestionsByCard,
+      agentRunsByCard,
+      lastAgentRun,
+      lastActionResult,
+      reconnectAttempt,
+      lastError,
+      session,
+    ],
+  )
+
+  return { state, send, dispatch }
 }

@@ -6,9 +6,10 @@ interface Props {
   cards: CardModel[]
   questionsByCard: Map<string, RunQuestion>
   agentActive: boolean
+  onOpenCard?: (cardId: string) => void
 }
 
-export function BoardColumn({ status, cards, questionsByCard, agentActive }: Props): JSX.Element {
+export function BoardColumn({ status, cards, questionsByCard, agentActive, onOpenCard }: Props): JSX.Element {
   return (
     <section className="flex min-h-[60vh] min-w-[280px] flex-1 flex-col rounded-xl border border-edge/60 bg-sky/60">
       <header className="flex items-center justify-between border-b border-edge/60 px-4 py-3">
@@ -31,6 +32,7 @@ export function BoardColumn({ status, cards, questionsByCard, agentActive }: Pro
               card={card}
               question={questionsByCard.get(card.id)}
               agentMoved={card.assignee?.kind === "agent"}
+              onOpen={onOpenCard}
             />
           ))
         )}
