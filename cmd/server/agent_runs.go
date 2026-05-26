@@ -151,6 +151,18 @@ func (board *kanbanBoard) assignTicketToAgent(args map[string]any) (map[string]a
 		UpdatedAt:         now.Format(time.RFC3339Nano),
 	}
 	run.AddCheckpoint(agentRunQueued, "queued", "Agent run queued.")
+	// Mark the card as owned by an agent Actor so the Paper screens
+	// (D1.1, D1.3) and clients can visually distinguish agent assignees
+	// from humans. The Actor.ID encodes profile + tenant lineage so two
+	// concurrent runs with the same profile but different tenants do
+	// not collide on identity.
+	card.Assignee = &kanbanActor{
+		Kind:         kanbanActorKindAgent,
+		ID:           "agent:" + truncateString(agentProfile, 80) + ":" + board.tenantID,
+		DisplayName:  truncateString(agentProfile, 80),
+		AgentProfile: truncateString(agentProfile, 80),
+		OwnerHumanID: requestedBy,
+	}
 	board.agentRuns = append([]agentRun{run}, board.agentRuns...)
 	if len(board.agentRuns) > 50 {
 		board.agentRuns = board.agentRuns[:50]

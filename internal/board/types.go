@@ -1,5 +1,10 @@
 package board
 
+import (
+	"encoding/json"
+	"strings"
+)
+
 // Status is the kanban column / workflow state of a Card.
 type Status string
 
@@ -23,7 +28,7 @@ type Card struct {
 	IssueType         string           `json:"issueType,omitempty"`
 	ParentID          string           `json:"parentId,omitempty"`
 	EpicKey           string           `json:"epicKey,omitempty"`
-	Assignee          *User            `json:"assignee,omitempty"`
+	Assignee          *Actor           `json:"assignee,omitempty"`
 	Reporter          *User            `json:"reporter,omitempty"`
 	Watchers          []User           `json:"watchers,omitempty"`
 	DueDate           string           `json:"dueDate,omitempty"`
@@ -45,13 +50,82 @@ type Card struct {
 	CustomFields      map[string]Field `json:"customFields,omitempty"`
 }
 
-// User is the normalized user identity shape used for assignees,
-// reporters, and watchers.
+// User is the normalized user identity shape used for reporters and
+// watchers. Assignees use Actor instead so AI agents can occupy the
+// assignee slot alongside humans.
 type User struct {
 	AccountID    string `json:"accountId,omitempty"`
 	DisplayName  string `json:"displayName,omitempty"`
 	EmailAddress string `json:"emailAddress,omitempty"`
 	Active       bool   `json:"active"`
+}
+
+// ActorKind discriminates assignee categories: humans, AI agents, and
+// (future) integrations like a bot or service account.
+type ActorKind string
+
+// Canonical Actor kinds. Only Human and Agent are currently emitted; new
+// kinds can be added without breaking the JSON shape because consumers
+// branch on Kind.
+const (
+	ActorKindHuman ActorKind = "human"
+	ActorKindAgent ActorKind = "agent"
+)
+
+// Actor identifies who (or what) is responsible for a card. Humans are
+// identified by Jira accountId or a local user identity; agents are
+// identified by their agent profile + tenant run lineage. JSON tags use
+// camelCase to match the rest of internal/board (the surrounding types
+// already follow camelCase).
+type Actor struct {
+	Kind         ActorKind `json:"kind"`
+	ID           string    `json:"id"`
+	DisplayName  string    `json:"displayName,omitempty"`
+	AvatarRef    string    `json:"avatarRef,omitempty"`
+	AgentProfile string    `json:"agentProfile,omitempty"`
+	OwnerHumanID string    `json:"ownerHumanId,omitempty"`
+	Email        string    `json:"email,omitempty"`
+}
+
+// UnmarshalJSON accepts both the canonical Actor shape and the legacy
+// User shape. Pre-Actor snapshots stored Card.Assignee as a User with
+// accountId / displayName / emailAddress fields; when the incoming JSON
+// has no "kind" discriminator, those fields are promoted into an
+// Actor{Kind:Human} so existing snapshots load without a separate
+// migration pass.
+func (a *Actor) UnmarshalJSON(data []byte) error {
+	if a == nil {
+		return nil
+	}
+	// Decode into a raw map so we can detect the legacy User shape
+	// (no "kind" key) without recursing back into UnmarshalJSON.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if _, hasKind := raw["kind"]; hasKind {
+		type actorAlias Actor
+		var aliased actorAlias
+		if err := json.Unmarshal(data, &aliased); err != nil {
+			return err
+		}
+		*a = Actor(aliased)
+		if strings.TrimSpace(string(a.Kind)) == "" {
+			a.Kind = ActorKindHuman
+		}
+		return nil
+	}
+	var legacy User
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	*a = Actor{
+		Kind:        ActorKindHuman,
+		ID:          legacy.AccountID,
+		DisplayName: legacy.DisplayName,
+		Email:       legacy.EmailAddress,
+	}
+	return nil
 }
 
 // Comment is a single comment attached to a Card.

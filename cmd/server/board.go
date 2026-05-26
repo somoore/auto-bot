@@ -37,6 +37,7 @@ var kanbanStatuses = []kanbanStatus{
 type (
 	kanbanCard       = board.Card
 	kanbanUser       = board.User
+	kanbanActor      = board.Actor
 	kanbanComment    = board.Comment
 	kanbanEstimate   = board.Estimate
 	kanbanSprint     = board.Sprint
@@ -45,6 +46,26 @@ type (
 	kanbanRemoteLink = board.RemoteLink
 	kanbanField      = board.Field
 )
+
+const (
+	kanbanActorKindHuman = board.ActorKindHuman
+	kanbanActorKindAgent = board.ActorKindAgent
+)
+
+// actorFromUser promotes a kanbanUser into an Actor{Kind:Human}. Used at
+// Jira hydration and at assign_ticket entry points so external user
+// identities flow into the canonical Actor shape.
+func actorFromUser(user kanbanUser) *kanbanActor {
+	if user.AccountID == "" && user.DisplayName == "" && user.EmailAddress == "" {
+		return nil
+	}
+	return &kanbanActor{
+		Kind:        kanbanActorKindHuman,
+		ID:          user.AccountID,
+		DisplayName: user.DisplayName,
+		Email:       user.EmailAddress,
+	}
+}
 
 // scrumMeetingMode and the canonical mode constants are aliased to
 // internal/meetings. Behavior in cmd/server is unchanged; the aliases let
@@ -1869,6 +1890,7 @@ func (board *kanbanBoard) assignTicket(args map[string]any) (map[string]any, boo
 	if assignee.DisplayName == "" {
 		assignee.DisplayName = assignee.AccountID
 	}
+	actor := actorFromUser(assignee)
 
 	board.mu.Lock()
 	defer board.mu.Unlock()
@@ -1877,14 +1899,14 @@ func (board *kanbanBoard) assignTicket(args map[string]any) (map[string]any, boo
 	if !ok {
 		return nil, false, fmt.Errorf("unknown card_id: %s", cardID)
 	}
-	card.Assignee = &assignee
+	card.Assignee = actor
 	board.touchLocked()
 
 	return map[string]any{
 		"ok":       true,
 		"assigned": true,
 		"card_id":  cardID,
-		"assignee": assignee,
+		"assignee": actor,
 	}, true, nil
 }
 

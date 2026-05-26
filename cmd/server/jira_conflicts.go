@@ -214,12 +214,22 @@ func (syncer *jiraSyncer) restoreJiraCard(ctx context.Context, card kanbanCard) 
 	if err := syncer.moveIssue(ctx, card.ID, card.Status, card.BlockedReason); err != nil {
 		return err
 	}
-	if card.Assignee != nil {
-		if err := syncer.client.AssignIssue(ctx, card.ID, card.Assignee.AccountID); err != nil {
+	switch {
+	case card.Assignee == nil:
+		if err := syncer.client.AssignIssue(ctx, card.ID, ""); err != nil {
 			return err
 		}
-	} else if err := syncer.client.AssignIssue(ctx, card.ID, ""); err != nil {
-		return err
+	case card.Assignee.Kind == kanbanActorKindHuman:
+		if err := syncer.client.AssignIssue(ctx, card.ID, card.Assignee.ID); err != nil {
+			return err
+		}
+	default:
+		// Agent (or other non-human) assignee has no Jira identity.
+		// Clear the Jira assignee so we do not leak a synthetic id into
+		// Jira's user search.
+		if err := syncer.client.AssignIssue(ctx, card.ID, ""); err != nil {
+			return err
+		}
 	}
 	if err := syncer.client.SetDueDate(ctx, card.ID, card.DueDate); err != nil {
 		return err

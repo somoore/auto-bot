@@ -241,6 +241,19 @@ func TestAssignTicketToAgentCreatesPersistentRunState(t *testing.T) {
 	if state.AgentRuns[0].Status != agentRunQueued {
 		t.Fatalf("agent run status = %q, want queued", state.AgentRuns[0].Status)
 	}
+	// assign_ticket_to_agent must promote the card's Assignee to an
+	// Actor{Kind:Agent} so the Paper screens (D1.1 / D1.3) can render
+	// agent-owned cards differently from human-owned ones.
+	updated := findBoardTestCard(t, state.Cards, card.ID)
+	if updated.Assignee == nil {
+		t.Fatalf("Assignee = nil, want agent actor")
+	}
+	if updated.Assignee.Kind != kanbanActorKindAgent {
+		t.Fatalf("Assignee.Kind = %q, want %q", updated.Assignee.Kind, kanbanActorKindAgent)
+	}
+	if updated.Assignee.AgentProfile == "" {
+		t.Fatalf("Assignee.AgentProfile is empty, want a profile string")
+	}
 }
 
 func TestMeetingMemoryBriefingAuditReplayAndUndo(t *testing.T) {
