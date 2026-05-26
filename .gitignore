@@ -2,6 +2,7 @@
 # Compiled binaries
 /auto-bot
 /server
+/mcpd
 openai-realtime-meeting-assistant
 *.exe
 *.exe~

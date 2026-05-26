@@ -31,6 +31,27 @@ The repo now has an explicit extension layer for open-source contribution:
 
 The stable contract package is `internal/core`. Runtime implementations live outside that package, and `scripts/check-import-boundaries.sh` prevents provider-specific dependencies from leaking into the core extension surface.
 
+## Agent-first v2
+
+The next phase of the project — tracked on the `agent-first-v2-sprint-0` branch — treats agents as first-class board citizens rather than as bolt-on automation. A Run is a durable, checkpointed unit of agent work bound to a card; agents can ask humans questions through the same UI that humans use to talk to each other; and the entire board surface is exposed as an MCP server so Claude Code, Cursor, and `claude-agent-sdk` scripts all become legitimate board participants.
+
+Execution runs in six 2-week sprints to a demo where a morning standup auto-creates cards, assigns one to an agent, and the agent starts a Run before participants finish coffee. The roster — principal architect, three SWEs, two security architects, two security engineers, two QA engineers, two devil's advocates, a customer tester, three product marketers, and three scribes — works in parallel on distinct streams gated by Sprint exits.
+
+The ten workstreams in scope:
+
+- [x] W1 — Agents as first-class board citizens (agent identity type, agent assignee on Card)
+- [x] W2 — Durable Run object (table + state machine + checkpoints + cost)
+- [x] W3 — Ask-the-human loop (`RunQuestion` thread; UI banner; agent resume on answer)
+- [x] W4 — Kanban as MCP server (`cmd/mcpd` binary; board + card + run tools)
+- [ ] W5 — Canonical board + projections (Jira becomes outbound projection; Linear + GH Issues connectors)
+- [ ] W6 — Closed-loop standup (pre-meeting agenda; post-meeting card-creation + run-launcher)
+- [ ] W7 — Trust ceremony UI (dry-run, diff preview, undo, pause-agent)
+- [x] W8 — Monolith breakup (`internal/{board,voice,jira,agent,auth,mcp,tenant}` packages)
+- [ ] W9 — Cost meter (per-meeting + per-run token + audio + LiveKit cost)
+- [x] W10 — Multi-tenant hosted (tenant scoping; per-tenant secrets via KMS; control plane foundation)
+
+See `docs/adrs/0002`, `0003`, `0004` for the architectural decisions backing W5, W4, and W10.
+
 > [!IMPORTANT]
 > Browser control APIs are protected by an HttpOnly session cookie. The HTML shells contain no token and the page never receives `APP_API_TOKEN`; users enter it once to create a session, and `/websocket`, `/livekit-token`, and authenticated JSON endpoints require that session or a Bearer token. For public multi-user use, put OIDC/Cognito in front of this shared-token flow.
 
