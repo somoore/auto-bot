@@ -232,6 +232,11 @@ func main() {
 	mux.HandleFunc("/internal/board/cards", internalBoardCardsHandler)
 	mux.HandleFunc("/internal/board/cards/", internalBoardCardsHandler)
 
+	// Sprint 4.0: trust ceremony — dry-run queue, diff preview, kill switch.
+	mux.HandleFunc("/tenant/settings", tenantSettingsHandler)
+	mux.HandleFunc("/tenant/pending_actions", pendingActionsHandler)
+	mux.HandleFunc("/tenant/pending_actions/", pendingActionDecisionHandler)
+
 	// Serve the React SPA built by `web/app/npm run build` under /app/*.
 	// If web/app/dist does not exist (frontend not built), http.FileServer
 	// returns 404 cleanly; the rest of the server is unaffected.

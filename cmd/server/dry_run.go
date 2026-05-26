@@ -134,7 +134,17 @@ func (board *kanbanBoard) stagePendingAction(toolName string, args map[string]an
 	if err := store.SavePendingAction(ctx, action); err != nil {
 		return nil, fmt.Errorf("stage pending action: %w", err)
 	}
-	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "pending_action", action)
+	// Compute the diff inline so the WS payload carries everything the
+	// React queue needs to render approve/reject without a follow-up RPC.
+	// Errors during the simulated apply do not block staging: the diff
+	// surfaces them in pendingActionDiff.Error.
+	previewCtx, previewCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	diff, _ := board.PreviewPendingAction(previewCtx, actionID)
+	previewCancel()
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "pending_action", map[string]any{
+		"action": action,
+		"diff":   diff,
+	})
 	prompt := fmt.Sprintf("I would have run %s but dry-run mode is enabled. Action %s is queued for review.", toolName, actionID)
 	return map[string]any{
 		"ok":                false,
