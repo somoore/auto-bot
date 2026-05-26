@@ -41,62 +41,18 @@ const (
 	agentRunTakenOver       = agent.StatusTakenOver
 )
 
-// agentRun sub-types (Classification, CodeReviewFinding, Checkpoint, RunView)
-// are aliased to internal/agent so the JSON shape, field tags, and value
-// identity are shared with future internal packages. See internal/agent/
-// types.go for the canonical definitions.
-//
-// agentRun itself stays here because it carries methods (addCheckpoint, View)
-// tied to cmd/server helpers; promoting it to internal/agent would require
-// renaming the unexported methods and is deferred to Sprint 1.
+// agentRun and its sub-types (Classification, CodeReviewFinding, Checkpoint,
+// RunView) are aliased to internal/agent so the JSON shape, field tags, value
+// identity, and the AddCheckpoint/View methods are shared with future
+// internal packages. See internal/agent/run.go and internal/agent/types.go
+// for the canonical definitions.
 type (
+	agentRun            = agent.Run
 	agentClassification = agent.Classification
 	codeReviewFinding   = agent.CodeReviewFinding
 	agentRunCheckpoint  = agent.Checkpoint
 	agentRunView        = agent.RunView
 )
-
-// agentRun is the persisted internal state for an autonomous Bedrock-backed
-// Jira/GitHub run. Field layout mirrors agent.Run; the two are kept in sync
-// until the cmd/server-bound methods on agentRun move alongside it.
-type agentRun struct {
-	RunID              string               `json:"run_id"`
-	TenantID           string               `json:"tenant_id,omitempty"`
-	BoardID            string               `json:"board_id"`
-	CardID             string               `json:"card_id"`
-	JiraIssueKey       string               `json:"jira_issue_key,omitempty"`
-	CardTitle          string               `json:"card_title,omitempty"`
-	Objective          string               `json:"objective"`
-	RequestedBy        string               `json:"requested_by,omitempty"`
-	RetryOf            string               `json:"retry_of,omitempty"`
-	AgentProfile       string               `json:"agent_profile"`
-	RequestType        string               `json:"request_type"`
-	Specialist         string               `json:"specialist"`
-	Status             agentRunStatus       `json:"status"`
-	CurrentStep        string               `json:"current_step,omitempty"`
-	Repo               string               `json:"repo,omitempty"`
-	Branch             string               `json:"branch,omitempty"`
-	PullRequestNumber  int                  `json:"pull_request_number,omitempty"`
-	PullRequestURL     string               `json:"pull_request_url,omitempty"`
-	PMModel            string               `json:"pm_model,omitempty"`
-	ReviewModel        string               `json:"review_model,omitempty"`
-	Classification     agentClassification  `json:"classification,omitempty"`
-	ReviewLens         string               `json:"review_lens,omitempty"`
-	Findings           []codeReviewFinding  `json:"findings,omitempty"`
-	Summary            string               `json:"summary,omitempty"`
-	PublishWarnings    []string             `json:"publish_warnings,omitempty"`
-	CostBudgetCents    int                  `json:"cost_budget_cents,omitempty"`
-	EstimatedCostCents int                  `json:"estimated_cost_cents,omitempty"`
-	ModelCalls         int                  `json:"model_calls,omitempty"`
-	JiraCommentPosted  bool                 `json:"jira_comment_posted"`
-	PRReviewPosted     bool                 `json:"pr_review_posted"`
-	Error              string               `json:"error,omitempty"`
-	Checkpoints        []agentRunCheckpoint `json:"checkpoints,omitempty"`
-	CreatedAt          string               `json:"created_at"`
-	UpdatedAt          string               `json:"updated_at"`
-	StartedAt          string               `json:"started_at,omitempty"`
-	CompletedAt        string               `json:"completed_at,omitempty"`
-}
 
 type agentRunOrchestrator struct {
 	board  *kanbanBoard
@@ -193,7 +149,7 @@ func (board *kanbanBoard) assignTicketToAgent(args map[string]any) (map[string]a
 		CreatedAt:         now.Format(time.RFC3339Nano),
 		UpdatedAt:         now.Format(time.RFC3339Nano),
 	}
-	run.addCheckpoint(agentRunQueued, "queued", "Agent run queued.")
+	run.AddCheckpoint(agentRunQueued, "queued", "Agent run queued.")
 	board.agentRuns = append([]agentRun{run}, board.agentRuns...)
 	if len(board.agentRuns) > 50 {
 		board.agentRuns = board.agentRuns[:50]
@@ -274,7 +230,7 @@ func (board *kanbanBoard) cancelAgentRun(args map[string]any) (map[string]any, b
 		next.CurrentStep = reason
 		next.Summary = reason
 		next.CompletedAt = nowRFC3339Nano()
-		next.addCheckpoint(agentRunCancelled, "cancelled", reason)
+		next.AddCheckpoint(agentRunCancelled, "cancelled", reason)
 		found = true
 		view = next.View()
 	})
@@ -311,7 +267,7 @@ func (board *kanbanBoard) takeOverAgentRun(args map[string]any) (map[string]any,
 			board.agentRuns[index].CurrentStep = reason
 			board.agentRuns[index].Summary = reason
 			board.agentRuns[index].CompletedAt = nowRFC3339Nano()
-			board.agentRuns[index].addCheckpoint(agentRunTakenOver, "take_over", reason)
+			board.agentRuns[index].AddCheckpoint(agentRunTakenOver, "take_over", reason)
 		}
 		run = cloneAgentRun(board.agentRuns[index])
 		if card, ok := board.findCardLocked(run.CardID); ok {
@@ -352,7 +308,7 @@ func (board *kanbanBoard) retryAgentRun(args map[string]any) (map[string]any, bo
 		next.Status = agentRunRetrying
 		next.CurrentStep = "Retry requested; replacement agent run is being queued."
 		next.CompletedAt = nowRFC3339Nano()
-		next.addCheckpoint(agentRunRetrying, "retry", "Retry requested with updated constraints.")
+		next.AddCheckpoint(agentRunRetrying, "retry", "Retry requested with updated constraints.")
 	})
 	result, changed, err := board.assignTicketToAgent(map[string]any{
 		"card_id":             original.CardID,
@@ -398,7 +354,7 @@ func (orchestrator *agentRunOrchestrator) Start(runID string) {
 		next.Status = agentRunClassifying
 		next.StartedAt = nowRFC3339Nano()
 		next.CurrentStep = "Project-manager agent is classifying the Jira task."
-		next.addCheckpoint(agentRunClassifying, "pm_classification", "Classifying request type with Bedrock.")
+		next.AddCheckpoint(agentRunClassifying, "pm_classification", "Classifying request type with Bedrock.")
 	})
 
 	classification, err := orchestrator.classifyRun(ctx, run)
@@ -414,7 +370,7 @@ func (orchestrator *agentRunOrchestrator) Start(runID string) {
 		next.RequestType = firstNonEmpty(classification.RequestType, next.RequestType)
 		next.Specialist = firstNonEmpty(classification.Specialist, "code_reviewer")
 		next.ReviewLens = reviewLensForRun(*next)
-		next.addCheckpoint(agentRunClassifying, "pm_classification", fmt.Sprintf("Classified as %s for %s.", next.RequestType, next.Specialist))
+		next.AddCheckpoint(agentRunClassifying, "pm_classification", fmt.Sprintf("Classified as %s for %s.", next.RequestType, next.Specialist))
 	})
 
 	run, _ = orchestrator.board.agentRunByID(runID)
@@ -428,7 +384,7 @@ func (orchestrator *agentRunOrchestrator) Start(runID string) {
 			next.CurrentStep = message
 			next.CompletedAt = nowRFC3339Nano()
 			next.Summary = message
-			next.addCheckpoint(agentRunUnsupported, "unsupported_specialist", message)
+			next.AddCheckpoint(agentRunUnsupported, "unsupported_specialist", message)
 		})
 		orchestrator.postRunJiraComment(ctx, runID)
 		return
@@ -513,7 +469,7 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 			next.CurrentStep = "Code review needs a pull_request_number or a PR remote link on the Jira ticket."
 			next.CompletedAt = nowRFC3339Nano()
 			next.Error = next.CurrentStep
-			next.addCheckpoint(agentRunNeedsInput, "missing_pull_request", next.CurrentStep)
+			next.AddCheckpoint(agentRunNeedsInput, "missing_pull_request", next.CurrentStep)
 		})
 		orchestrator.postRunJiraComment(ctx, runID)
 		return
@@ -522,7 +478,7 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 		next.Status = agentRunFetchingContext
 		next.CurrentStep = "Fetching pull request diff with a short-lived GitHub App installation token."
-		next.addCheckpoint(agentRunFetchingContext, "github_pr_files", "Fetching PR files through GitHub App read-only access.")
+		next.AddCheckpoint(agentRunFetchingContext, "github_pr_files", "Fetching PR files through GitHub App read-only access.")
 	})
 	files, prURL, err := orchestrator.github.FetchPullRequestFiles(ctx, run.Repo, run.PullRequestNumber)
 	if err != nil {
@@ -535,7 +491,7 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 	}
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 		next.PullRequestURL = prURL
-		next.addCheckpoint(agentRunFetchingContext, "github_pr_files", fmt.Sprintf("Fetched %d changed files.", len(files)))
+		next.AddCheckpoint(agentRunFetchingContext, "github_pr_files", fmt.Sprintf("Fetched %d changed files.", len(files)))
 	})
 
 	if err := orchestrator.reserveAgentRunCost(runID, "pr_review", agentReviewCallEstimateCents()); err != nil {
@@ -550,7 +506,7 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 		next.Status = agentRunReviewing
 		next.ReviewLens = reviewLensForRun(*next)
 		next.CurrentStep = fmt.Sprintf("PR reviewer is applying the %s lens with Bedrock.", next.ReviewLens)
-		next.addCheckpoint(agentRunReviewing, "code_review", fmt.Sprintf("Reviewing patch with Bedrock %s lens.", next.ReviewLens))
+		next.AddCheckpoint(agentRunReviewing, "code_review", fmt.Sprintf("Reviewing patch with Bedrock %s lens.", next.ReviewLens))
 	})
 	run, _ = orchestrator.board.agentRunByID(runID)
 	review, err := orchestrator.reviewPullRequest(ctx, run, files)
@@ -566,19 +522,19 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 		next.Findings = review.Findings
 		next.Summary = review.Summary
 		next.ReviewLens = review.ReviewLens
-		next.addCheckpoint(agentRunReviewing, "code_review", fmt.Sprintf("Completed review with %d finding%s.", len(review.Findings), plural(len(review.Findings))))
+		next.AddCheckpoint(agentRunReviewing, "code_review", fmt.Sprintf("Completed review with %d finding%s.", len(review.Findings), plural(len(review.Findings))))
 	})
 
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 		next.Status = agentRunPublishing
 		next.CurrentStep = "Publishing review results to Jira and PR surfaces."
-		next.addCheckpoint(agentRunPublishing, "publish", "Publishing Jira comment and optional PR review comment.")
+		next.AddCheckpoint(agentRunPublishing, "publish", "Publishing Jira comment and optional PR review comment.")
 	})
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 		next.Status = agentRunCompleted
 		next.CurrentStep = "Agent run completed."
 		next.CompletedAt = nowRFC3339Nano()
-		next.addCheckpoint(agentRunCompleted, "complete", "Agent run completed.")
+		next.AddCheckpoint(agentRunCompleted, "complete", "Agent run completed.")
 	})
 	orchestrator.postRunJiraComment(ctx, runID)
 	run, _ = orchestrator.board.agentRunByID(runID)
@@ -586,12 +542,12 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 		if err := orchestrator.github.CreatePullRequestReview(ctx, run.Repo, run.PullRequestNumber, formatAgentRunComment(run), run.Findings); err != nil {
 			orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 				next.PublishWarnings = append(next.PublishWarnings, truncateString("GitHub PR review failed: "+err.Error(), 1000))
-				next.addCheckpoint(next.Status, "pr_review", "PR review comment failed: "+err.Error())
+				next.AddCheckpoint(next.Status, "pr_review", "PR review comment failed: "+err.Error())
 			})
 		} else {
 			orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 				next.PRReviewPosted = true
-				next.addCheckpoint(next.Status, "pr_review", "PR review comment posted.")
+				next.AddCheckpoint(next.Status, "pr_review", "PR review comment posted.")
 			})
 		}
 	}
@@ -697,13 +653,13 @@ func (orchestrator *agentRunOrchestrator) postRunJiraComment(ctx context.Context
 	if err := orchestrator.jira.client.AddComment(ctx, run.JiraIssueKey, comment); err != nil {
 		orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 			next.PublishWarnings = append(next.PublishWarnings, truncateString("Jira comment failed: "+err.Error(), 1000))
-			next.addCheckpoint(next.Status, "jira_comment", "Jira comment failed: "+err.Error())
+			next.AddCheckpoint(next.Status, "jira_comment", "Jira comment failed: "+err.Error())
 		})
 		return
 	}
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 		next.JiraCommentPosted = true
-		next.addCheckpoint(next.Status, "jira_comment", "Jira comment posted.")
+		next.AddCheckpoint(next.Status, "jira_comment", "Jira comment posted.")
 	})
 }
 
@@ -716,7 +672,7 @@ func (orchestrator *agentRunOrchestrator) failRun(runID string, message string) 
 		next.Error = truncateString(message, 2000)
 		next.CurrentStep = next.Error
 		next.CompletedAt = nowRFC3339Nano()
-		next.addCheckpoint(agentRunFailed, "failed", next.Error)
+		next.AddCheckpoint(agentRunFailed, "failed", next.Error)
 	})
 }
 
@@ -744,7 +700,7 @@ func (orchestrator *agentRunOrchestrator) reserveAgentRunCost(runID string, step
 		}
 		next.EstimatedCostCents += cents
 		next.ModelCalls++
-		next.addCheckpoint(next.Status, "cost_budget", fmt.Sprintf("Reserved %d cents for %s; estimated run cost is now %d/%d cents.", cents, step, next.EstimatedCostCents, next.CostBudgetCents))
+		next.AddCheckpoint(next.Status, "cost_budget", fmt.Sprintf("Reserved %d cents for %s; estimated run cost is now %d/%d cents.", cents, step, next.EstimatedCostCents, next.CostBudgetCents))
 	})
 	return nil
 }
@@ -843,58 +799,6 @@ func (board *kanbanBoard) addAgentRunLocalComment(cardID string, body string) {
 	if ok {
 		board.persistSnapshot("agent_run_comment")
 		broadcastKanbanEventForBoard(board.boardID, "board", board.SnapshotState())
-	}
-}
-
-func (run *agentRun) addCheckpoint(status agentRunStatus, step string, message string) {
-	run.Checkpoints = append(run.Checkpoints, agentRunCheckpoint{
-		At:      nowRFC3339Nano(),
-		Status:  status,
-		Step:    truncateString(step, 120),
-		Message: truncateString(message, 1000),
-	})
-	if len(run.Checkpoints) > 50 {
-		run.Checkpoints = append([]agentRunCheckpoint(nil), run.Checkpoints[len(run.Checkpoints)-50:]...)
-	}
-}
-
-func (run agentRun) View() agentRunView {
-	return agentRunView{
-		RunID:              run.RunID,
-		CardID:             run.CardID,
-		JiraIssueKey:       run.JiraIssueKey,
-		CardTitle:          run.CardTitle,
-		Objective:          run.Objective,
-		RequestedBy:        run.RequestedBy,
-		RetryOf:            run.RetryOf,
-		AgentProfile:       run.AgentProfile,
-		RequestType:        run.RequestType,
-		Specialist:         run.Specialist,
-		Status:             run.Status,
-		CurrentStep:        run.CurrentStep,
-		Repo:               run.Repo,
-		Branch:             run.Branch,
-		PullRequestNumber:  run.PullRequestNumber,
-		PullRequestURL:     run.PullRequestURL,
-		PMModel:            run.PMModel,
-		ReviewModel:        run.ReviewModel,
-		Classification:     run.Classification,
-		ReviewLens:         run.ReviewLens,
-		FindingCount:       len(run.Findings),
-		Findings:           append([]codeReviewFinding(nil), run.Findings...),
-		Summary:            run.Summary,
-		PublishWarnings:    append([]string(nil), run.PublishWarnings...),
-		CostBudgetCents:    run.CostBudgetCents,
-		EstimatedCostCents: run.EstimatedCostCents,
-		ModelCalls:         run.ModelCalls,
-		JiraCommentPosted:  run.JiraCommentPosted,
-		PRReviewPosted:     run.PRReviewPosted,
-		Error:              run.Error,
-		Checkpoints:        append([]agentRunCheckpoint(nil), run.Checkpoints...),
-		CreatedAt:          run.CreatedAt,
-		UpdatedAt:          run.UpdatedAt,
-		StartedAt:          run.StartedAt,
-		CompletedAt:        run.CompletedAt,
 	}
 }
 
