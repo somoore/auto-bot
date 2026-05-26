@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-    <title>Realtime Kanban Meeting Assistant (LiveKit)</title>
+    <title>Auto Bot (LiveKit)</title>
     <style>
       :root {
         color-scheme: dark;
@@ -1568,7 +1568,7 @@
       <header class="topbar">
         <span class="topbar-pill" aria-hidden="true">K</span>
         <div>
-          <h1>Realtime Kanban Meeting Assistant</h1>
+          <h1>Auto Bot</h1>
           <p class="status" id="status">Not connected</p>
         </div>
         <div class="topbar-right">
@@ -2801,9 +2801,50 @@
           const lens = run.review_lens || run.reviewLens
           const warnings = run.publish_warnings || run.publishWarnings || []
           meta.textContent = [lens ? `${lens} lens` : '', warnings.length ? `Needs attention: ${warnings[0]}` : '', run.summary || run.error || run.current_step || run.currentStep || run.repo || 'Waiting for checkpoint.'].filter(Boolean).join(' · ')
+          const cost = document.createElement('span')
+          cost.className = 'meeting-code-meta'
+          const estimated = Number(run.estimated_cost_cents || run.estimatedCostCents || 0)
+          const budget = Number(run.cost_budget_cents || run.costBudgetCents || 0)
+          const calls = Number(run.model_calls || run.modelCalls || 0)
+          cost.textContent = budget > 0 ? `Cost ${estimated}/${budget} cents · ${calls} model call${calls === 1 ? '' : 's'}` : ''
+          const actions = document.createElement('div')
+          actions.className = 'operator-actions'
+          const terminal = agentRunIsTerminal(run.status)
+          const cancel = document.createElement('button')
+          cancel.className = 'compact-btn'
+          cancel.type = 'button'
+          cancel.textContent = 'Cancel'
+          cancel.disabled = meetingRole !== 'host' || terminal
+          cancel.addEventListener('click', () => sendKanbanCommand('cancel_agent_run', { run_id: run.run_id || run.runId, reason: 'Cancelled from meeting controls.' }))
+          const takeover = document.createElement('button')
+          takeover.className = 'compact-btn'
+          takeover.type = 'button'
+          takeover.textContent = 'Take over'
+          takeover.disabled = meetingRole !== 'host' || terminal
+          takeover.addEventListener('click', () => {
+            const reason = window.prompt('Takeover note:', `${localIdentity || 'Host'} will finish this manually.`) || ''
+            sendKanbanCommand('take_over_agent_run', { run_id: run.run_id || run.runId, actor: localIdentity || 'Host', reason })
+          })
+          const retry = document.createElement('button')
+          retry.className = 'compact-btn'
+          retry.type = 'button'
+          retry.textContent = 'Retry'
+          retry.disabled = meetingRole !== 'host'
+          retry.addEventListener('click', () => {
+            const additional = window.prompt('Retry with what constraint?', '')
+            if (additional === null) return
+            sendKanbanCommand('retry_agent_run', { run_id: run.run_id || run.runId, additional_context: additional, requested_by: localIdentity || 'Host' })
+          })
+          actions.append(cancel, takeover, retry)
           row.append(title, status, meta)
+          if (cost.textContent) row.appendChild(cost)
+          row.appendChild(actions)
           agentRunsList.appendChild(row)
         })
+      }
+
+      function agentRunIsTerminal(status) {
+        return ['completed', 'failed', 'unsupported', 'cancelled', 'taken_over', 'retrying'].includes(String(status || '').toLowerCase())
       }
 
       function renderConfidence() {

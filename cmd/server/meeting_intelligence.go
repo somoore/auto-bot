@@ -200,7 +200,7 @@ func normalizeToolCallMeta(meta toolCallMeta) toolCallMeta {
 
 func riskForTool(toolName string) toolRiskLevel {
 	switch toolName {
-	case "assign_ticket", "unassign_ticket", "assign_ticket_to_agent", "set_eta", "set_priority", "set_reporter":
+	case "assign_ticket", "unassign_ticket", "assign_ticket_to_agent", "cancel_agent_run", "take_over_agent_run", "retry_agent_run", "set_eta", "set_priority", "set_reporter":
 		return toolRiskMedium
 	case "delete_ticket", "set_sprint", "rank_issue", "prioritize_ticket":
 		return toolRiskHigh
@@ -532,6 +532,12 @@ func mutationSummary(toolName string, args map[string]any, result map[string]any
 		return fmt.Sprintf("Prioritized %s", cardID)
 	case "record_participant_update":
 		return fmt.Sprintf("Recorded update from %s", firstNonEmptyString(args, "participant", "display_name", "participant_id"))
+	case "cancel_agent_run":
+		return fmt.Sprintf("Cancelled agent run %s", asString(args["run_id"]))
+	case "take_over_agent_run":
+		return fmt.Sprintf("Human took over agent run %s", asString(args["run_id"]))
+	case "retry_agent_run":
+		return fmt.Sprintf("Retried agent run %s", asString(args["run_id"]))
 	default:
 		if cardID != "" {
 			return fmt.Sprintf("%s on %s", toolName, cardID)

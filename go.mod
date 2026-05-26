@@ -1,4 +1,4 @@
-module github.com/openai/openai-realtime-meeting-assistant
+module github.com/somoore/auto-bot
 
 go 1.26
 

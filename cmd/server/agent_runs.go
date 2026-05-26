@@ -25,46 +25,53 @@ const (
 	agentRunFetchingContext agentRunStatus = "fetching_context"
 	agentRunReviewing       agentRunStatus = "reviewing"
 	agentRunPublishing      agentRunStatus = "publishing"
+	agentRunRetrying        agentRunStatus = "retrying"
 	agentRunNeedsInput      agentRunStatus = "needs_input"
 	agentRunCompleted       agentRunStatus = "completed"
 	agentRunFailed          agentRunStatus = "failed"
 	agentRunUnsupported     agentRunStatus = "unsupported"
+	agentRunCancelled       agentRunStatus = "cancelled"
+	agentRunTakenOver       agentRunStatus = "taken_over"
 )
 
 // agentRun is the persisted internal state for an autonomous Bedrock-backed
 // Jira/GitHub run.
 type agentRun struct {
-	RunID             string               `json:"run_id"`
-	BoardID           string               `json:"board_id"`
-	CardID            string               `json:"card_id"`
-	JiraIssueKey      string               `json:"jira_issue_key,omitempty"`
-	CardTitle         string               `json:"card_title,omitempty"`
-	Objective         string               `json:"objective"`
-	RequestedBy       string               `json:"requested_by,omitempty"`
-	AgentProfile      string               `json:"agent_profile"`
-	RequestType       string               `json:"request_type"`
-	Specialist        string               `json:"specialist"`
-	Status            agentRunStatus       `json:"status"`
-	CurrentStep       string               `json:"current_step,omitempty"`
-	Repo              string               `json:"repo,omitempty"`
-	Branch            string               `json:"branch,omitempty"`
-	PullRequestNumber int                  `json:"pull_request_number,omitempty"`
-	PullRequestURL    string               `json:"pull_request_url,omitempty"`
-	PMModel           string               `json:"pm_model,omitempty"`
-	ReviewModel       string               `json:"review_model,omitempty"`
-	Classification    agentClassification  `json:"classification,omitempty"`
-	ReviewLens        string               `json:"review_lens,omitempty"`
-	Findings          []codeReviewFinding  `json:"findings,omitempty"`
-	Summary           string               `json:"summary,omitempty"`
-	PublishWarnings   []string             `json:"publish_warnings,omitempty"`
-	JiraCommentPosted bool                 `json:"jira_comment_posted"`
-	PRReviewPosted    bool                 `json:"pr_review_posted"`
-	Error             string               `json:"error,omitempty"`
-	Checkpoints       []agentRunCheckpoint `json:"checkpoints,omitempty"`
-	CreatedAt         string               `json:"created_at"`
-	UpdatedAt         string               `json:"updated_at"`
-	StartedAt         string               `json:"started_at,omitempty"`
-	CompletedAt       string               `json:"completed_at,omitempty"`
+	RunID              string               `json:"run_id"`
+	BoardID            string               `json:"board_id"`
+	CardID             string               `json:"card_id"`
+	JiraIssueKey       string               `json:"jira_issue_key,omitempty"`
+	CardTitle          string               `json:"card_title,omitempty"`
+	Objective          string               `json:"objective"`
+	RequestedBy        string               `json:"requested_by,omitempty"`
+	RetryOf            string               `json:"retry_of,omitempty"`
+	AgentProfile       string               `json:"agent_profile"`
+	RequestType        string               `json:"request_type"`
+	Specialist         string               `json:"specialist"`
+	Status             agentRunStatus       `json:"status"`
+	CurrentStep        string               `json:"current_step,omitempty"`
+	Repo               string               `json:"repo,omitempty"`
+	Branch             string               `json:"branch,omitempty"`
+	PullRequestNumber  int                  `json:"pull_request_number,omitempty"`
+	PullRequestURL     string               `json:"pull_request_url,omitempty"`
+	PMModel            string               `json:"pm_model,omitempty"`
+	ReviewModel        string               `json:"review_model,omitempty"`
+	Classification     agentClassification  `json:"classification,omitempty"`
+	ReviewLens         string               `json:"review_lens,omitempty"`
+	Findings           []codeReviewFinding  `json:"findings,omitempty"`
+	Summary            string               `json:"summary,omitempty"`
+	PublishWarnings    []string             `json:"publish_warnings,omitempty"`
+	CostBudgetCents    int                  `json:"cost_budget_cents,omitempty"`
+	EstimatedCostCents int                  `json:"estimated_cost_cents,omitempty"`
+	ModelCalls         int                  `json:"model_calls,omitempty"`
+	JiraCommentPosted  bool                 `json:"jira_comment_posted"`
+	PRReviewPosted     bool                 `json:"pr_review_posted"`
+	Error              string               `json:"error,omitempty"`
+	Checkpoints        []agentRunCheckpoint `json:"checkpoints,omitempty"`
+	CreatedAt          string               `json:"created_at"`
+	UpdatedAt          string               `json:"updated_at"`
+	StartedAt          string               `json:"started_at,omitempty"`
+	CompletedAt        string               `json:"completed_at,omitempty"`
 }
 
 type agentClassification struct {
@@ -103,37 +110,41 @@ type agentRunCheckpoint struct {
 // agentRunView is the client-safe run timeline shape shown in the live drawer
 // and post-meeting intelligence report.
 type agentRunView struct {
-	RunID             string               `json:"run_id"`
-	CardID            string               `json:"card_id"`
-	JiraIssueKey      string               `json:"jira_issue_key,omitempty"`
-	CardTitle         string               `json:"card_title,omitempty"`
-	Objective         string               `json:"objective,omitempty"`
-	RequestedBy       string               `json:"requested_by,omitempty"`
-	AgentProfile      string               `json:"agent_profile,omitempty"`
-	RequestType       string               `json:"request_type,omitempty"`
-	Specialist        string               `json:"specialist,omitempty"`
-	Status            agentRunStatus       `json:"status"`
-	CurrentStep       string               `json:"current_step,omitempty"`
-	Repo              string               `json:"repo,omitempty"`
-	Branch            string               `json:"branch,omitempty"`
-	PullRequestNumber int                  `json:"pull_request_number,omitempty"`
-	PullRequestURL    string               `json:"pull_request_url,omitempty"`
-	PMModel           string               `json:"pm_model,omitempty"`
-	ReviewModel       string               `json:"review_model,omitempty"`
-	Classification    agentClassification  `json:"classification,omitempty"`
-	ReviewLens        string               `json:"review_lens,omitempty"`
-	FindingCount      int                  `json:"finding_count"`
-	Findings          []codeReviewFinding  `json:"findings,omitempty"`
-	Summary           string               `json:"summary,omitempty"`
-	PublishWarnings   []string             `json:"publish_warnings,omitempty"`
-	JiraCommentPosted bool                 `json:"jira_comment_posted"`
-	PRReviewPosted    bool                 `json:"pr_review_posted"`
-	Error             string               `json:"error,omitempty"`
-	Checkpoints       []agentRunCheckpoint `json:"checkpoints,omitempty"`
-	CreatedAt         string               `json:"created_at"`
-	UpdatedAt         string               `json:"updated_at"`
-	StartedAt         string               `json:"started_at,omitempty"`
-	CompletedAt       string               `json:"completed_at,omitempty"`
+	RunID              string               `json:"run_id"`
+	CardID             string               `json:"card_id"`
+	JiraIssueKey       string               `json:"jira_issue_key,omitempty"`
+	CardTitle          string               `json:"card_title,omitempty"`
+	Objective          string               `json:"objective,omitempty"`
+	RequestedBy        string               `json:"requested_by,omitempty"`
+	RetryOf            string               `json:"retry_of,omitempty"`
+	AgentProfile       string               `json:"agent_profile,omitempty"`
+	RequestType        string               `json:"request_type,omitempty"`
+	Specialist         string               `json:"specialist,omitempty"`
+	Status             agentRunStatus       `json:"status"`
+	CurrentStep        string               `json:"current_step,omitempty"`
+	Repo               string               `json:"repo,omitempty"`
+	Branch             string               `json:"branch,omitempty"`
+	PullRequestNumber  int                  `json:"pull_request_number,omitempty"`
+	PullRequestURL     string               `json:"pull_request_url,omitempty"`
+	PMModel            string               `json:"pm_model,omitempty"`
+	ReviewModel        string               `json:"review_model,omitempty"`
+	Classification     agentClassification  `json:"classification,omitempty"`
+	ReviewLens         string               `json:"review_lens,omitempty"`
+	FindingCount       int                  `json:"finding_count"`
+	Findings           []codeReviewFinding  `json:"findings,omitempty"`
+	Summary            string               `json:"summary,omitempty"`
+	PublishWarnings    []string             `json:"publish_warnings,omitempty"`
+	CostBudgetCents    int                  `json:"cost_budget_cents,omitempty"`
+	EstimatedCostCents int                  `json:"estimated_cost_cents,omitempty"`
+	ModelCalls         int                  `json:"model_calls,omitempty"`
+	JiraCommentPosted  bool                 `json:"jira_comment_posted"`
+	PRReviewPosted     bool                 `json:"pr_review_posted"`
+	Error              string               `json:"error,omitempty"`
+	Checkpoints        []agentRunCheckpoint `json:"checkpoints,omitempty"`
+	CreatedAt          string               `json:"created_at"`
+	UpdatedAt          string               `json:"updated_at"`
+	StartedAt          string               `json:"started_at,omitempty"`
+	CompletedAt        string               `json:"completed_at,omitempty"`
 }
 
 type agentRunOrchestrator struct {
@@ -187,6 +198,7 @@ func (board *kanbanBoard) assignTicketToAgent(args map[string]any) (map[string]a
 	repo := normalizeRepoSpecifier(firstNonEmptyString(args, "repo"))
 	branch := truncateString(firstNonEmptyString(args, "branch"), 160)
 	requestedBy := truncateString(firstNonEmptyString(args, "requested_by", "actor"), 120)
+	retryOf := truncateString(firstNonEmptyString(args, "retry_of", "retry_run_id"), 160)
 
 	now := time.Now().UTC()
 	var run agentRun
@@ -214,6 +226,7 @@ func (board *kanbanBoard) assignTicketToAgent(args map[string]any) (map[string]a
 		CardTitle:         card.Title,
 		Objective:         objective,
 		RequestedBy:       requestedBy,
+		RetryOf:           retryOf,
 		AgentProfile:      truncateString(agentProfile, 80),
 		RequestType:       truncateString(requestType, 80),
 		Specialist:        "project_manager",
@@ -224,6 +237,7 @@ func (board *kanbanBoard) assignTicketToAgent(args map[string]any) (map[string]a
 		PullRequestNumber: prNumber,
 		PMModel:           agentPMModel(),
 		ReviewModel:       agentReviewModel(),
+		CostBudgetCents:   agentRunCostBudgetCents(),
 		CreatedAt:         now.Format(time.RFC3339Nano),
 		UpdatedAt:         now.Format(time.RFC3339Nano),
 	}
@@ -287,6 +301,126 @@ func (board *kanbanBoard) getAgentRun(args map[string]any) (map[string]any, bool
 	return map[string]any{"ok": false, "error": "agent run not found"}, false, nil
 }
 
+func (board *kanbanBoard) cancelAgentRun(args map[string]any) (map[string]any, bool, error) {
+	runID := asString(args["run_id"])
+	if runID == "" {
+		return nil, false, fmt.Errorf("run_id is required")
+	}
+	reason := truncateString(firstNonEmptyString(args, "reason"), 1000)
+	if reason == "" {
+		reason = "Cancelled by the meeting host."
+	}
+	var view agentRunView
+	var found bool
+	board.updateAgentRun(runID, func(next *agentRun) {
+		if agentRunIsTerminal(next.Status) {
+			found = true
+			view = next.View()
+			return
+		}
+		next.Status = agentRunCancelled
+		next.CurrentStep = reason
+		next.Summary = reason
+		next.CompletedAt = nowRFC3339Nano()
+		next.addCheckpoint(agentRunCancelled, "cancelled", reason)
+		found = true
+		view = next.View()
+	})
+	if !found {
+		return map[string]any{"ok": false, "error": "agent run not found", "run_id": runID}, false, nil
+	}
+	return map[string]any{"ok": true, "cancelled": true, "run_id": runID, "agent_run": view}, true, nil
+}
+
+func (board *kanbanBoard) takeOverAgentRun(args map[string]any) (map[string]any, bool, error) {
+	runID := asString(args["run_id"])
+	if runID == "" {
+		return nil, false, fmt.Errorf("run_id is required")
+	}
+	actor := truncateString(firstNonEmptyString(args, "actor", "owner", "requested_by"), 120)
+	if actor == "" {
+		actor = "meeting host"
+	}
+	reason := truncateString(firstNonEmptyString(args, "reason"), 1000)
+	if reason == "" {
+		reason = actor + " took over at the last completed checkpoint."
+	}
+	var run agentRun
+	var found bool
+	var tagged bool
+	board.mu.Lock()
+	for index := range board.agentRuns {
+		if board.agentRuns[index].RunID != runID {
+			continue
+		}
+		found = true
+		if !agentRunIsTerminal(board.agentRuns[index].Status) {
+			board.agentRuns[index].Status = agentRunTakenOver
+			board.agentRuns[index].CurrentStep = reason
+			board.agentRuns[index].Summary = reason
+			board.agentRuns[index].CompletedAt = nowRFC3339Nano()
+			board.agentRuns[index].addCheckpoint(agentRunTakenOver, "take_over", reason)
+		}
+		run = cloneAgentRun(board.agentRuns[index])
+		if card, ok := board.findCardLocked(run.CardID); ok {
+			card.Tags = uniqueStrings(append(card.Tags, "partial-agent-work"))
+			tagged = true
+		}
+		board.touchLocked()
+		break
+	}
+	board.mu.Unlock()
+	if !found {
+		return map[string]any{"ok": false, "error": "agent run not found", "run_id": runID}, false, nil
+	}
+	board.persistAgentRun(run)
+	broadcastKanbanEventForBoard(board.boardID, "agent_run", run.View())
+	broadcastKanbanEventForBoard(board.boardID, "board", board.SnapshotState())
+	return map[string]any{"ok": true, "taken_over": true, "run_id": runID, "tagged_partial_work": tagged, "agent_run": run.View()}, true, nil
+}
+
+func (board *kanbanBoard) retryAgentRun(args map[string]any) (map[string]any, bool, error) {
+	runID := asString(args["run_id"])
+	if runID == "" {
+		return nil, false, fmt.Errorf("run_id is required")
+	}
+	additional := truncateString(firstNonEmptyString(args, "additional_context", "constraint", "constraints", "reason"), 1200)
+	original, ok := board.agentRunByID(runID)
+	if !ok {
+		return map[string]any{"ok": false, "error": "agent run not found", "run_id": runID}, false, nil
+	}
+	retryObjective := original.Objective
+	if additional != "" {
+		retryObjective = strings.TrimSpace(retryObjective + "\nRetry constraint: " + additional)
+	}
+	board.updateAgentRun(runID, func(next *agentRun) {
+		if agentRunIsTerminal(next.Status) {
+			return
+		}
+		next.Status = agentRunRetrying
+		next.CurrentStep = "Retry requested; replacement agent run is being queued."
+		next.CompletedAt = nowRFC3339Nano()
+		next.addCheckpoint(agentRunRetrying, "retry", "Retry requested with updated constraints.")
+	})
+	result, changed, err := board.assignTicketToAgent(map[string]any{
+		"card_id":             original.CardID,
+		"objective":           retryObjective,
+		"agent_profile":       original.AgentProfile,
+		"request_type":        original.RequestType,
+		"repo":                original.Repo,
+		"pull_request_number": original.PullRequestNumber,
+		"branch":              original.Branch,
+		"requested_by":        firstNonEmpty(asString(args["requested_by"]), "retry"),
+		"retry_of":            original.RunID,
+	})
+	if result == nil {
+		result = map[string]any{}
+	}
+	result["retried"] = true
+	result["retry_of"] = original.RunID
+	return result, changed || err == nil, err
+}
+
 func (orchestrator *agentRunOrchestrator) Start(runID string) {
 	if orchestrator == nil || orchestrator.board == nil {
 		return
@@ -298,7 +432,17 @@ func (orchestrator *agentRunOrchestrator) Start(runID string) {
 	if !ok {
 		return
 	}
+	if agentRunIsTerminal(run.Status) {
+		return
+	}
+	if err := orchestrator.reserveAgentRunCost(runID, "pm_classification", agentPMCallEstimateCents()); err != nil {
+		orchestrator.failRun(runID, err.Error())
+		return
+	}
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+		if agentRunIsTerminal(next.Status) {
+			return
+		}
 		next.Status = agentRunClassifying
 		next.StartedAt = nowRFC3339Nano()
 		next.CurrentStep = "Project-manager agent is classifying the Jira task."
@@ -310,6 +454,9 @@ func (orchestrator *agentRunOrchestrator) Start(runID string) {
 		orchestrator.failRun(runID, "PM classification failed: "+err.Error())
 		return
 	}
+	if orchestrator.agentRunStopped(runID) {
+		return
+	}
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 		next.Classification = classification
 		next.RequestType = firstNonEmpty(classification.RequestType, next.RequestType)
@@ -319,6 +466,9 @@ func (orchestrator *agentRunOrchestrator) Start(runID string) {
 	})
 
 	run, _ = orchestrator.board.agentRunByID(runID)
+	if agentRunIsTerminal(run.Status) {
+		return
+	}
 	if !agentRunCanUsePullRequestReviewer(run) {
 		message := fmt.Sprintf("Agent PM classified this as %s for %s. This build supports PR-backed code and security reviews; this run needs another specialist implementation before it can continue.", run.RequestType, run.Specialist)
 		orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
@@ -392,6 +542,9 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 	if !ok {
 		return
 	}
+	if agentRunIsTerminal(run.Status) {
+		return
+	}
 	if orchestrator.github == nil || !orchestrator.github.Configured() {
 		orchestrator.failRun(runID, "GitHub App is not configured. Create a GitHub App with Contents: read, Metadata: read, Pull requests: read, install it only on the target repo, and provide the app id, installation id, and private key through Keychain or Secrets Manager.")
 		orchestrator.postRunJiraComment(ctx, runID)
@@ -425,11 +578,22 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 		orchestrator.postRunJiraComment(ctx, runID)
 		return
 	}
+	if orchestrator.agentRunStopped(runID) {
+		return
+	}
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 		next.PullRequestURL = prURL
 		next.addCheckpoint(agentRunFetchingContext, "github_pr_files", fmt.Sprintf("Fetched %d changed files.", len(files)))
 	})
 
+	if err := orchestrator.reserveAgentRunCost(runID, "pr_review", agentReviewCallEstimateCents()); err != nil {
+		orchestrator.failRun(runID, err.Error())
+		orchestrator.postRunJiraComment(ctx, runID)
+		return
+	}
+	if orchestrator.agentRunStopped(runID) {
+		return
+	}
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
 		next.Status = agentRunReviewing
 		next.ReviewLens = reviewLensForRun(*next)
@@ -441,6 +605,9 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 	if err != nil {
 		orchestrator.failRun(runID, "Code review failed: "+err.Error())
 		orchestrator.postRunJiraComment(ctx, runID)
+		return
+	}
+	if orchestrator.agentRunStopped(runID) {
 		return
 	}
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
@@ -590,12 +757,58 @@ func (orchestrator *agentRunOrchestrator) postRunJiraComment(ctx context.Context
 
 func (orchestrator *agentRunOrchestrator) failRun(runID string, message string) {
 	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+		if agentRunIsTerminal(next.Status) {
+			return
+		}
 		next.Status = agentRunFailed
 		next.Error = truncateString(message, 2000)
 		next.CurrentStep = next.Error
 		next.CompletedAt = nowRFC3339Nano()
 		next.addCheckpoint(agentRunFailed, "failed", next.Error)
 	})
+}
+
+func (orchestrator *agentRunOrchestrator) reserveAgentRunCost(runID string, step string, cents int) error {
+	if cents <= 0 {
+		return nil
+	}
+	run, ok := orchestrator.board.agentRunByID(runID)
+	if !ok {
+		return fmt.Errorf("agent run %s not found", runID)
+	}
+	if agentRunIsTerminal(run.Status) {
+		return fmt.Errorf("agent run %s is already %s", runID, run.Status)
+	}
+	budget := run.CostBudgetCents
+	if budget <= 0 {
+		budget = agentRunCostBudgetCents()
+	}
+	if run.EstimatedCostCents+cents > budget {
+		return fmt.Errorf("agent run cost budget exceeded before %s: estimated %d cents + %d cents would exceed %d cents", step, run.EstimatedCostCents, cents, budget)
+	}
+	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+		if next.CostBudgetCents <= 0 {
+			next.CostBudgetCents = budget
+		}
+		next.EstimatedCostCents += cents
+		next.ModelCalls++
+		next.addCheckpoint(next.Status, "cost_budget", fmt.Sprintf("Reserved %d cents for %s; estimated run cost is now %d/%d cents.", cents, step, next.EstimatedCostCents, next.CostBudgetCents))
+	})
+	return nil
+}
+
+func (orchestrator *agentRunOrchestrator) agentRunStopped(runID string) bool {
+	run, ok := orchestrator.board.agentRunByID(runID)
+	return !ok || agentRunIsTerminal(run.Status)
+}
+
+func agentRunIsTerminal(status agentRunStatus) bool {
+	switch status {
+	case agentRunCompleted, agentRunFailed, agentRunUnsupported, agentRunCancelled, agentRunTakenOver, agentRunRetrying:
+		return true
+	default:
+		return false
+	}
 }
 
 func (board *kanbanBoard) agentRunByID(runID string) (agentRun, bool) {
@@ -692,37 +905,41 @@ func (run *agentRun) addCheckpoint(status agentRunStatus, step string, message s
 
 func (run agentRun) View() agentRunView {
 	return agentRunView{
-		RunID:             run.RunID,
-		CardID:            run.CardID,
-		JiraIssueKey:      run.JiraIssueKey,
-		CardTitle:         run.CardTitle,
-		Objective:         run.Objective,
-		RequestedBy:       run.RequestedBy,
-		AgentProfile:      run.AgentProfile,
-		RequestType:       run.RequestType,
-		Specialist:        run.Specialist,
-		Status:            run.Status,
-		CurrentStep:       run.CurrentStep,
-		Repo:              run.Repo,
-		Branch:            run.Branch,
-		PullRequestNumber: run.PullRequestNumber,
-		PullRequestURL:    run.PullRequestURL,
-		PMModel:           run.PMModel,
-		ReviewModel:       run.ReviewModel,
-		Classification:    run.Classification,
-		ReviewLens:        run.ReviewLens,
-		FindingCount:      len(run.Findings),
-		Findings:          append([]codeReviewFinding(nil), run.Findings...),
-		Summary:           run.Summary,
-		PublishWarnings:   append([]string(nil), run.PublishWarnings...),
-		JiraCommentPosted: run.JiraCommentPosted,
-		PRReviewPosted:    run.PRReviewPosted,
-		Error:             run.Error,
-		Checkpoints:       append([]agentRunCheckpoint(nil), run.Checkpoints...),
-		CreatedAt:         run.CreatedAt,
-		UpdatedAt:         run.UpdatedAt,
-		StartedAt:         run.StartedAt,
-		CompletedAt:       run.CompletedAt,
+		RunID:              run.RunID,
+		CardID:             run.CardID,
+		JiraIssueKey:       run.JiraIssueKey,
+		CardTitle:          run.CardTitle,
+		Objective:          run.Objective,
+		RequestedBy:        run.RequestedBy,
+		RetryOf:            run.RetryOf,
+		AgentProfile:       run.AgentProfile,
+		RequestType:        run.RequestType,
+		Specialist:         run.Specialist,
+		Status:             run.Status,
+		CurrentStep:        run.CurrentStep,
+		Repo:               run.Repo,
+		Branch:             run.Branch,
+		PullRequestNumber:  run.PullRequestNumber,
+		PullRequestURL:     run.PullRequestURL,
+		PMModel:            run.PMModel,
+		ReviewModel:        run.ReviewModel,
+		Classification:     run.Classification,
+		ReviewLens:         run.ReviewLens,
+		FindingCount:       len(run.Findings),
+		Findings:           append([]codeReviewFinding(nil), run.Findings...),
+		Summary:            run.Summary,
+		PublishWarnings:    append([]string(nil), run.PublishWarnings...),
+		CostBudgetCents:    run.CostBudgetCents,
+		EstimatedCostCents: run.EstimatedCostCents,
+		ModelCalls:         run.ModelCalls,
+		JiraCommentPosted:  run.JiraCommentPosted,
+		PRReviewPosted:     run.PRReviewPosted,
+		Error:              run.Error,
+		Checkpoints:        append([]agentRunCheckpoint(nil), run.Checkpoints...),
+		CreatedAt:          run.CreatedAt,
+		UpdatedAt:          run.UpdatedAt,
+		StartedAt:          run.StartedAt,
+		CompletedAt:        run.CompletedAt,
 	}
 }
 
@@ -750,36 +967,40 @@ func agentRunsFromViews(views []agentRunView) []agentRun {
 	runs := make([]agentRun, 0, len(views))
 	for _, view := range views {
 		runs = append(runs, agentRun{
-			RunID:             view.RunID,
-			CardID:            view.CardID,
-			JiraIssueKey:      view.JiraIssueKey,
-			CardTitle:         view.CardTitle,
-			Objective:         view.Objective,
-			RequestedBy:       view.RequestedBy,
-			AgentProfile:      view.AgentProfile,
-			RequestType:       view.RequestType,
-			Specialist:        view.Specialist,
-			Status:            view.Status,
-			CurrentStep:       view.CurrentStep,
-			Repo:              view.Repo,
-			Branch:            view.Branch,
-			PullRequestNumber: view.PullRequestNumber,
-			PullRequestURL:    view.PullRequestURL,
-			PMModel:           view.PMModel,
-			ReviewModel:       view.ReviewModel,
-			Classification:    view.Classification,
-			ReviewLens:        view.ReviewLens,
-			Findings:          append([]codeReviewFinding(nil), view.Findings...),
-			Summary:           view.Summary,
-			PublishWarnings:   append([]string(nil), view.PublishWarnings...),
-			JiraCommentPosted: view.JiraCommentPosted,
-			PRReviewPosted:    view.PRReviewPosted,
-			Error:             view.Error,
-			Checkpoints:       append([]agentRunCheckpoint(nil), view.Checkpoints...),
-			CreatedAt:         view.CreatedAt,
-			UpdatedAt:         view.UpdatedAt,
-			StartedAt:         view.StartedAt,
-			CompletedAt:       view.CompletedAt,
+			RunID:              view.RunID,
+			CardID:             view.CardID,
+			JiraIssueKey:       view.JiraIssueKey,
+			CardTitle:          view.CardTitle,
+			Objective:          view.Objective,
+			RequestedBy:        view.RequestedBy,
+			RetryOf:            view.RetryOf,
+			AgentProfile:       view.AgentProfile,
+			RequestType:        view.RequestType,
+			Specialist:         view.Specialist,
+			Status:             view.Status,
+			CurrentStep:        view.CurrentStep,
+			Repo:               view.Repo,
+			Branch:             view.Branch,
+			PullRequestNumber:  view.PullRequestNumber,
+			PullRequestURL:     view.PullRequestURL,
+			PMModel:            view.PMModel,
+			ReviewModel:        view.ReviewModel,
+			Classification:     view.Classification,
+			ReviewLens:         view.ReviewLens,
+			Findings:           append([]codeReviewFinding(nil), view.Findings...),
+			Summary:            view.Summary,
+			PublishWarnings:    append([]string(nil), view.PublishWarnings...),
+			CostBudgetCents:    view.CostBudgetCents,
+			EstimatedCostCents: view.EstimatedCostCents,
+			ModelCalls:         view.ModelCalls,
+			JiraCommentPosted:  view.JiraCommentPosted,
+			PRReviewPosted:     view.PRReviewPosted,
+			Error:              view.Error,
+			Checkpoints:        append([]agentRunCheckpoint(nil), view.Checkpoints...),
+			CreatedAt:          view.CreatedAt,
+			UpdatedAt:          view.UpdatedAt,
+			StartedAt:          view.StartedAt,
+			CompletedAt:        view.CompletedAt,
 		})
 	}
 	return runs
@@ -860,6 +1081,13 @@ func formatAgentRunComment(run agentRun) string {
 	if run.ReviewLens != "" {
 		builder.WriteString("\nReview lens: ")
 		builder.WriteString(run.ReviewLens)
+	}
+	if run.RetryOf != "" {
+		builder.WriteString("\nRetry of: ")
+		builder.WriteString(run.RetryOf)
+	}
+	if run.CostBudgetCents > 0 || run.EstimatedCostCents > 0 {
+		fmt.Fprintf(&builder, "\nEstimated cost: %d/%d cents across %d model call%s", run.EstimatedCostCents, run.CostBudgetCents, run.ModelCalls, plural(run.ModelCalls))
 	}
 	if run.Repo != "" {
 		builder.WriteString("\nRepo: ")
@@ -1095,6 +1323,30 @@ func agentPMModel() string {
 
 func agentReviewModel() string {
 	return firstNonEmpty(os.Getenv("AGENT_REVIEW_MODEL"), defaultAgentReviewModel)
+}
+
+func agentRunCostBudgetCents() int {
+	return agentPositiveIntEnv("AGENT_COST_BUDGET_CENTS", 250)
+}
+
+func agentPMCallEstimateCents() int {
+	return agentPositiveIntEnv("AGENT_PM_CALL_ESTIMATE_CENTS", 2)
+}
+
+func agentReviewCallEstimateCents() int {
+	return agentPositiveIntEnv("AGENT_REVIEW_CALL_ESTIMATE_CENTS", 40)
+}
+
+func agentPositiveIntEnv(name string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, ok := asInt(value)
+	if !ok || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func extractJSONObject(raw []byte) []byte {

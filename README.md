@@ -1,6 +1,7 @@
 # Living Kanban Board
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![CI](https://github.com/somoore/auto-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/somoore/auto-bot/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/Built_with-Go-blue)
 ![WebRTC](https://img.shields.io/badge/Uses-WebRTC-blueviolet)
 ![OpenAI API](https://img.shields.io/badge/Powered_by-OpenAI_API-orange)
@@ -252,7 +253,7 @@ The scrum master agent understands natural language commands:
 | "Set component to Voice Agent and fix version to scrum-master-mvp" | Updates Jira planning metadata |
 | "Delete the old task" | Removes a ticket from the board |
 
-The agent also responds to implicit status updates during standup — if someone says "I finished X", it moves the matching card to Done automatically. In structured meetings it can start/end meetings, deliver a 60-second opening briefing, track participants, move to the next speaker, record blockers/risks/decisions/action items/follow-ups/parking-lot topics, track ownership, summarize the meeting, and keep Jira synchronized.
+The agent also responds to implicit status updates during standup — if someone says "I finished X", it moves the matching card to Done automatically. In structured meetings it can start/end meetings, deliver a 60-second opening briefing, track participants, move to the next speaker, record blockers/risks/decisions/action items/follow-ups/parking-lot topics, track ownership, summarize the meeting, and keep Jira synchronized. Agent-run controls let the host cancel a run, take over at the last checkpoint with a `partial-agent-work` tag, or retry with new constraints.
 
 Meeting types are explicit. The host can start as a general meeting, standup, 1:1, sprint review, or open-ended meeting, and can switch modes in the UI or by asking the agent during the meeting. The agent is instructed to switch modes only from live host/facilitator speech or after host confirmation.
 
@@ -266,13 +267,14 @@ The right-side operator panel includes the meeting code, Meeting Control Center,
 
 ## Meeting Intelligence
 
-The scrum-master layer now has a durable post-meeting intelligence path. During and after a meeting the backend can generate a report with agenda, participants, decisions, risks, action items, parking-lot items, follow-ups, unresolved blockers, ownership, transcript evidence, Jira mutations, autonomous agent runs, sprint risk signals, GitHub/PR hints, setup readiness, and voice/LiveKit/Jira observability.
+The scrum-master layer now has a durable post-meeting intelligence path. During and after a meeting the backend can generate a report with agenda, participants, decisions, risks, action items, parking-lot items, follow-ups, unresolved blockers, ownership, transcript evidence, Jira mutations, autonomous agent runs, product-proof metrics, sprint risk signals, GitHub/PR hints, setup readiness, and voice/LiveKit/Jira observability.
 
 Open [http://localhost:3001/post-meeting](http://localhost:3001/post-meeting) after a local meeting, or click **Intelligence** in the LiveKit operator panel. The page includes:
 
 - Slack-ready executive recap
+- Product proof metrics: baseline minutes, actual minutes, estimated admin minutes avoided, net minutes saved, automation rate, needs-tooling escalations, and human fallback signals
 - Jira changes summary and audit evidence
-- Autonomous agent-run timeline with PM classification, specialist, repo/PR, checkpoints, findings, and Jira/PR publish state
+- Autonomous agent-run timeline with PM classification, specialist, repo/PR, cost budget, checkpoints, findings, and Jira/PR publish state
 - Blockers, risks, action items by owner, and unresolved questions
 - Sprint intelligence for blocked, unassigned, missing-ETA, stale, PR-ready, and scope-change signals
 - GitHub/PR context from Jira remote links, card tags/comments, or optional `GITHUB_CONTEXT_JSON`
@@ -318,6 +320,7 @@ All panels between video, board, and transcription are **resizable** — drag th
 - **Camera toggle** — enable/disable webcam
 - **Leave room** — disconnect from the meeting
 - **Meeting type** — switch facilitation between general meeting, standup, 1:1, sprint review, and open-ended modes
+- **Agent controls** — cancel, take over, or retry autonomous runs from the host operator panel
 - **Undo/Audit** — reverse the latest voice-driven mutation or inspect replay evidence
 
 The app is fully responsive: desktop, tablet, and mobile. On smaller screens, layouts collapse to stacked views, resize handles are hidden, and controls remain accessible without scrolling. The transcription panel auto-scrolls in place within a fixed viewport — the page itself never scrolls.
@@ -358,6 +361,9 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `NOVA_SONIC_VOICE` | `matthew` | Nova Sonic | TTS voice ID |
 | `AGENT_PM_MODEL` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Agents/AWS | Bedrock US inference-profile ID for PM classification |
 | `AGENT_REVIEW_MODEL` | `us.anthropic.claude-sonnet-4-6` | Agents/AWS | Bedrock US inference-profile ID for code-review specialists |
+| `AGENT_COST_BUDGET_CENTS` | `250` | Agents/AWS | Per-run estimated cost cap. The run stops before a model call whose estimate would exceed this budget. |
+| `AGENT_PM_CALL_ESTIMATE_CENTS` | `2` | Agents/AWS | Estimated cost reserved for one PM classification model call. |
+| `AGENT_REVIEW_CALL_ESTIMATE_CENTS` | `40` | Agents/AWS | Estimated cost reserved for one PR review model call. |
 | `CHAT_TRANSLATION_MODEL` | `AGENT_PM_MODEL` | Agents/AWS | Optional Bedrock model ID for translating non-English meeting chat text to English before agent processing. |
 | `GITHUB_APP_ID` | _unset_ | Agents/GitHub | GitHub App id for short-lived installation tokens |
 | `GITHUB_APP_INSTALLATION_ID` | _unset_ | Agents/GitHub | GitHub App installation id for the allowed repo/account |
@@ -379,6 +385,7 @@ The app is fully responsive: desktop, tablet, and mobile. On smaller screens, la
 | `JIRA_API_TOKEN` | _unset_ | Both | Optional Jira API token when the config uses `"api_token_env": "JIRA_API_TOKEN"`. Local launchers load it from macOS Keychain. |
 | `JIRA_WEBHOOK_SECRET` | _unset_ | Both | Optional shared secret for `POST /jira/webhook`; also supported as `webhook_secret` in the Jira config |
 | `AUDIT_LOG_PATH` | _unset_ | Both | Optional JSONL file for board mutation and Jira refresh audit events |
+| `AUTO_BOT_BASELINE_MEETING_MINUTES` | type-specific | Reports | Optional baseline minutes used by product-proof metrics. Defaults are 15 for standup, 30 for general/1:1/open-ended, and 60 for sprint review. |
 | `TRUST_PROXY_HEADERS` | _unset_ | Both | Set to `1` behind a trusted reverse proxy so rate limiting uses forwarded client IP headers |
 
 Local development should use macOS Keychain via the scripts above. The table above is the environment variable reference; do not create or copy a local project `.env` file.

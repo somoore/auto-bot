@@ -44,7 +44,7 @@ var (
 	peerConnections []peerConnectionState
 	trackLocals     map[string]*webrtc.TrackLocalStaticRTP
 
-	log = logging.NewDefaultLoggerFactory().NewLogger("openai-realtime-meeting-assistant")
+	log = logging.NewDefaultLoggerFactory().NewLogger("auto-bot")
 
 	sharedBoard   *kanbanBoard
 	kanbanApp     *kanbanBoardApp
@@ -845,7 +845,7 @@ func kanbanCommandAllowed(authCtx requestAuthContext, toolName string) bool {
 func kanbanToolRequiresHost(toolName string) bool {
 	switch toolName {
 	case "confirm_action", "cancel_confirmation", "resolve_jira_conflict", "undo_last_mutation",
-		"switch_meeting_type", "start_meeting", "end_meeting":
+		"switch_meeting_type", "start_meeting", "end_meeting", "cancel_agent_run", "take_over_agent_run", "retry_agent_run":
 		return true
 	default:
 		return false

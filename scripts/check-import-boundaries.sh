@@ -38,7 +38,7 @@ while IFS= read -r pkg; do
   esac
 done < <(go list ./internal/core/... ./internal/mocks/...)
 
-if rg -n "github.com/openai/openai-realtime-meeting-assistant/cmd/server" --glob '*.go' . >/tmp/auto-bot-boundary-server-imports.$$ 2>/dev/null; then
+if rg -n "github.com/somoore/auto-bot/cmd/server" --glob '*.go' . >/tmp/auto-bot-boundary-server-imports.$$ 2>/dev/null; then
   cat /tmp/auto-bot-boundary-server-imports.$$ >&2
   fail "cmd/server is an application entrypoint and must not be imported"
 fi

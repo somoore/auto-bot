@@ -425,6 +425,30 @@ variable "agent_review_model" {
   default     = "us.anthropic.claude-sonnet-4-6"
 }
 
+variable "agent_cost_budget_cents" {
+  description = "Estimated per-run agent cost budget in cents. The app stops before model calls that would exceed this estimate."
+  type        = number
+  default     = 250
+}
+
+variable "agent_pm_call_estimate_cents" {
+  description = "Estimated cost in cents reserved for one project-manager classification model call."
+  type        = number
+  default     = 2
+}
+
+variable "agent_review_call_estimate_cents" {
+  description = "Estimated cost in cents reserved for one code/security review model call."
+  type        = number
+  default     = 40
+}
+
+variable "auto_bot_baseline_meeting_minutes" {
+  description = "Baseline meeting minutes used by product-proof metrics."
+  type        = number
+  default     = 15
+}
+
 variable "bedrock_model_arns" {
   description = "Bedrock model ARNs the app task may invoke."
   type        = list(string)

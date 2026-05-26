@@ -109,7 +109,13 @@ func TestMeetingIntelligenceReportIncludesMeetingSprintGitHubAndObservability(t 
 	if report.Observability.VoiceProvider == "" || report.Setup.Region == "" || len(report.Setup.ProviderOptions) == 0 {
 		t.Fatalf("report missing observability/setup: %#v %#v", report.Observability, report.Setup)
 	}
+	if report.ProductProof.EstimatedNetMinutesSaved == 0 || report.ProductProof.MeasurementQuality == "" {
+		t.Fatalf("report missing product proof metrics: %#v", report.ProductProof)
+	}
 	if !strings.Contains(report.SlackSummary, "*Jira changes:*") {
 		t.Fatalf("SlackSummary missing Jira section: %q", report.SlackSummary)
+	}
+	if !strings.Contains(report.SlackSummary, "*Product proof:*") {
+		t.Fatalf("SlackSummary missing product proof section: %q", report.SlackSummary)
 	}
 }
