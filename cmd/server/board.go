@@ -305,7 +305,13 @@ func (board *kanbanBoard) ApplyToolCallWithMeta(toolName string, rawArgs string,
 		return board.resolveJiraConflict(args)
 	}
 
-	if requiresConfirmation(toolName) && strings.TrimSpace(meta.Source) != "" {
+	// SecArch-002: default-deny. Every dispatch through ApplyToolCall queues a
+	// confirmation for risk-classified tools regardless of which dispatcher is
+	// calling. Only callers that explicitly set meta.SkipConfirmation (the
+	// confirmed-action execution path and trusted in-process call sites) bypass
+	// the queue. Trust must be opted into, not inferred from the presence of a
+	// dispatcher label.
+	if requiresConfirmation(toolName) && !meta.SkipConfirmation {
 		board.mu.Lock()
 		result := board.createPendingConfirmation(toolName, args, meta)
 		board.mu.Unlock()
@@ -319,7 +325,7 @@ func (board *kanbanBoard) ApplyToolCallWithMeta(toolName string, rawArgs string,
 		record := board.recordMutation(toolName, args, result, before, after, meta, "", "")
 		board.persistMutationRecord(record, after)
 		if toolName == "end_meeting" {
-			board.archiveMeetingReport(meta.Source)
+			board.archiveMeetingReport(meta.Dispatcher)
 		}
 	}
 	return result, changed, err

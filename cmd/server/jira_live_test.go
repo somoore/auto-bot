@@ -139,7 +139,7 @@ func TestLiveJiraWriteThrough(t *testing.T) {
 	}
 
 	etaArgs := `{"card_id":"` + issueKey + `","eta":"2026-05-20"}`
-	result, changed, err = board.ApplyToolCall("set_eta", etaArgs)
+	result, changed, err = board.ApplyToolCallWithMeta("set_eta", etaArgs, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 	if err != nil {
 		t.Fatalf("set_eta local mutation: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestLiveJiraWriteThrough(t *testing.T) {
 	}
 
 	priorityArgs := `{"card_id":"` + issueKey + `","priority":"High"}`
-	result, changed, err = board.ApplyToolCall("set_priority", priorityArgs)
+	result, changed, err = board.ApplyToolCallWithMeta("set_priority", priorityArgs, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 	if err != nil {
 		t.Fatalf("set_priority local mutation: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestLiveJiraWriteThrough(t *testing.T) {
 	}
 
 	deleteArgs := `{"card_id":"` + issueKey + `"}`
-	result, changed, err = board.ApplyToolCall("delete_ticket", deleteArgs)
+	result, changed, err = board.ApplyToolCallWithMeta("delete_ticket", deleteArgs, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 	if err != nil {
 		t.Fatalf("delete_ticket local mutation: %v", err)
 	}

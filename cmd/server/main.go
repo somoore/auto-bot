@@ -814,7 +814,7 @@ func handleClientKanbanCommand(c *threadSafeWriter, rawData string, authCtx requ
 		return
 	}
 	rawArgs := mustMarshalJSON(request.Arguments)
-	result, changed, err := sharedBoard.ApplyToolCallWithMeta(request.Tool, rawArgs, toolCallMeta{Source: "ui"})
+	result, changed, err := sharedBoard.ApplyToolCallWithMeta(request.Tool, rawArgs, toolCallMeta{Dispatcher: "ui"})
 	if err != nil {
 		result = map[string]any{"ok": false, "error": err.Error()}
 	}

@@ -16,7 +16,7 @@ func TestMeetingIntelligenceReportIncludesMeetingSprintGitHubAndObservability(t 
 		"meeting_type":"standup",
 		"participants":["Scott","Sarah"],
 		"agenda":["status","blockers","owners"]
-	}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+	}`, toolCallMeta{Dispatcher: "nova-sonic"}); err != nil {
 		t.Fatalf("start_meeting returned error: %v", err)
 	} else if !changed {
 		t.Fatal("start_meeting should mutate")
@@ -27,7 +27,7 @@ func TestMeetingIntelligenceReportIncludesMeetingSprintGitHubAndObservability(t 
 		"notes":"Pull request is ready for review.",
 		"status":"In Progress",
 		"tags":["pr-ready"]
-	}`, toolCallMeta{Source: "nova-sonic"})
+	}`, toolCallMeta{Dispatcher: "nova-sonic"})
 	if err != nil {
 		t.Fatalf("create_ticket returned error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestMeetingIntelligenceReportIncludesMeetingSprintGitHubAndObservability(t 
 		"url":"https://github.com/example/auto-bot/pull/42",
 		"title":"Pull request 42 ready for review",
 		"summary":"Ready for review"
-	}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+	}`, toolCallMeta{Dispatcher: "nova-sonic"}); err != nil {
 		t.Fatalf("add_remote_link returned error: %v", err)
 	} else if !changed {
 		t.Fatal("add_remote_link should mutate")
@@ -51,7 +51,7 @@ func TestMeetingIntelligenceReportIncludesMeetingSprintGitHubAndObservability(t 
 		"title":"Deploy LiveKit media path",
 		"notes":"Needs AWS credentials and TURN validation.",
 		"status":"In Progress"
-	}`, toolCallMeta{Source: "nova-sonic"})
+	}`, toolCallMeta{Dispatcher: "nova-sonic"})
 	if err != nil {
 		t.Fatalf("create blocked ticket returned error: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestMeetingIntelligenceReportIncludesMeetingSprintGitHubAndObservability(t 
 		"card_id":"`+blockedCard.ID+`",
 		"reason":"AWS credentials expired during TURN validation",
 		"tags":["livekit","aws"]
-	}`, toolCallMeta{Source: "nova-sonic", Actor: "Scott", Transcript: "EMAL media path is blocked by AWS credentials."}); err != nil {
+	}`, toolCallMeta{Dispatcher: "nova-sonic", Actor: "Scott", Transcript: "EMAL media path is blocked by AWS credentials."}); err != nil {
 		t.Fatalf("set_blocked returned error: %v", err)
 	} else if !changed {
 		t.Fatal("set_blocked should mutate")
@@ -78,7 +78,7 @@ func TestMeetingIntelligenceReportIncludesMeetingSprintGitHubAndObservability(t 
 		"blocker":"AWS credentials expired during TURN validation",
 		"follow_up":"Sarah to validate TURN from a mobile hotspot",
 		"eta":"2026-05-20"
-	}`, toolCallMeta{Source: "nova-sonic", Actor: "Sarah"}); err != nil {
+	}`, toolCallMeta{Dispatcher: "nova-sonic", Actor: "Sarah"}); err != nil {
 		t.Fatalf("record_participant_update returned error: %v", err)
 	} else if !changed {
 		t.Fatal("record_participant_update should mutate")
