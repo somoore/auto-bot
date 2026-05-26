@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/somoore/auto-bot/internal/board"
+	"github.com/somoore/auto-bot/internal/meetings"
 )
 
 // kanbanStatus and the canonical status constants are aliased to the pure
@@ -45,64 +46,31 @@ type (
 	kanbanField      = board.Field
 )
 
-type scrumMeetingMode string
+// scrumMeetingMode and the canonical mode constants are aliased to
+// internal/meetings. Behavior in cmd/server is unchanged; the aliases let
+// existing code keep referring to the local names.
+type scrumMeetingMode = meetings.Mode
 
 const (
-	scrumMeetingModeGeneral   scrumMeetingMode = "general"
-	scrumMeetingModeStandup   scrumMeetingMode = "daily_standup"
-	scrumMeetingModeOneOnOne  scrumMeetingMode = "one_on_one"
-	scrumMeetingModePlanning  scrumMeetingMode = "sprint_planning"
-	scrumMeetingModeGrooming  scrumMeetingMode = "backlog_grooming"
-	scrumMeetingModeReview    scrumMeetingMode = "sprint_review"
-	scrumMeetingModeRetro     scrumMeetingMode = "retrospective"
-	scrumMeetingModeOpenEnded scrumMeetingMode = "open_ended"
+	scrumMeetingModeGeneral   = meetings.ModeGeneral
+	scrumMeetingModeStandup   = meetings.ModeStandup
+	scrumMeetingModeOneOnOne  = meetings.ModeOneOnOne
+	scrumMeetingModePlanning  = meetings.ModePlanning
+	scrumMeetingModeGrooming  = meetings.ModeGrooming
+	scrumMeetingModeReview    = meetings.ModeReview
+	scrumMeetingModeRetro     = meetings.ModeRetro
+	scrumMeetingModeOpenEnded = meetings.ModeOpenEnded
 )
 
-type scrumParticipant struct {
-	ParticipantID string `json:"participantId,omitempty"`
-	Name          string `json:"name"`
-	Role          string `json:"role,omitempty"`
-	HasSpoken     bool   `json:"hasSpoken"`
-	LastUpdate    string `json:"lastUpdate,omitempty"`
-}
-
-type scrumParticipantUpdate struct {
-	ParticipantID string       `json:"participantId,omitempty"`
-	Participant   string       `json:"participant"`
-	CardID        string       `json:"cardId,omitempty"`
-	Summary       string       `json:"summary"`
-	Completed     []string     `json:"completed,omitempty"`
-	Planned       []string     `json:"planned,omitempty"`
-	Status        kanbanStatus `json:"status,omitempty"`
-	Blocker       string       `json:"blocker,omitempty"`
-	Risks         []string     `json:"risks,omitempty"`
-	ETA           string       `json:"eta,omitempty"`
-	FollowUp      string       `json:"followUp,omitempty"`
-	CreatedAt     string       `json:"createdAt"`
-}
-
-type scrumMeetingState struct {
-	MeetingID          string                   `json:"meetingId,omitempty"`
-	Active             bool                     `json:"active"`
-	Mode               scrumMeetingMode         `json:"mode,omitempty"`
-	Goal               string                   `json:"goal,omitempty"`
-	SprintID           string                   `json:"sprintId,omitempty"`
-	SprintName         string                   `json:"sprintName,omitempty"`
-	Agenda             []string                 `json:"agenda,omitempty"`
-	StartedAt          string                   `json:"startedAt,omitempty"`
-	EndedAt            string                   `json:"endedAt,omitempty"`
-	CurrentSpeaker     string                   `json:"currentSpeaker,omitempty"`
-	Participants       []scrumParticipant       `json:"participants,omitempty"`
-	Updates            []scrumParticipantUpdate `json:"updates,omitempty"`
-	Decisions          []string                 `json:"decisions,omitempty"`
-	Risks              []string                 `json:"risks,omitempty"`
-	ActionItems        []string                 `json:"actionItems,omitempty"`
-	ParkingLot         []string                 `json:"parkingLot,omitempty"`
-	FollowUps          []scrumFollowUp          `json:"followUps,omitempty"`
-	UnresolvedBlockers []scrumBlocker           `json:"unresolvedBlockers,omitempty"`
-	Ownership          []scrumOwnership         `json:"ownership,omitempty"`
-	LastBriefing       *scrumBriefing           `json:"lastBriefing,omitempty"`
-}
+// scrumParticipant, scrumParticipantUpdate, and scrumMeetingState are
+// aliased to internal/meetings so the JSON shape, field tags, and value
+// identity are shared with any caller outside cmd/server. See
+// internal/meetings/types.go for the canonical definitions.
+type (
+	scrumParticipant       = meetings.Participant
+	scrumParticipantUpdate = meetings.ParticipantUpdate
+	scrumMeetingState      = meetings.State
+)
 
 // kanbanBoardState is the client snapshot broadcast over WebSocket and
 // persisted by the board store.

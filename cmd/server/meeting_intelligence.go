@@ -6,14 +6,20 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/somoore/auto-bot/internal/meetings"
 )
 
-type toolRiskLevel string
+// toolRiskLevel and the canonical risk constants are aliased to the pure
+// risk classification in internal/meetings (which itself re-exports
+// internal/core.RiskLevel). Behavior in cmd/server is unchanged; the aliases
+// let existing code keep referring to the local names.
+type toolRiskLevel = meetings.RiskLevel
 
 const (
-	toolRiskLow    toolRiskLevel = "low"
-	toolRiskMedium toolRiskLevel = "medium"
-	toolRiskHigh   toolRiskLevel = "high"
+	toolRiskLow    = meetings.RiskLow
+	toolRiskMedium = meetings.RiskMedium
+	toolRiskHigh   = meetings.RiskHigh
 )
 
 type toolCallMeta struct {
@@ -23,66 +29,30 @@ type toolCallMeta struct {
 	Transcript string
 }
 
-type pendingConfirmation struct {
-	ConfirmationID string         `json:"confirmationId"`
-	ToolName       string         `json:"toolName"`
-	Arguments      map[string]any `json:"arguments,omitempty"`
-	RiskLevel      toolRiskLevel  `json:"riskLevel"`
-	Prompt         string         `json:"prompt"`
-	Source         string         `json:"source,omitempty"`
-	Actor          string         `json:"actor,omitempty"`
-	CallID         string         `json:"callId,omitempty"`
-	CreatedAt      string         `json:"createdAt"`
-	ExpiresAt      string         `json:"expiresAt"`
-}
+// pendingConfirmation, pendingConfirmationView, transcriptEntry,
+// transcriptEvidence, externalActionConfirmation, boardMutationView,
+// scrumFollowUp, scrumBlocker, scrumOwnership, and scrumBriefing are aliased
+// to internal/meetings so the JSON shape, field tags, and value identity
+// are shared with any caller outside cmd/server. See
+// internal/meetings/types.go for the canonical definitions.
+type (
+	pendingConfirmation        = meetings.PendingConfirmation
+	pendingConfirmationView    = meetings.PendingConfirmationView
+	transcriptEntry            = meetings.TranscriptEntry
+	transcriptEvidence         = meetings.TranscriptEvidence
+	externalActionConfirmation = meetings.ExternalConfirmation
+	boardMutationView          = meetings.BoardMutationView
+	scrumFollowUp              = meetings.FollowUp
+	scrumBlocker               = meetings.Blocker
+	scrumOwnership             = meetings.Ownership
+	scrumBriefing              = meetings.Briefing
+)
 
-// pendingConfirmationView is the client-safe representation of a medium/high
-// risk action waiting for host confirmation.
-type pendingConfirmationView struct {
-	ConfirmationID    string        `json:"confirmationId"`
-	ToolName          string        `json:"toolName"`
-	RiskLevel         toolRiskLevel `json:"riskLevel"`
-	Prompt            string        `json:"prompt"`
-	Source            string        `json:"source,omitempty"`
-	Actor             string        `json:"actor,omitempty"`
-	Confidence        float64       `json:"confidence,omitempty"`
-	ConfidenceReasons []string      `json:"confidenceReasons,omitempty"`
-	MatchedCardID     string        `json:"matchedCardId,omitempty"`
-	GuardrailDecision string        `json:"guardrailDecision,omitempty"`
-	CreatedAt         string        `json:"createdAt"`
-	ExpiresAt         string        `json:"expiresAt"`
-}
-
-// transcriptEntry is the retained meeting transcript shape used for audit and
-// intelligence reports. CreatedAt is RFC3339Nano UTC.
-type transcriptEntry struct {
-	Role           string `json:"role"`
-	Speaker        string `json:"speaker,omitempty"`
-	Text           string `json:"text"`
-	OriginalText   string `json:"original_text,omitempty"`
-	TranslatedText string `json:"translated_text,omitempty"`
-	Language       string `json:"language,omitempty"`
-	InputMode      string `json:"input_mode,omitempty"`
-	CreatedAt      string `json:"createdAt"`
-}
-
-type transcriptEvidence struct {
-	Entries []transcriptEntry `json:"entries,omitempty"`
-	Summary string            `json:"summary,omitempty"`
-}
-
-type externalActionConfirmation struct {
-	System      string `json:"system"`
-	Operation   string `json:"operation,omitempty"`
-	Required    bool   `json:"required"`
-	Configured  bool   `json:"configured"`
-	OK          bool   `json:"ok"`
-	Message     string `json:"message,omitempty"`
-	Error       string `json:"error,omitempty"`
-	ConfirmedAt string `json:"confirmedAt,omitempty"`
-	Evidence    string `json:"evidence,omitempty"`
-}
-
+// boardMutationRecord retains the full before/after board snapshots used for
+// undo and audit replay. It stays in cmd/server because BeforeCards /
+// AfterCards reference application-level kanbanCard values (which still
+// alias internal/board.Card) and because mutation persistence is owned by
+// the kanbanBoard actor here.
 type boardMutationRecord struct {
 	EventID               string                       `json:"eventId"`
 	OccurredAt            string                       `json:"occurredAt"`
@@ -105,70 +75,6 @@ type boardMutationRecord struct {
 	Sequence              int64                        `json:"sequenceNumber"`
 	Reverted              bool                         `json:"reverted,omitempty"`
 	UndoOf                string                       `json:"undoOf,omitempty"`
-}
-
-// boardMutationView is the client-safe audit summary for one board or Jira
-// mutation.
-type boardMutationView struct {
-	EventID               string                       `json:"eventId"`
-	OccurredAt            string                       `json:"occurredAt"`
-	Source                string                       `json:"source"`
-	Actor                 string                       `json:"actor,omitempty"`
-	ToolName              string                       `json:"toolName"`
-	RiskLevel             toolRiskLevel                `json:"riskLevel"`
-	Confirmation          string                       `json:"confirmationId,omitempty"`
-	CardIDs               []string                     `json:"cardIds,omitempty"`
-	Summary               string                       `json:"summary"`
-	Confidence            float64                      `json:"confidence,omitempty"`
-	ConfidenceReasons     []string                     `json:"confidenceReasons,omitempty"`
-	MatchedCardID         string                       `json:"matchedCardId,omitempty"`
-	GuardrailDecision     string                       `json:"guardrailDecision,omitempty"`
-	ExternalConfirmations []externalActionConfirmation `json:"externalConfirmations,omitempty"`
-	APIStatus             string                       `json:"apiStatus,omitempty"`
-	Transcript            transcriptEvidence           `json:"transcript,omitempty"`
-	Sequence              int64                        `json:"sequenceNumber"`
-	Reverted              bool                         `json:"reverted,omitempty"`
-	UndoOf                string                       `json:"undoOf,omitempty"`
-}
-
-type scrumFollowUp struct {
-	ID        string `json:"id"`
-	Owner     string `json:"owner,omitempty"`
-	Text      string `json:"text"`
-	CardID    string `json:"cardId,omitempty"`
-	DueDate   string `json:"dueDate,omitempty"`
-	Status    string `json:"status,omitempty"`
-	CreatedAt string `json:"createdAt"`
-}
-
-type scrumBlocker struct {
-	ID         string `json:"id"`
-	Owner      string `json:"owner,omitempty"`
-	Text       string `json:"text"`
-	CardID     string `json:"cardId,omitempty"`
-	Status     string `json:"status"`
-	CreatedAt  string `json:"createdAt"`
-	ResolvedAt string `json:"resolvedAt,omitempty"`
-}
-
-type scrumOwnership struct {
-	Owner          string `json:"owner"`
-	CardID         string `json:"cardId,omitempty"`
-	Responsibility string `json:"responsibility"`
-	UpdatedAt      string `json:"updatedAt"`
-}
-
-type scrumBriefing struct {
-	GeneratedAt          string   `json:"generatedAt"`
-	Since                string   `json:"since"`
-	Summary              string   `json:"summary"`
-	TicketsMoved         int      `json:"ticketsMoved"`
-	PRsReady             int      `json:"prsReady"`
-	BlockedCount         int      `json:"blockedCount"`
-	UnassignedCount      int      `json:"unassignedCount"`
-	StaleCards           []string `json:"staleCards,omitempty"`
-	UnresolvedBlockers   []string `json:"unresolvedBlockers,omitempty"`
-	RecommendedQuestions []string `json:"recommendedQuestions,omitempty"`
 }
 
 // jiraConflict is the client-visible local-vs-Jira divergence record used to
