@@ -37,6 +37,12 @@ const (
 	StatusUnsupported     RunStatus = "unsupported"
 	StatusCancelled       RunStatus = "cancelled"
 	StatusTakenOver       RunStatus = "taken_over"
+	// StatusPaused is the tenant-wide kill-switch state: in-flight Runs
+	// transition to paused when an operator flips the pause_all-agents
+	// switch, and queued runs sit here until the switch is released. The
+	// status is distinct from StatusWaitingOnHuman (which is a per-run
+	// ask-the-human pause).
+	StatusPaused RunStatus = "paused"
 )
 
 // Run is the persisted internal state for an autonomous Bedrock-backed
