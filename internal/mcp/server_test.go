@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/somoore/auto-bot/internal/agent"
 	"github.com/somoore/auto-bot/internal/board"
 )
 
@@ -343,6 +346,100 @@ func TestServeStdioEndToEnd(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 response lines, got %d:\n%s", len(lines), out.String())
 	}
+}
+
+// TestToolsCallMapsRunNotFoundToInvalidParams is the SE-1 F6 regression
+// test. Before the fix, every tool error was wrapped into the
+// IsError-styled ToolCallResult envelope; MCP clients could not
+// distinguish "the run id you passed does not exist" (which is a
+// caller-supplied bad parameter) from a generic internal failure.
+//
+// The fix detects agent.ErrRunNotFound / agent.ErrRunQuestionNotFound in
+// the tool error chain (via errors.Is so wrapped chains like
+// "load run %s: %w" still map) and surfaces JSON-RPC -32602 (Invalid
+// Params). Other errors continue to land in IsError. This test
+// registers a custom tool whose handler returns each sentinel and
+// asserts the wire response carries the -32602 code.
+func TestToolsCallMapsRunNotFoundToInvalidParams(t *testing.T) {
+	s := NewServer([]Tool{
+		{
+			Name:        "test.lookup_run",
+			Description: "Always returns agent.ErrRunNotFound to exercise SE-1 F6 mapping.",
+			InputSchema: map[string]any{"type": "object"},
+			Handler: func(_ context.Context, _ json.RawMessage) (any, error) {
+				return nil, fmt.Errorf("lookup_run %s: %w", "run-missing", agent.ErrRunNotFound)
+			},
+		},
+		{
+			Name:        "test.lookup_run_question",
+			Description: "Always returns agent.ErrRunQuestionNotFound to exercise SE-1 F6 mapping.",
+			InputSchema: map[string]any{"type": "object"},
+			Handler: func(_ context.Context, _ json.RawMessage) (any, error) {
+				return nil, fmt.Errorf("lookup_question %s: %w", "q-missing", agent.ErrRunQuestionNotFound)
+			},
+		},
+		{
+			Name:        "test.generic_error",
+			Description: "Returns a generic error to confirm the default IsError path still applies.",
+			InputSchema: map[string]any{"type": "object"},
+			Handler: func(_ context.Context, _ json.RawMessage) (any, error) {
+				return nil, errors.New("something else broke")
+			},
+		},
+	})
+
+	t.Run("ErrRunNotFound maps to -32602", func(t *testing.T) {
+		resp := roundtrip(t, s, Request{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`100`),
+			Method:  "tools/call",
+			Params:  json.RawMessage(`{"name":"test.lookup_run","arguments":{}}`),
+		})
+		if resp.Error == nil {
+			t.Fatalf("expected JSON-RPC error, got result: %+v", resp.Result)
+		}
+		if resp.Error.Code != ErrCodeInvalidParams {
+			t.Fatalf("error code = %d, want %d (InvalidParams)", resp.Error.Code, ErrCodeInvalidParams)
+		}
+		if !strings.Contains(resp.Error.Message, "run not found") {
+			t.Errorf("error message = %q, want it to mention 'run not found'", resp.Error.Message)
+		}
+	})
+
+	t.Run("ErrRunQuestionNotFound maps to -32602", func(t *testing.T) {
+		resp := roundtrip(t, s, Request{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`101`),
+			Method:  "tools/call",
+			Params:  json.RawMessage(`{"name":"test.lookup_run_question","arguments":{}}`),
+		})
+		if resp.Error == nil {
+			t.Fatalf("expected JSON-RPC error, got result: %+v", resp.Result)
+		}
+		if resp.Error.Code != ErrCodeInvalidParams {
+			t.Fatalf("error code = %d, want %d (InvalidParams)", resp.Error.Code, ErrCodeInvalidParams)
+		}
+		if !strings.Contains(resp.Error.Message, "run question not found") {
+			t.Errorf("error message = %q, want it to mention 'run question not found'", resp.Error.Message)
+		}
+	})
+
+	t.Run("generic error preserves IsError envelope", func(t *testing.T) {
+		resp := roundtrip(t, s, Request{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`102`),
+			Method:  "tools/call",
+			Params:  json.RawMessage(`{"name":"test.generic_error","arguments":{}}`),
+		})
+		if resp.Error != nil {
+			t.Fatalf("generic error must not be promoted to a JSON-RPC error code; got %+v", resp.Error)
+		}
+		var result ToolCallResult
+		mustRemarshal(t, resp.Result, &result)
+		if !result.IsError {
+			t.Fatalf("expected IsError envelope for generic error; got result %+v", result)
+		}
+	})
 }
 
 // mustRemarshal re-encodes v through JSON into target. Convenient when a
