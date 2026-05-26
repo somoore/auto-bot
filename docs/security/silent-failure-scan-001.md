@@ -1,5 +1,7 @@
 # SecEng-001: Silent-failure scan of Sprint 1 code
 
+Status: SecEng-001 deliverable. Author: Security Engineer #1. Date: 2026-05-26.
+
 Scope: commits `0f5bfaf..9aa953d` on branch `agent-first-v2-sprint-0`.
 Files audited: `internal/agent/{coordinator,simple_coordinator,run}.go`, `cmd/server/{board_store,run_question_sweeper,agent_coordinator,agent_runs}.go`, `internal/board/types.go`, `internal/mcp/tools.go` (spot-check).
 
