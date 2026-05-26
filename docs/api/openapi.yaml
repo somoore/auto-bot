@@ -1,10 +1,15 @@
 openapi: 3.1.0
 info:
-  title: Auto Bot Meeting API
-  version: 0.1.0
+  title: Auto Bot Meeting + Agent API
+  version: 0.2.0
   description: >
-    HTTP API for the voice-first meeting assistant. Browser routes use HttpOnly
-    session cookies. Automation clients may use Bearer tokens when configured.
+    HTTP and WebSocket API for the voice-first meeting assistant and the
+    Sprint 2.0 agent-first surface. Browser routes use HttpOnly session
+    cookies (`auto_bot_session`); automation clients may use Bearer
+    tokens when configured. The MCP tool surface that mirrors this API
+    for external agents is documented in `docs/api/mcp-tools.md`; see
+    `docs/adrs/0003-mcp-server-as-universal-external-surface.md` for the
+    rationale.
 servers:
   - url: http://localhost:3001
     description: Local Nova Sonic stack
@@ -23,6 +28,23 @@ paths:
           description: HTML meeting UI shell. The shell contains no app token; authenticated control APIs still require a session or Bearer token.
           content:
             text/html: {}
+  /app/:
+    get:
+      summary: React SPA (S0.5) static assets.
+      description: >
+        Serves the Vite-built React frontend from `web/app/dist`. Mounted
+        via `http.StripPrefix("/app/", http.FileServer(...))` in
+        `cmd/server/main.go` near the `/app/` route registration. Any
+        sub-path resolves to a static file; client-side routing is
+        handled by the SPA. If `web/app/dist` does not exist (frontend
+        not built), the file server returns 404 — the rest of the server
+        is unaffected.
+      security: []
+      responses:
+        "200":
+          description: HTML, JS, CSS, or other static asset.
+        "404":
+          description: SPA assets not built.
   /healthz:
     get:
       summary: Health check
@@ -79,11 +101,37 @@ paths:
   /websocket:
     get:
       summary: WebSocket control channel for board, meeting, and agent events.
+      description: >
+        Long-lived WebSocket. The server pushes typed events to every
+        client subscribed to the same board, and clients push
+        `chat_message` or `kanban_command` envelopes back. Authentication
+        goes through `authorizeRequest` (`cmd/server/main.go`): either a
+        valid `auto_bot_session` cookie (browser) or `Authorization:
+        Bearer <token>` (automation) is accepted.
+
+
+        **Wire format is double-wrapped.** Every frame matches the outer
+        `WebSocketEnvelope` schema (`event: "kanban"`, `data: <string>`);
+        the string is JSON-decoded into a `WebSocketEvent` whose `event`
+        field selects the typed payload. See `WebSocketEvent` for the
+        full vocabulary. Source of truth: `cmd/server/main.go:63`
+        (`websocketMessage`), `cmd/server/board.go:2289`
+        (`sendKanbanEvent`), and `cmd/server/board.go:2353`
+        (`broadcastKanbanEventForBoard`).
+
+
+        The `event: "board"` payload (`BoardSnapshot`) carries an
+        `open_run_questions` field hydrated at broadcast time from
+        `RunStore.ListOpenRunQuestions` — added in commit `9aa953d`. The
+        field is persisted as `omitempty` and may be absent on snapshots
+        from older runs.
       responses:
         "101":
           description: WebSocket upgrade accepted.
         "401":
           description: Session or bearer token required.
+        "429":
+          description: Rate limit exceeded.
   /livekit-token:
     get:
       summary: Mint a room-scoped LiveKit token after voice readiness preflight.
@@ -292,6 +340,12 @@ paths:
   /jira/webhook:
     post:
       summary: Jira webhook refresh endpoint.
+      description: >
+        Authenticates via a shared secret carried in either an
+        `Authorization: Bearer <secret>` header or the
+        `X-Auto-Bot-Jira-Webhook-Secret` header. On a verified payload
+        the server triggers a Jira refresh and broadcasts an
+        `event: "board"` message over `/websocket`.
       security:
         - jiraWebhookSecret: []
         - jiraWebhookHeader: []
@@ -324,3 +378,263 @@ components:
       type: apiKey
       in: header
       name: X-Auto-Bot-Jira-Webhook-Secret
+  schemas:
+    # ─── WebSocket payload schemas ──────────────────────────────────────
+    # The wire format is double-wrapped. Every frame matches
+    # `WebSocketEnvelope` (always Event=="kanban"); the `data` field is a
+    # JSON-encoded *string* that decodes to `WebSocketEvent`. Source of
+    # truth: `cmd/server/main.go:63` (`websocketMessage`) and
+    # `cmd/server/board.go:2289` / `:2353` (send + broadcast).
+    WebSocketEnvelope:
+      type: object
+      description: Outer wire frame for every `/websocket` message.
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [kanban]
+        data:
+          type: string
+          description: JSON-encoded `WebSocketEvent`.
+      example:
+        event: kanban
+        data: '{"event":"board","data":{"cards":[],"sequenceNumber":42}}'
+    WebSocketEvent:
+      type: object
+      description: >
+        Inner typed event. `event` selects which payload shape `data`
+        carries. The vocabulary is grep-able from the call sites of
+        `broadcastKanbanEventForBoard` and `sendKanbanEvent` in
+        `cmd/server/`.
+      required: [event]
+      properties:
+        event:
+          type: string
+          enum:
+            - board
+            - status
+            - agent_run
+            - run_question_asked
+            - run_question_answered
+            - run_question_expired
+            - run_paused
+            - run_resumed
+            - action_result
+            - command_result
+            - audit_events
+            - replay_state
+            - highlight
+            - close_detail
+        data:
+          description: Payload shape varies by event. See per-event schemas.
+          oneOf:
+            - $ref: "#/components/schemas/BoardSnapshot"
+            - $ref: "#/components/schemas/AgentRunView"
+            - $ref: "#/components/schemas/RunQuestion"
+            - $ref: "#/components/schemas/ActionResult"
+            - { type: string }
+            - { type: object, additionalProperties: true }
+            - { type: "null" }
+    BoardSnapshot:
+      type: object
+      description: >
+        Payload for `event: "board"`. Mirrors `kanbanBoardState` at
+        `cmd/server/board.go:105`. `open_run_questions` is hydrated at
+        broadcast time from `RunStore.ListOpenRunQuestions` (introduced
+        in commit `9aa953d`). The field is omitempty on persisted
+        snapshots — the `run_questions` SQLite table is the source of
+        truth.
+      properties:
+        cards:
+          type: array
+          items: { $ref: "#/components/schemas/Card" }
+        meeting:
+          type: object
+          additionalProperties: true
+          description: Mirrors `internal/meetings.State`.
+        agentRuns:
+          type: array
+          items: { $ref: "#/components/schemas/AgentRunView" }
+        pendingConfirmations:
+          type: array
+          items: { type: object, additionalProperties: true }
+        recentMutations:
+          type: array
+          items: { type: object, additionalProperties: true }
+        conflicts:
+          type: array
+          items: { type: object, additionalProperties: true }
+        open_run_questions:
+          type: array
+          description: >
+            Open `RunQuestion` records (status="open"). Populated at
+            broadcast time only. See `internal/agent/types.go:129`
+            (`RunQuestion`).
+          items: { $ref: "#/components/schemas/RunQuestion" }
+        updatedAt:
+          type: string
+          format: date-time
+        sequenceNumber:
+          type: integer
+          format: int64
+          description: Monotonically increasing per-board sequence; lets clients reconcile out-of-order events.
+    Card:
+      type: object
+      description: >
+        Canonical card shape. Mirrors `internal/board/types.go` `Card`.
+        Externally projected to Jira/Linear/GitHub via the projection
+        layer (see ADR 0002).
+      required: [id, status, title]
+      properties:
+        id: { type: string }
+        status:
+          type: string
+          enum: [Backlog, "In Progress", Blocked, Done]
+        title: { type: string }
+        notes: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        assignee:
+          $ref: "#/components/schemas/Actor"
+        comments:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              body: { type: string }
+              author: { type: string }
+              createdAt: { type: string }
+    Actor:
+      type: object
+      description: >
+        Canonical assignee identity. `kind` discriminates human from
+        agent. Mirrors `internal/board/types.go` `Actor`.
+      required: [kind, id]
+      properties:
+        kind:
+          type: string
+          enum: [human, agent]
+        id: { type: string }
+        displayName: { type: string }
+        agentProfile: { type: string }
+        ownerHumanId: { type: string }
+        email: { type: string }
+    AgentRunView:
+      type: object
+      description: >
+        Client-safe Run timeline. Payload for `event: "agent_run"`,
+        `run_paused`, and `run_resumed`. Mirrors
+        `internal/agent/types.go:204` (`RunView`).
+      properties:
+        run_id: { type: string }
+        card_id: { type: string }
+        objective: { type: string }
+        agent_profile: { type: string }
+        status:
+          type: string
+          description: >
+            One of `queued`, `classifying`, `fetching_context`,
+            `reviewing`, `publishing`, `retrying`, `needs_input`,
+            `waiting_on_human`, `completed`, `failed`, `unsupported`,
+            `cancelled`, `taken_over`. See `internal/agent/types.go`
+            `RunStatus`.
+        current_step: { type: string }
+        plan:
+          type: array
+          items: { $ref: "#/components/schemas/PlanStep" }
+        checkpoints:
+          type: array
+          items: { $ref: "#/components/schemas/Checkpoint" }
+        cost: { $ref: "#/components/schemas/CostBreakdown" }
+        waiting_on: { $ref: "#/components/schemas/RunQuestionRef" }
+        finding_count: { type: integer }
+        jira_comment_posted: { type: boolean }
+        pr_review_posted: { type: boolean }
+        created_at: { type: string }
+        updated_at: { type: string }
+    PlanStep:
+      type: object
+      description: Mirrors `internal/agent/types.go:101` (`PlanStep`).
+      properties:
+        index: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        status:
+          type: string
+          enum: [pending, running, done, skipped, paused]
+        outcome: { type: string }
+        started_at: { type: string }
+        completed_at: { type: string }
+    Checkpoint:
+      type: object
+      description: Mirrors `internal/agent/types.go:195` (`Checkpoint`).
+      properties:
+        at: { type: string }
+        status: { type: string }
+        step: { type: string }
+        message: { type: string }
+    CostBreakdown:
+      type: object
+      description: Mirrors `internal/agent/types.go:116` (`CostBreakdown`).
+      properties:
+        cents: { type: integer }
+        by_model:
+          type: object
+          additionalProperties: { type: integer }
+        audio_seconds: { type: integer }
+        tokens_in: { type: integer }
+        tokens_out: { type: integer }
+        updated_at: { type: string }
+    RunQuestion:
+      type: object
+      description: >
+        Ask-the-human pause. Payload for `event: "run_question_asked"`,
+        `run_question_answered`, and `run_question_expired`. Mirrors
+        `internal/agent/types.go:129` (`RunQuestion`).
+      required: [id, tenant_id, board_id, run_id, card_id, prompt, status]
+      properties:
+        id: { type: string, description: "Crockford-base32 ULID." }
+        tenant_id: { type: string }
+        board_id: { type: string }
+        run_id: { type: string }
+        card_id: { type: string }
+        step_index: { type: integer }
+        prompt: { type: string }
+        reasoning: { type: string }
+        suggestions:
+          type: array
+          items: { type: string }
+        asked_at: { type: string }
+        ttl_seconds: { type: integer, description: "Default 14400 (4h)." }
+        answered_at: { type: string }
+        answer: { type: string }
+        answered_by: { type: string }
+        answered_via:
+          type: string
+          enum: [ui, voice, mcp]
+        status:
+          type: string
+          enum: [open, answered, expired, cancelled]
+    RunQuestionRef:
+      type: object
+      description: >
+        Lightweight pointer embedded in `RunView.waiting_on`. See
+        `internal/agent/types.go:159`.
+      properties:
+        question_id: { type: string }
+        prompt: { type: string }
+        asked_at: { type: string }
+    ActionResult:
+      type: object
+      description: >
+        Payload for `event: "action_result"`. Broadcast after a tool
+        call (voice or UI) succeeds or fails. Shape is dynamic; common
+        fields below.
+      properties:
+        ok: { type: boolean }
+        tool: { type: string }
+        card_id: { type: string }
+        error: { type: string }
+      additionalProperties: true
