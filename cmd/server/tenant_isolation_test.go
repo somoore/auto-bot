@@ -160,12 +160,14 @@ func TestSQLiteBoardStoreMigratesPreTenantSchema(t *testing.T) {
 		}
 	}
 
-	// PRAGMA user_version should now be 1 so subsequent opens skip the rewrite.
+	// PRAGMA user_version should now be at least 2: 1 covers the pre-tenant
+	// rewrite, 2 covers the S1.2 run_checkpoints / run_questions tables.
+	// Subsequent opens skip both steps.
 	var version int
 	if err := migrated.db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatalf("read user_version after migration: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("user_version after migration = %d, want 1", version)
+	if version < 2 {
+		t.Fatalf("user_version after migration = %d, want >= 2", version)
 	}
 }

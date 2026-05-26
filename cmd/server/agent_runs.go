@@ -34,6 +34,7 @@ const (
 	agentRunPublishing      = agent.StatusPublishing
 	agentRunRetrying        = agent.StatusRetrying
 	agentRunNeedsInput      = agent.StatusNeedsInput
+	agentRunWaitingOnHuman  = agent.StatusWaitingOnHuman
 	agentRunCompleted       = agent.StatusCompleted
 	agentRunFailed          = agent.StatusFailed
 	agentRunUnsupported     = agent.StatusUnsupported

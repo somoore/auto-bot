@@ -583,7 +583,7 @@ func buildProductProofMetrics(meetingType string, startedAt string, endedAt stri
 		switch run.Status {
 		case agentRunCompleted:
 			completedAgentRuns++
-		case agentRunNeedsInput, agentRunFailed, agentRunUnsupported, agentRunCancelled, agentRunTakenOver, agentRunRetrying:
+		case agentRunNeedsInput, agentRunWaitingOnHuman, agentRunFailed, agentRunUnsupported, agentRunCancelled, agentRunTakenOver, agentRunRetrying:
 			agentNeedsHuman++
 		}
 		if agentRunMentionsNeedsTooling(run) {

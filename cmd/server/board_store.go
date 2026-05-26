@@ -11,6 +11,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/somoore/auto-bot/internal/agent"
 )
 
 type boardStore interface {
@@ -32,6 +34,27 @@ type agentRunStore interface {
 	SaveAgentRun(ctx context.Context, tenantID string, boardID string, run agentRun) error
 	LoadAgentRun(ctx context.Context, tenantID string, boardID string, runID string) (agentRun, bool, error)
 	ListAgentRuns(ctx context.Context, tenantID string, boardID string, limit int) ([]agentRun, error)
+}
+
+// runCheckpoint is the SQL-row shape persisted in the run_checkpoints table.
+// It is intentionally distinct from agent.Checkpoint: the run timeline that
+// the orchestrator threads through Run.Checkpoints is a UI projection bounded
+// to 50 entries, while runCheckpoint is the durable per-step audit log keyed
+// by (run_id, step_index, kind, created_at). Tests round-trip the payload
+// through PayloadJSON so the schema can evolve without migrations.
+//
+// The store methods (AppendRunCheckpoint, ListRunCheckpoints,
+// SaveRunQuestion, LoadRunQuestion, ListOpenRunQuestions,
+// MarkRunQuestionAnswered, ExpireRunQuestions) hang directly off
+// *sqliteBoardStore. They are not promoted to a separate interface yet
+// because the RunCoordinator interface that wraps them lands in S1.3 — at
+// that point a runQuestionStore / runCheckpointStore interface will be
+// extracted with the right callers in mind.
+type runCheckpoint struct {
+	StepIndex   int    `json:"step_index"`
+	Kind        string `json:"kind"`
+	PayloadJSON string `json:"payload_json"`
+	CreatedAt   string `json:"created_at"`
 }
 
 type mutationLedgerStore interface {
@@ -158,6 +181,36 @@ func (store *sqliteBoardStore) init(ctx context.Context) error {
 				PRIMARY KEY(tenant_id, board_id, event_id)
 			)`,
 		`CREATE INDEX IF NOT EXISTS action_replay_events_tenant_board_occurred ON action_replay_events(tenant_id, board_id, occurred_at DESC)`,
+		// run_checkpoints / run_questions: the per-step timeline and
+		// ask-the-human pause records added in S1.2. Both are tenant-scoped
+		// from day one, so no legacy migration is needed.
+		`CREATE TABLE IF NOT EXISTS run_checkpoints (
+				tenant_id    TEXT NOT NULL,
+				board_id     TEXT NOT NULL,
+				run_id       TEXT NOT NULL,
+				step_index   INTEGER NOT NULL,
+				kind         TEXT NOT NULL,
+				payload_json TEXT NOT NULL,
+				created_at   TEXT NOT NULL,
+				PRIMARY KEY (tenant_id, board_id, run_id, step_index, kind, created_at)
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_run_checkpoints_run ON run_checkpoints (tenant_id, board_id, run_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS run_questions (
+				tenant_id    TEXT NOT NULL,
+				board_id     TEXT NOT NULL,
+				run_id       TEXT NOT NULL,
+				question_id  TEXT NOT NULL,
+				card_id      TEXT NOT NULL,
+				step_index   INTEGER NOT NULL,
+				status       TEXT NOT NULL,
+				asked_at     TEXT NOT NULL,
+				ttl_seconds  INTEGER NOT NULL,
+				answered_at  TEXT,
+				payload_json TEXT NOT NULL,
+				PRIMARY KEY (tenant_id, board_id, question_id)
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_run_questions_open ON run_questions (tenant_id, board_id, status, asked_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_run_questions_run ON run_questions (tenant_id, board_id, run_id)`,
 	}
 	// Migrate pre-tenant databases before issuing the new CREATE statements so
 	// that older tables get rewritten with tenant_id='default' on every row.
@@ -168,6 +221,31 @@ func (store *sqliteBoardStore) init(ctx context.Context) error {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("initialize board sqlite store: %w", err)
 		}
+	}
+	// Bump user_version 1 -> 2 once the new tables exist. The CREATE TABLE IF
+	// NOT EXISTS statements above are idempotent, so the version bump is the
+	// only thing recording that this database has the S1.2 shape.
+	if err := store.bumpUserVersionTo(ctx, 2); err != nil {
+		return fmt.Errorf("bump board sqlite user_version to 2: %w", err)
+	}
+	return nil
+}
+
+// bumpUserVersionTo raises PRAGMA user_version to target if it is currently
+// below target. PRAGMA user_version does not accept parameter binding, so the
+// integer is formatted into the statement (target is an internal constant, not
+// user input).
+func (store *sqliteBoardStore) bumpUserVersionTo(ctx context.Context, target int) error {
+	var current int
+	if err := store.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&current); err != nil {
+		return fmt.Errorf("read user_version: %w", err)
+	}
+	if current >= target {
+		return nil
+	}
+	// #nosec G201 -- target is a static internal constant, not user input.
+	if _, err := store.db.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, target)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -650,6 +728,236 @@ func (store *sqliteBoardStore) ListMutationRecords(ctx context.Context, tenantID
 		records = append(records, newestFirst[i])
 	}
 	return records, nil
+}
+
+func (store *sqliteBoardStore) AppendRunCheckpoint(ctx context.Context, tenantID string, boardID string, runID string, cp runCheckpoint) error {
+	tenantID = normalizeTenantID(tenantID)
+	if runID == "" {
+		return fmt.Errorf("run checkpoint requires run_id")
+	}
+	if cp.Kind == "" {
+		return fmt.Errorf("run checkpoint requires kind")
+	}
+	createdAt := cp.CreatedAt
+	if createdAt == "" {
+		createdAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	payload := cp.PayloadJSON
+	if payload == "" {
+		payload = "{}"
+	}
+	_, err := store.db.ExecContext(ctx, `
+		INSERT INTO run_checkpoints(tenant_id, board_id, run_id, step_index, kind, payload_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, tenantID, boardID, runID, cp.StepIndex, cp.Kind, payload, createdAt)
+	return err
+}
+
+func (store *sqliteBoardStore) ListRunCheckpoints(ctx context.Context, tenantID string, boardID string, runID string) (checkpoints []runCheckpoint, err error) {
+	tenantID = normalizeTenantID(tenantID)
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT step_index, kind, payload_json, created_at
+		FROM run_checkpoints
+		WHERE tenant_id = ? AND board_id = ? AND run_id = ?
+		ORDER BY created_at ASC, step_index ASC
+	`, tenantID, boardID, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close run checkpoint rows: %w", closeErr)
+		}
+	}()
+
+	checkpoints = make([]runCheckpoint, 0)
+	for rows.Next() {
+		var cp runCheckpoint
+		if err := rows.Scan(&cp.StepIndex, &cp.Kind, &cp.PayloadJSON, &cp.CreatedAt); err != nil {
+			return nil, err
+		}
+		checkpoints = append(checkpoints, cp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return checkpoints, nil
+}
+
+func (store *sqliteBoardStore) SaveRunQuestion(ctx context.Context, tenantID string, boardID string, q agent.RunQuestion) error {
+	tenantID = normalizeTenantID(tenantID)
+	if q.ID == "" {
+		return fmt.Errorf("run question requires id")
+	}
+	if q.RunID == "" {
+		return fmt.Errorf("run question requires run_id")
+	}
+	q.TenantID = tenantID
+	if q.BoardID == "" {
+		q.BoardID = boardID
+	}
+	if q.Status == "" {
+		q.Status = "open"
+	}
+	if q.AskedAt == "" {
+		q.AskedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if q.TTLSeconds <= 0 {
+		q.TTLSeconds = 14400
+	}
+	raw, err := json.Marshal(q)
+	if err != nil {
+		return err
+	}
+	var answeredAt sql.NullString
+	if q.AnsweredAt != "" {
+		answeredAt = sql.NullString{String: q.AnsweredAt, Valid: true}
+	}
+	_, err = store.db.ExecContext(ctx, `
+		INSERT INTO run_questions(tenant_id, board_id, run_id, question_id, card_id, step_index, status, asked_at, ttl_seconds, answered_at, payload_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant_id, board_id, question_id) DO UPDATE SET
+			run_id = excluded.run_id,
+			card_id = excluded.card_id,
+			step_index = excluded.step_index,
+			status = excluded.status,
+			asked_at = excluded.asked_at,
+			ttl_seconds = excluded.ttl_seconds,
+			answered_at = excluded.answered_at,
+			payload_json = excluded.payload_json
+	`, tenantID, boardID, q.RunID, q.ID, q.CardID, q.StepIndex, q.Status, q.AskedAt, q.TTLSeconds, answeredAt, string(raw))
+	return err
+}
+
+func (store *sqliteBoardStore) LoadRunQuestion(ctx context.Context, tenantID string, boardID string, questionID string) (agent.RunQuestion, bool, error) {
+	tenantID = normalizeTenantID(tenantID)
+	var raw string
+	err := store.db.QueryRowContext(ctx, `
+		SELECT payload_json
+		FROM run_questions
+		WHERE tenant_id = ? AND board_id = ? AND question_id = ?
+	`, tenantID, boardID, questionID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return agent.RunQuestion{}, false, nil
+	}
+	if err != nil {
+		return agent.RunQuestion{}, false, err
+	}
+	var q agent.RunQuestion
+	if err := json.Unmarshal([]byte(raw), &q); err != nil {
+		return agent.RunQuestion{}, false, fmt.Errorf("decode run question: %w", err)
+	}
+	return q, true, nil
+}
+
+func (store *sqliteBoardStore) ListOpenRunQuestions(ctx context.Context, tenantID string, boardID string) (questions []agent.RunQuestion, err error) {
+	tenantID = normalizeTenantID(tenantID)
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT payload_json
+		FROM run_questions
+		WHERE tenant_id = ? AND board_id = ? AND status = 'open'
+		ORDER BY asked_at ASC
+	`, tenantID, boardID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close run question rows: %w", closeErr)
+		}
+	}()
+
+	questions = make([]agent.RunQuestion, 0)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var q agent.RunQuestion
+		if err := json.Unmarshal([]byte(raw), &q); err != nil {
+			return nil, fmt.Errorf("decode run question: %w", err)
+		}
+		questions = append(questions, q)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return questions, nil
+}
+
+func (store *sqliteBoardStore) MarkRunQuestionAnswered(ctx context.Context, tenantID string, boardID string, questionID string, answer string, answeredBy string, answeredVia string) error {
+	tenantID = normalizeTenantID(tenantID)
+	q, found, err := store.LoadRunQuestion(ctx, tenantID, boardID, questionID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("run question %s was not found", questionID)
+	}
+	q.Answer = answer
+	q.AnsweredBy = answeredBy
+	q.AnsweredVia = answeredVia
+	q.AnsweredAt = time.Now().UTC().Format(time.RFC3339Nano)
+	q.Status = "answered"
+	return store.SaveRunQuestion(ctx, tenantID, boardID, q)
+}
+
+func (store *sqliteBoardStore) ExpireRunQuestions(ctx context.Context, tenantID string, boardID string, now time.Time) (int, error) {
+	tenantID = normalizeTenantID(tenantID)
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT payload_json
+		FROM run_questions
+		WHERE tenant_id = ? AND board_id = ? AND status = 'open'
+	`, tenantID, boardID)
+	if err != nil {
+		return 0, err
+	}
+	var open []agent.RunQuestion
+	for rows.Next() {
+		var raw string
+		if scanErr := rows.Scan(&raw); scanErr != nil {
+			_ = rows.Close()
+			return 0, scanErr
+		}
+		var q agent.RunQuestion
+		if jsonErr := json.Unmarshal([]byte(raw), &q); jsonErr != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("decode run question for expiry: %w", jsonErr)
+		}
+		open = append(open, q)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		_ = rows.Close()
+		return 0, rowsErr
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return 0, closeErr
+	}
+
+	expired := 0
+	for _, q := range open {
+		askedAt, parseErr := time.Parse(time.RFC3339Nano, q.AskedAt)
+		if parseErr != nil {
+			// Fall back to seconds precision; skip the row if both fail.
+			askedAt, parseErr = time.Parse(time.RFC3339, q.AskedAt)
+			if parseErr != nil {
+				continue
+			}
+		}
+		ttl := q.TTLSeconds
+		if ttl <= 0 {
+			ttl = 14400
+		}
+		deadline := askedAt.Add(time.Duration(ttl) * time.Second)
+		if !now.Before(deadline) {
+			q.Status = "expired"
+			if err := store.SaveRunQuestion(ctx, tenantID, boardID, q); err != nil {
+				return expired, err
+			}
+			expired++
+		}
+	}
+	return expired, nil
 }
 
 func (store *sqliteBoardStore) Close() error {
