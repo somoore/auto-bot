@@ -1,33 +1,35 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"io"
+	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/somoore/auto-bot/internal/agent"
 	"github.com/somoore/auto-bot/internal/board"
 )
 
-// ErrCardNotFound is returned by BoardAdapter.GetCard / UpdateCard when no
+// ErrCardNotFound is returned by BoardClient.GetCard / UpdateCard when no
 // card matches the supplied ID. Tool handlers translate this into a
 // human-readable error surfaced to the MCP client.
 var ErrCardNotFound = errors.New("mcp: card not found")
 
-// BoardAdapter abstracts the board-state operations the five S2.0 tools
-// need. The MCP package owns this interface so the protocol layer stays
-// provider-neutral; concrete adapters live in cmd/mcpd (in-memory) and
-// will live in cmd/server (shared in-memory cache) once we tackle the
-// cross-process state-sharing question in S2.1.
+// BoardClient abstracts the board-state operations the five MCP tools need.
+// The MCP package owns this interface so the protocol layer stays
+// provider-neutral. In production, cmd/mcpd injects an HTTPBoardClient that
+// fans out to cmd/server's /internal endpoints — every MCP-driven mutation
+// then flows through cmd/server's ApplyToolCall, so ActionLedger, risk
+// classification, and confirmation gates apply uniformly.
 //
 // All methods are scoped by (tenantID, boardID). Empty values mean
-// "default" — the adapter normalizes them.
-type BoardAdapter interface {
+// "default" — the implementation normalizes them.
+type BoardClient interface {
 	ListCards(ctx context.Context, tenantID, boardID string, filter CardFilter) ([]board.Card, error)
 	GetCard(ctx context.Context, tenantID, boardID, cardID string) (board.Card, error)
 	CreateCard(ctx context.Context, tenantID, boardID string, input CardCreate) (board.Card, error)
@@ -44,8 +46,8 @@ type CardFilter struct {
 	AgentOnly  bool   `json:"agent_only,omitempty"`
 }
 
-// CardCreate is the input shape for card.create. Notes mirrors Card.Notes
-// (Description in the inbound JSON, but we use the field internally).
+// CardCreate is the input shape for card.create. Description maps to
+// Card.Notes on the canonical board side.
 type CardCreate struct {
 	Title       string         `json:"title"`
 	Description string         `json:"description,omitempty"`
@@ -90,7 +92,7 @@ type CardDetail struct {
 
 // RunSummary is the slim Run shape attached to CardDetail. It mirrors the
 // fields the live drawer reads; the full Run flows through a dedicated
-// runs.get tool (lands in S2.1).
+// runs.get tool (lands later).
 type RunSummary struct {
 	RunID        string                `json:"run_id"`
 	Status       agent.RunStatus       `json:"status"`
@@ -109,10 +111,10 @@ type CommentResult struct {
 
 // ToolDeps is the bundle of dependencies the tool handlers close over.
 // Constructing once at server boot keeps the tool definitions pure (no
-// hidden globals) and makes them trivial to test with a fake BoardAdapter
+// hidden globals) and makes them trivial to test with a fake BoardClient
 // and an in-memory RunStore.
 type ToolDeps struct {
-	Board       BoardAdapter
+	Board       BoardClient
 	RunStore    agent.RunStore
 	Coordinator agent.RunCoordinator
 	TenantID    string
@@ -120,8 +122,8 @@ type ToolDeps struct {
 
 	// DefaultActor is the identity tool calls run under when the request
 	// payload does not override it (e.g. card.comment's as_actor field).
-	// For S2.0 this is a single shared "mcp" actor; S2.1 will switch to
-	// per-token actor identity.
+	// For S2.1 this is a single shared "mcp" actor; later sprints will
+	// switch to per-token actor identity.
 	DefaultActor string
 }
 
@@ -171,9 +173,6 @@ func buildListCardsTool(deps ToolDeps) Tool {
 			}
 			runByCard := map[string]string{}
 			if deps.RunStore != nil {
-				// Best-effort: associate the most recent open question's
-				// Run with each card so the slim view can surface "this
-				// card has an agent run in flight".
 				qs, qErr := deps.RunStore.ListOpenRunQuestions(ctx, deps.TenantID, deps.BoardID)
 				if qErr == nil {
 					for _, q := range qs {
@@ -225,9 +224,6 @@ func buildGetCardTool(deps ToolDeps) Tool {
 				return nil, err
 			}
 			detail := CardDetail{Card: card, Thread: card.Comments}
-			// Active run lookup is best-effort against the run store. We
-			// match on CardID; if multiple runs exist, the most recently
-			// updated wins.
 			if deps.RunStore != nil {
 				if run := findActiveRunForCard(ctx, deps.RunStore, deps.TenantID, deps.BoardID, card.ID); run != nil {
 					detail.ActiveRun = run
@@ -282,7 +278,7 @@ func findActiveRunForCard(ctx context.Context, store agent.RunStore, tenantID, b
 func buildCreateCardTool(deps ToolDeps) Tool {
 	return Tool{
 		Name:        "card.create",
-		Description: "Create a new card on the active board. Routes through the same mutation path as voice tools (S2.0: ActionLedger / risk gates land in S2.1 once cross-process state-sharing is resolved).",
+		Description: "Create a new card on the active board. Routes through cmd/server's ApplyToolCall path, so ActionLedger + risk gates apply (same as voice / UI callers).",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"title"},
@@ -343,10 +339,6 @@ func buildUpdateCardTool(deps ToolDeps) Tool {
 			},
 		},
 		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
-			// Decode into a raw map first so we can detect which patch
-			// fields were actually supplied. Pointer fields capture
-			// non-Tags scalars; tags need explicit set-tracking because
-			// `null` and absent both unmarshal to a nil slice.
 			var envelope struct {
 				CardID string          `json:"card_id"`
 				Patch  json.RawMessage `json:"patch"`
@@ -362,7 +354,6 @@ func buildUpdateCardTool(deps ToolDeps) Tool {
 				if err := json.Unmarshal(envelope.Patch, &patch); err != nil {
 					return nil, fmt.Errorf("invalid patch: %w", err)
 				}
-				// Set-tracking for Tags.
 				var probe map[string]json.RawMessage
 				_ = json.Unmarshal(envelope.Patch, &probe)
 				if _, ok := probe["tags"]; ok {
@@ -383,7 +374,7 @@ func buildUpdateCardTool(deps ToolDeps) Tool {
 func buildCommentTool(deps ToolDeps) Tool {
 	return Tool{
 		Name:        "card.comment",
-		Description: "Append a comment to a card's thread. as_actor overrides the default MCP actor for the duration of this call (S2.1 will scope this to per-token identities).",
+		Description: "Append a comment to a card's thread. as_actor overrides the default MCP actor for the duration of this call (per-token identities land in a later sprint).",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"card_id", "body"},
@@ -422,81 +413,181 @@ func buildCommentTool(deps ToolDeps) Tool {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory adapter
+// HTTPBoardClient
 // ---------------------------------------------------------------------------
 
-// InMemoryBoardAdapter is a thread-safe BoardAdapter that stores cards in a
-// per-(tenant, board) map. It exists so the foundational slice is fully
-// self-contained — cmd/mcpd uses it as the default backend, and the test
-// suite uses it directly.
+// HTTPBoardClient implements BoardClient by calling cmd/server's
+// /internal/tools/dispatch (mutations) and /internal/board/cards (reads).
+// All requests carry a bearer token shared with cmd/server's APP_API_TOKEN
+// so the same auth path admits MCP, voice, and UI callers.
 //
-// S2.1's open architectural question is how this gets replaced with a
-// shared-state-with-cmd/server adapter. Today's volume-mounted SQLite is
-// not safe to read concurrently from two processes because cmd/server
-// keeps an in-memory snapshot the file alone does not describe.
-type InMemoryBoardAdapter struct {
-	mu       sync.Mutex
-	boards   map[boardKey]*boardSnapshot
-	idSeed   int64
-	clock    func() time.Time
-	idPrefix string
+// The endpoint contract:
+//
+//	POST /internal/tools/dispatch
+//	{
+//	  "tool":       "card.create",       // MCP tool name (server translates)
+//	  "args":       { ... },              // MCP-shaped arguments
+//	  "dispatcher": "mcp",                // sets toolCallMeta.Source
+//	  "tenant_id":  "default",
+//	  "board_id":   "default"
+//	}
+//	→  { "card": {...} } | { "card_id": "...", "card": {...} } | { "comment": {...} }
+//
+//	GET /internal/board/cards            → { "cards": [Card...] }
+//	GET /internal/board/cards/{id}       → { "card":  Card    }
+type HTTPBoardClient struct {
+	BaseURL    string
+	Token      string
+	HTTPClient *http.Client
+	Dispatcher string
 }
 
-type boardKey struct{ tenant, board string }
-
-type boardSnapshot struct {
-	cards []board.Card
-}
-
-// NewInMemoryBoardAdapter returns an empty adapter. SeedCards installs a
-// pre-populated state (used in tests and for the default mcpd seed).
-func NewInMemoryBoardAdapter() *InMemoryBoardAdapter {
-	return &InMemoryBoardAdapter{
-		boards:   map[boardKey]*boardSnapshot{},
-		clock:    func() time.Time { return time.Now().UTC() },
-		idPrefix: "mcp",
+// NewHTTPBoardClient returns a client with a sane default timeout. baseURL
+// is the cmd/server root (e.g. http://app:3000); token authenticates as the
+// shared APP_API_TOKEN. dispatcher labels the caller in audit ledger
+// entries (defaults to "mcp" when empty).
+func NewHTTPBoardClient(baseURL, token, dispatcher string) *HTTPBoardClient {
+	d := strings.TrimSpace(dispatcher)
+	if d == "" {
+		d = "mcp"
+	}
+	return &HTTPBoardClient{
+		BaseURL:    strings.TrimRight(baseURL, "/"),
+		Token:      token,
+		HTTPClient: &http.Client{Timeout: 30 * time.Second},
+		Dispatcher: d,
 	}
 }
 
-// SeedCards installs cards into the named board, replacing any existing
-// snapshot. Useful for tests and for cmd/mcpd to expose a non-empty board
-// on first boot.
-func (a *InMemoryBoardAdapter) SeedCards(tenantID, boardID string, cards []board.Card) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	clone := make([]board.Card, len(cards))
-	copy(clone, cards)
-	a.boards[a.key(tenantID, boardID)] = &boardSnapshot{cards: clone}
+// dispatchEnvelope is the JSON shape POST /internal/tools/dispatch consumes.
+type dispatchEnvelope struct {
+	Tool       string          `json:"tool"`
+	Args       json.RawMessage `json:"args"`
+	Dispatcher string          `json:"dispatcher,omitempty"`
+	TenantID   string          `json:"tenant_id,omitempty"`
+	BoardID    string          `json:"board_id,omitempty"`
 }
 
-func (a *InMemoryBoardAdapter) key(tenantID, boardID string) boardKey {
-	if tenantID == "" {
-		tenantID = "default"
-	}
-	if boardID == "" {
-		boardID = "default"
-	}
-	return boardKey{tenant: tenantID, board: boardID}
+// dispatchResult is the JSON shape /internal/tools/dispatch returns. The
+// payload is intentionally permissive — different MCP tools surface
+// different fields (card, comment, card_id) — and the caller picks out
+// what it needs.
+type dispatchResult struct {
+	Card    *board.Card    `json:"card,omitempty"`
+	CardID  string         `json:"card_id,omitempty"`
+	Comment *board.Comment `json:"comment,omitempty"`
+	Cards   []board.Card   `json:"cards,omitempty"`
+	Error   string         `json:"error,omitempty"`
 }
 
-func (a *InMemoryBoardAdapter) ensure(tenantID, boardID string) *boardSnapshot {
-	k := a.key(tenantID, boardID)
-	snap, ok := a.boards[k]
-	if !ok {
-		snap = &boardSnapshot{}
-		a.boards[k] = snap
+func (c *HTTPBoardClient) post(ctx context.Context, tool string, tenantID, boardID string, args any) (dispatchResult, error) {
+	if c == nil {
+		return dispatchResult{}, errors.New("http board client is nil")
 	}
-	return snap
+	if c.HTTPClient == nil {
+		c.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return dispatchResult{}, fmt.Errorf("marshal args: %w", err)
+	}
+	envelope := dispatchEnvelope{
+		Tool:       tool,
+		Args:       raw,
+		Dispatcher: c.Dispatcher,
+		TenantID:   tenantID,
+		BoardID:    boardID,
+	}
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		return dispatchResult{}, fmt.Errorf("marshal envelope: %w", err)
+	}
+	// #nosec G107 G704 -- BaseURL is operator-configured at process start (--board-url flag / BOARD_URL env), not user input.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/internal/tools/dispatch", bytes.NewReader(body))
+	if err != nil {
+		return dispatchResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.HTTPClient.Do(req) // #nosec G107 G704 -- BaseURL is operator-configured at process start, not user input.
+	if err != nil {
+		return dispatchResult{}, fmt.Errorf("dispatch %s: %w", tool, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return dispatchResult{}, fmt.Errorf("read dispatch response: %w", err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return dispatchResult{}, ErrCardNotFound
+	}
+	if resp.StatusCode >= 400 {
+		// Try to decode an {error: "..."} body; otherwise surface raw text.
+		var errBody struct {
+			Error string `json:"error"`
+		}
+		if jsonErr := json.Unmarshal(respBody, &errBody); jsonErr == nil && errBody.Error != "" {
+			return dispatchResult{}, fmt.Errorf("dispatch %s: %s", tool, errBody.Error)
+		}
+		return dispatchResult{}, fmt.Errorf("dispatch %s: http %d: %s", tool, resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var out dispatchResult
+	if len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, &out); err != nil {
+			return dispatchResult{}, fmt.Errorf("decode dispatch response: %w", err)
+		}
+	}
+	return out, nil
 }
 
-// ListCards returns a filtered copy of the named board's cards in stable
-// ID order. Copying isolates callers from concurrent mutation.
-func (a *InMemoryBoardAdapter) ListCards(_ context.Context, tenantID, boardID string, filter CardFilter) ([]board.Card, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	snap := a.ensure(tenantID, boardID)
-	out := make([]board.Card, 0, len(snap.cards))
-	for _, c := range snap.cards {
+func (c *HTTPBoardClient) get(ctx context.Context, path string) ([]byte, int, error) {
+	if c == nil {
+		return nil, 0, errors.New("http board client is nil")
+	}
+	if c.HTTPClient == nil {
+		c.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	// #nosec G107 G704 -- BaseURL is operator-configured at process start (--board-url flag / BOARD_URL env), not user input. The `path` argument is constructed from hard-coded strings + sanitized cardIDs.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.HTTPClient.Do(req) // #nosec G107 G704 -- BaseURL is operator-configured at process start, not user input.
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return body, resp.StatusCode, nil
+}
+
+// ListCards calls GET /internal/board/cards and applies the filter on the
+// MCP side. (Server-side filtering can land later; today's boards are small
+// enough that round-trip + filter is fine.)
+func (c *HTTPBoardClient) ListCards(ctx context.Context, tenantID, boardID string, filter CardFilter) ([]board.Card, error) {
+	body, status, err := c.get(ctx, "/internal/board/cards")
+	if err != nil {
+		return nil, fmt.Errorf("list cards: %w", err)
+	}
+	if status >= 400 {
+		return nil, fmt.Errorf("list cards: http %d: %s", status, strings.TrimSpace(string(body)))
+	}
+	var payload struct {
+		Cards []board.Card `json:"cards"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("decode cards: %w", err)
+	}
+	out := make([]board.Card, 0, len(payload.Cards))
+	for _, c := range payload.Cards {
 		if filter.Status != "" && string(c.Status) != filter.Status {
 			continue
 		}
@@ -512,96 +603,104 @@ func (a *InMemoryBoardAdapter) ListCards(_ context.Context, tenantID, boardID st
 		}
 		out = append(out, c)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
-// GetCard returns one card by ID.
-func (a *InMemoryBoardAdapter) GetCard(_ context.Context, tenantID, boardID, cardID string) (board.Card, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	snap := a.ensure(tenantID, boardID)
-	for _, c := range snap.cards {
-		if c.ID == cardID {
-			return c, nil
-		}
+// GetCard calls GET /internal/board/cards/{id}.
+func (c *HTTPBoardClient) GetCard(ctx context.Context, tenantID, boardID, cardID string) (board.Card, error) {
+	body, status, err := c.get(ctx, "/internal/board/cards/"+cardID)
+	if err != nil {
+		return board.Card{}, fmt.Errorf("get card: %w", err)
 	}
-	return board.Card{}, ErrCardNotFound
+	if status == http.StatusNotFound {
+		return board.Card{}, ErrCardNotFound
+	}
+	if status >= 400 {
+		return board.Card{}, fmt.Errorf("get card: http %d: %s", status, strings.TrimSpace(string(body)))
+	}
+	var payload struct {
+		Card board.Card `json:"card"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return board.Card{}, fmt.Errorf("decode card: %w", err)
+	}
+	if payload.Card.ID == "" {
+		return board.Card{}, ErrCardNotFound
+	}
+	return payload.Card, nil
 }
 
-// CreateCard appends a new card with a mcp-prefixed ID. The ID prefix lets
-// human auditors tell at a glance which mutations came through the MCP
-// surface vs cmd/server.
-func (a *InMemoryBoardAdapter) CreateCard(_ context.Context, tenantID, boardID string, input CardCreate) (board.Card, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	snap := a.ensure(tenantID, boardID)
-	a.idSeed++
-	id := fmt.Sprintf("%s-%010d", a.idPrefix, a.idSeed)
-	status := board.Status(input.Status)
-	if strings.TrimSpace(string(status)) == "" {
-		status = board.StatusBacklog
+// CreateCard dispatches card.create through /internal/tools/dispatch.
+func (c *HTTPBoardClient) CreateCard(ctx context.Context, tenantID, boardID string, input CardCreate) (board.Card, error) {
+	out, err := c.post(ctx, "card.create", tenantID, boardID, input)
+	if err != nil {
+		return board.Card{}, err
 	}
-	card := board.Card{
-		ID:       id,
-		Title:    input.Title,
-		Notes:    input.Description,
-		Status:   status,
-		Tags:     append([]string{}, input.Tags...),
-		Assignee: input.Assignee,
+	if out.Card == nil {
+		return board.Card{}, fmt.Errorf("card.create: response missing card")
 	}
-	snap.cards = append(snap.cards, card)
-	return card, nil
+	return *out.Card, nil
 }
 
-// UpdateCard applies a patch and returns the resulting card.
-func (a *InMemoryBoardAdapter) UpdateCard(_ context.Context, tenantID, boardID, cardID string, patch CardPatch) (board.Card, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	snap := a.ensure(tenantID, boardID)
-	for i := range snap.cards {
-		if snap.cards[i].ID != cardID {
-			continue
-		}
-		c := &snap.cards[i]
-		if patch.Title != nil {
-			c.Title = *patch.Title
-		}
-		if patch.Status != nil {
-			c.Status = board.Status(*patch.Status)
-		}
-		if patch.Notes != nil {
-			c.Notes = *patch.Notes
-		}
-		if patch.Assignee != nil {
-			actor := *patch.Assignee
-			c.Assignee = &actor
-		}
-		if patch.TagsSet {
-			c.Tags = append([]string{}, patch.Tags...)
-		}
-		return *c, nil
-	}
-	return board.Card{}, ErrCardNotFound
+// updatePatchPayload is the wire shape /internal/tools/dispatch expects for
+// card.update. Tags is rendered as a pointer (nil → omit; empty slice →
+// explicit clear) so the dispatch endpoint can preserve patch semantics.
+type updatePatchPayload struct {
+	CardID string                  `json:"card_id"`
+	Patch  updatePatchPayloadInner `json:"patch"`
 }
 
-// AddComment appends a comment to the named card's thread.
-func (a *InMemoryBoardAdapter) AddComment(_ context.Context, tenantID, boardID, cardID, body, author string) (board.Comment, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	snap := a.ensure(tenantID, boardID)
-	for i := range snap.cards {
-		if snap.cards[i].ID != cardID {
-			continue
-		}
-		comment := board.Comment{
-			ID:        fmt.Sprintf("cmt-%d", a.clock().UnixNano()),
-			Body:      body,
-			Author:    author,
-			CreatedAt: a.clock().Format(time.RFC3339Nano),
-		}
-		snap.cards[i].Comments = append(snap.cards[i].Comments, comment)
-		return comment, nil
+type updatePatchPayloadInner struct {
+	Title    *string      `json:"title,omitempty"`
+	Status   *string      `json:"status,omitempty"`
+	Assignee *board.Actor `json:"assignee,omitempty"`
+	Notes    *string      `json:"notes,omitempty"`
+	Tags     *[]string    `json:"tags,omitempty"`
+}
+
+// UpdateCard dispatches card.update through /internal/tools/dispatch.
+func (c *HTTPBoardClient) UpdateCard(ctx context.Context, tenantID, boardID, cardID string, patch CardPatch) (board.Card, error) {
+	inner := updatePatchPayloadInner{
+		Title:    patch.Title,
+		Status:   patch.Status,
+		Assignee: patch.Assignee,
+		Notes:    patch.Notes,
 	}
-	return board.Comment{}, ErrCardNotFound
+	if patch.TagsSet {
+		tags := append([]string{}, patch.Tags...)
+		inner.Tags = &tags
+	}
+	payload := updatePatchPayload{CardID: cardID, Patch: inner}
+	out, err := c.post(ctx, "card.update", tenantID, boardID, payload)
+	if err != nil {
+		return board.Card{}, err
+	}
+	if out.Card == nil {
+		return board.Card{}, fmt.Errorf("card.update: response missing card")
+	}
+	return *out.Card, nil
+}
+
+// commentPayload is the wire shape /internal/tools/dispatch expects for
+// card.comment.
+type commentPayload struct {
+	CardID  string `json:"card_id"`
+	Body    string `json:"body"`
+	AsActor string `json:"as_actor,omitempty"`
+}
+
+// AddComment dispatches card.comment through /internal/tools/dispatch.
+func (c *HTTPBoardClient) AddComment(ctx context.Context, tenantID, boardID, cardID, body, author string) (board.Comment, error) {
+	out, err := c.post(ctx, "card.comment", tenantID, boardID, commentPayload{
+		CardID:  cardID,
+		Body:    body,
+		AsActor: author,
+	})
+	if err != nil {
+		return board.Comment{}, err
+	}
+	if out.Comment == nil {
+		return board.Comment{}, fmt.Errorf("card.comment: response missing comment")
+	}
+	return *out.Comment, nil
 }

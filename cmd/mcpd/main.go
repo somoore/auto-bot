@@ -3,11 +3,14 @@
 // read and mutate the board via the same audit + risk-classification path
 // the voice tools use.
 //
-// Sprint 2.0 status: foundational slice. Five tools, two transports
-// (stdio + HTTP), single-token HTTP auth, in-memory board adapter. The
-// shared-state-with-cmd/server story is the open architectural question
-// for S2.1; see internal/mcp/tools.go's InMemoryBoardAdapter for the
-// rationale.
+// Sprint 2.1 status: MCP tools route through cmd/server's
+// /internal/tools/dispatch endpoint, so every MCP-driven mutation flows
+// through ApplyToolCall — ActionLedger, risk classification, and
+// confirmation gates apply uniformly to voice, UI, and MCP callers.
+//
+// When --board-url is empty, mcpd falls back to an in-memory mock board.
+// This keeps the foundational slice runnable in standalone tests and
+// examples; production deployments always set --board-url + BOARD_TOKEN.
 package main
 
 import (
@@ -35,6 +38,7 @@ func main() {
 		port      = flag.Int("port", envOrInt("MCPD_PORT", 4000), "HTTP listen port (when --transport=http)")
 		boardID   = flag.String("board-id", envOr("APP_BOARD_ID", "default"), "board identifier")
 		tenantID  = flag.String("tenant-id", envOr("APP_TENANT_ID", "default"), "tenant identifier")
+		boardURL  = flag.String("board-url", envOr("BOARD_URL", ""), "cmd/server base URL (e.g. http://app:3000); empty falls back to in-memory mock")
 	)
 	flag.Parse()
 
@@ -43,19 +47,26 @@ func main() {
 		log.Println("mcpd: WARNING — MCPD_TOKEN is empty; HTTP transport will accept anonymous requests")
 	}
 
-	sqlitePath := os.Getenv("BOARD_SQLITE_PATH")
-	if sqlitePath != "" {
-		log.Printf("mcpd: BOARD_SQLITE_PATH=%q noted; running with in-memory adapter (shared SQLite adapter lands in S2.1)", sanitizeForLog(sqlitePath))
+	boardToken := os.Getenv("BOARD_TOKEN")
+	var client mcp.BoardClient
+	if strings.TrimSpace(*boardURL) != "" {
+		if boardToken == "" {
+			log.Println("mcpd: WARNING — BOARD_URL is set but BOARD_TOKEN is empty; cmd/server will reject dispatches")
+		}
+		client = mcp.NewHTTPBoardClient(*boardURL, boardToken, "mcp")
+		log.Printf("mcpd: routing tools to cmd/server at %s (tenant=%s board=%s)", sanitizeForLog(*boardURL), sanitizeForLog(*tenantID), sanitizeForLog(*boardID))
+	} else {
+		fallback := mocks.NewBoardClient()
+		seedDefaultCards(fallback, *tenantID, *boardID)
+		client = fallback
+		log.Printf("mcpd: BOARD_URL is empty; running with in-memory mock (tenant=%s board=%s)", sanitizeForLog(*tenantID), sanitizeForLog(*boardID))
 	}
-
-	adapter := mcp.NewInMemoryBoardAdapter()
-	seedDefaultCards(adapter, *tenantID, *boardID)
 
 	runStore := mocks.NewRunStore()
 	coordinator := agent.NewSimpleRunCoordinator(runStore, nil)
 
 	tools := mcp.BuildTools(mcp.ToolDeps{
-		Board:        adapter,
+		Board:        client,
 		RunStore:     runStore,
 		Coordinator:  coordinator,
 		TenantID:     *tenantID,
@@ -87,6 +98,7 @@ func main() {
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		go func() {
+			// #nosec G706 -- addr is fmt.Sprintf(":%d", *port) (digits only); tenant/board are sanitized.
 			log.Printf("mcpd: serving HTTP transport on %s (tenant=%s board=%s, auth=%v)", addr, sanitizeForLog(*tenantID), sanitizeForLog(*boardID), token != "")
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Fatalf("mcpd: http: %v", err)
@@ -101,8 +113,8 @@ func main() {
 	}
 }
 
-func seedDefaultCards(adapter *mcp.InMemoryBoardAdapter, tenantID, boardID string) {
-	adapter.SeedCards(tenantID, boardID, []board.Card{
+func seedDefaultCards(client *mocks.BoardClient, tenantID, boardID string) {
+	client.SeedCards(tenantID, boardID, []board.Card{
 		{
 			ID:     "mcp-seed-001",
 			Title:  "Wire your MCP client to auto-bot",
@@ -134,8 +146,7 @@ func envOrInt(key string, fallback int) int {
 
 // sanitizeForLog strips control characters from operator-supplied strings
 // (env vars, flag values) before they hit the structured log so log forging
-// via newline injection is not possible. Closes gosec G706 on the
-// log.Printf call sites that interpolate flag values.
+// via newline injection is not possible.
 func sanitizeForLog(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f {

@@ -4,28 +4,151 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/somoore/auto-bot/internal/board"
 )
 
-func newTestServer(t *testing.T) (*Server, *InMemoryBoardAdapter) {
+// fakeBoardClient is a minimal in-memory BoardClient used by the protocol
+// tests. It mirrors what mocks.BoardClient does but lives inside the mcp
+// package to avoid an internal/mcp ←→ internal/mocks import cycle.
+type fakeBoardClient struct {
+	mu     sync.Mutex
+	cards  []board.Card
+	idSeed int64
+}
+
+func newFakeBoardClient(cards []board.Card) *fakeBoardClient {
+	f := &fakeBoardClient{}
+	if cards != nil {
+		f.cards = append(f.cards, cards...)
+	}
+	return f
+}
+
+func (f *fakeBoardClient) ListCards(_ context.Context, _ string, _ string, filter CardFilter) ([]board.Card, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]board.Card, 0, len(f.cards))
+	for _, c := range f.cards {
+		if filter.Status != "" && string(c.Status) != filter.Status {
+			continue
+		}
+		if filter.AssigneeID != "" {
+			if c.Assignee == nil || c.Assignee.ID != filter.AssigneeID {
+				continue
+			}
+		}
+		if filter.AgentOnly {
+			if c.Assignee == nil || c.Assignee.Kind != board.ActorKindAgent {
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (f *fakeBoardClient) GetCard(_ context.Context, _ string, _ string, cardID string) (board.Card, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.cards {
+		if c.ID == cardID {
+			return c, nil
+		}
+	}
+	return board.Card{}, ErrCardNotFound
+}
+
+func (f *fakeBoardClient) CreateCard(_ context.Context, _ string, _ string, input CardCreate) (board.Card, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.idSeed++
+	status := board.Status(input.Status)
+	if strings.TrimSpace(string(status)) == "" {
+		status = board.StatusBacklog
+	}
+	card := board.Card{
+		ID:       fmt.Sprintf("fake-%010d", f.idSeed),
+		Title:    input.Title,
+		Notes:    input.Description,
+		Status:   status,
+		Tags:     append([]string{}, input.Tags...),
+		Assignee: input.Assignee,
+	}
+	f.cards = append(f.cards, card)
+	return card, nil
+}
+
+func (f *fakeBoardClient) UpdateCard(_ context.Context, _ string, _ string, cardID string, patch CardPatch) (board.Card, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.cards {
+		if f.cards[i].ID != cardID {
+			continue
+		}
+		c := &f.cards[i]
+		if patch.Title != nil {
+			c.Title = *patch.Title
+		}
+		if patch.Status != nil {
+			c.Status = board.Status(*patch.Status)
+		}
+		if patch.Notes != nil {
+			c.Notes = *patch.Notes
+		}
+		if patch.Assignee != nil {
+			actor := *patch.Assignee
+			c.Assignee = &actor
+		}
+		if patch.TagsSet {
+			c.Tags = append([]string{}, patch.Tags...)
+		}
+		return *c, nil
+	}
+	return board.Card{}, ErrCardNotFound
+}
+
+func (f *fakeBoardClient) AddComment(_ context.Context, _ string, _ string, cardID, body, author string) (board.Comment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.cards {
+		if f.cards[i].ID != cardID {
+			continue
+		}
+		comment := board.Comment{
+			ID:        fmt.Sprintf("cmt-%d", time.Now().UnixNano()),
+			Body:      body,
+			Author:    author,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		f.cards[i].Comments = append(f.cards[i].Comments, comment)
+		return comment, nil
+	}
+	return board.Comment{}, ErrCardNotFound
+}
+
+func newTestServer(t *testing.T) (*Server, *fakeBoardClient) {
 	t.Helper()
-	adapter := NewInMemoryBoardAdapter()
-	adapter.SeedCards("default", "default", []board.Card{
+	client := newFakeBoardClient([]board.Card{
 		{ID: "card-100", Title: "Wire MCP server", Status: board.StatusInProgress, Tags: []string{"sprint-2"}},
 		{ID: "card-101", Title: "Document tools", Status: board.StatusBacklog, Tags: []string{"docs"}, Assignee: &board.Actor{Kind: board.ActorKindAgent, ID: "swe-1", AgentProfile: "swe-1"}},
 	})
 	deps := ToolDeps{
-		Board:        adapter,
+		Board:        client,
 		TenantID:     "default",
 		BoardID:      "default",
 		DefaultActor: "mcp",
 	}
-	return NewServer(BuildTools(deps)), adapter
+	return NewServer(BuildTools(deps)), client
 }
 
 func decodeResp(t *testing.T, raw []byte) Response {
@@ -156,7 +279,7 @@ func TestToolsCallListCardsAgentOnlyFilter(t *testing.T) {
 }
 
 func TestToolsCallCreateCard(t *testing.T) {
-	s, adapter := newTestServer(t)
+	s, client := newTestServer(t)
 	resp := roundtrip(t, s, Request{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`4`),
@@ -187,13 +310,12 @@ func TestToolsCallCreateCard(t *testing.T) {
 	if payload.Card.Notes != "e2e via curl" {
 		t.Errorf("created notes = %q, want %q", payload.Card.Notes, "e2e via curl")
 	}
-	// Confirm the adapter actually stored it.
-	cards, err := adapter.ListCards(context.Background(), "default", "default", CardFilter{})
+	cards, err := client.ListCards(context.Background(), "default", "default", CardFilter{})
 	if err != nil {
 		t.Fatalf("ListCards: %v", err)
 	}
 	if len(cards) != 3 {
-		t.Fatalf("adapter has %d cards after create, want 3", len(cards))
+		t.Fatalf("client has %d cards after create, want 3", len(cards))
 	}
 }
 
@@ -230,7 +352,6 @@ func TestToolsCallUnknownMethodReturnsMethodNotFound(t *testing.T) {
 
 func TestUpdateCardPatchSemantics(t *testing.T) {
 	s, _ := newTestServer(t)
-	// Title change only — status untouched.
 	resp := roundtrip(t, s, Request{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`7`),
@@ -260,7 +381,7 @@ func TestUpdateCardPatchSemantics(t *testing.T) {
 }
 
 func TestCommentAppendsToCard(t *testing.T) {
-	s, adapter := newTestServer(t)
+	s, client := newTestServer(t)
 	resp := roundtrip(t, s, Request{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`8`),
@@ -270,7 +391,7 @@ func TestCommentAppendsToCard(t *testing.T) {
 	if resp.Error != nil {
 		t.Fatalf("unexpected error: %+v", resp.Error)
 	}
-	card, err := adapter.GetCard(context.Background(), "default", "default", "card-100")
+	card, err := client.GetCard(context.Background(), "default", "default", "card-100")
 	if err != nil {
 		t.Fatalf("GetCard: %v", err)
 	}
@@ -342,6 +463,48 @@ func TestServeStdioEndToEnd(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 response lines, got %d:\n%s", len(lines), out.String())
+	}
+}
+
+// TestHTTPBoardClientDispatchesCreate exercises the wire contract between
+// HTTPBoardClient and a server impersonating cmd/server's
+// /internal/tools/dispatch endpoint. The fake endpoint asserts the
+// dispatcher field is set (so the risk-gate trigger fires) and that the
+// MCP tool name + args round-trip cleanly.
+func TestHTTPBoardClientDispatchesCreate(t *testing.T) {
+	var captured dispatchEnvelope
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/tools/dispatch" {
+			http.Error(w, "wrong path", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"card": board.Card{ID: "card-999", Title: "from server", Status: board.StatusBacklog},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewHTTPBoardClient(srv.URL, "test-token", "mcp")
+	card, err := client.CreateCard(context.Background(), "default", "default", CardCreate{Title: "from server"})
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	if card.ID != "card-999" {
+		t.Errorf("card id = %q, want card-999", card.ID)
+	}
+	if captured.Tool != "card.create" {
+		t.Errorf("tool = %q, want card.create", captured.Tool)
+	}
+	if captured.Dispatcher != "mcp" {
+		t.Errorf("dispatcher = %q, want mcp (required to fire risk gate)", captured.Dispatcher)
 	}
 }
 
