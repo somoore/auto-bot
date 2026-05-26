@@ -1,8 +1,15 @@
 import { useMemo } from "react"
+import { PauseAllPill } from "./PauseAllPill"
+import type { TenantSettings } from "../types/board"
 
-interface Props { agentActive: boolean; agentLabel?: string; cardCount: number }
+interface Props {
+  agentActive: boolean
+  agentLabel?: string
+  cardCount: number
+  tenantSettings?: TenantSettings
+}
 
-export function BoardSubBar({ agentActive, agentLabel, cardCount }: Props): JSX.Element {
+export function BoardSubBar({ agentActive, agentLabel, cardCount, tenantSettings }: Props): JSX.Element {
   const days = useMemo(() => buildDayStrip(), [])
   return (
     <div className="border-b border-edge/60 bg-void">
@@ -11,6 +18,7 @@ export function BoardSubBar({ agentActive, agentLabel, cardCount }: Props): JSX.
         <div className="hidden h-5 w-px bg-edge md:block" aria-hidden />
         <FilterPills count={cardCount} />
         <div className="ml-auto" />
+        <PauseAllPill settings={tenantSettings} />
         <AgentPill active={agentActive} label={agentLabel} />
       </div>
     </div>

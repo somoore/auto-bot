@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import type { AgentRunView, BoardState, RunQuestion } from "../types/board"
+import type {
+  AgentRunView,
+  BoardState,
+  PendingAction,
+  PendingActionEnvelope,
+  RunQuestion,
+  TenantSettings,
+} from "../types/board"
 
 export type WsStatus = "connecting" | "open" | "closed"
 
@@ -18,6 +25,8 @@ export interface BoardSocketState {
   lastAgentRun?: AgentRunView
   lastActionResult?: unknown
   openRunQuestions: RunQuestion[]
+  pendingActions: PendingActionEnvelope[]
+  tenantSettings?: TenantSettings
   reconnectAttempt: number
   lastError?: string
   session: SessionState
@@ -51,6 +60,8 @@ export function useBoardSocket(): BoardSocketAPI {
   const [reconnectAttempt, setReconnectAttempt] = useState(0)
   const [lastError, setLastError] = useState<string | undefined>(undefined)
   const [session, setSession] = useState<SessionState>({ ok: false, loading: true })
+  const [pendingActions, setPendingActions] = useState<PendingActionEnvelope[]>([])
+  const [tenantSettings, setTenantSettings] = useState<TenantSettings | undefined>(undefined)
 
   const socketRef = useRef<WebSocket | null>(null)
   const attemptRef = useRef(0)
@@ -123,6 +134,23 @@ export function useBoardSocket(): BoardSocketAPI {
       }
       case "action_result": {
         setLastActionResult(inner.data)
+        break
+      }
+      case "pending_action": {
+        const envelope = inner.data as PendingActionEnvelope
+        setPendingActions((prev) => {
+          const filtered = prev.filter((p) => p.action.action_id !== envelope.action.action_id)
+          return [...filtered, envelope]
+        })
+        break
+      }
+      case "pending_action_resolved": {
+        const action = inner.data as PendingAction
+        setPendingActions((prev) => prev.filter((p) => p.action.action_id !== action.action_id))
+        break
+      }
+      case "tenant_settings": {
+        setTenantSettings(inner.data as TenantSettings)
         break
       }
       case "status":
@@ -218,10 +246,59 @@ export function useBoardSocket(): BoardSocketAPI {
     return true
   }, [])
 
+  // Hydrate tenantSettings once on session ready so the kill switch /
+  // dry-run pills render with the persisted state before the first
+  // tenant_settings broadcast lands.
+  useEffect(() => {
+    if (!session.ok) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch("/tenant/settings", { credentials: "include" })
+        if (cancelled || !res.ok) return
+        const body = (await res.json()) as TenantSettings
+        setTenantSettings(body)
+      } catch {
+        // ignore — websocket will catch up on the next broadcast
+      }
+    })()
+    return (): void => { cancelled = true }
+  }, [session.ok])
+
+  // Hydrate the dry-run queue on session ready so reloads do not lose
+  // staged actions.
+  useEffect(() => {
+    if (!session.ok) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch("/tenant/pending_actions", { credentials: "include" })
+        if (cancelled || !res.ok) return
+        const body = (await res.json()) as { actions: PendingAction[] }
+        const envelopes: PendingActionEnvelope[] = (body.actions ?? []).map((action) => ({
+          action,
+          diff: {
+            action_id: action.action_id,
+            tool: action.tool,
+            args: action.args,
+            before: [],
+            after: [],
+            sequence_before: 0,
+            sequence_after: 0,
+          },
+        }))
+        setPendingActions(envelopes)
+      } catch {
+        // ignore
+      }
+    })()
+    return (): void => { cancelled = true }
+  }, [session.ok])
+
   const state = useMemo<BoardSocketState>(() => ({
     status, board, openRunQuestions, lastAgentRun, lastActionResult,
-    reconnectAttempt, lastError, session,
-  }), [status, board, openRunQuestions, lastAgentRun, lastActionResult, reconnectAttempt, lastError, session])
+    reconnectAttempt, lastError, session, pendingActions, tenantSettings,
+  }), [status, board, openRunQuestions, lastAgentRun, lastActionResult, reconnectAttempt, lastError, session, pendingActions, tenantSettings])
 
   return { state, send }
 }

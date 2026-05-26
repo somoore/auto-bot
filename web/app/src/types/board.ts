@@ -207,3 +207,63 @@ export type BoardEventName =
   | "agent_run"
   | "action_result"
   | "status"
+  | "pending_action"
+  | "pending_action_resolved"
+  | "tenant_settings"
+  | "run_paused"
+  | "run_resumed"
+
+// Sprint 4.0: dry-run staging + trust ceremony wire types. Mirror the
+// JSON shapes emitted by cmd/server/pending_actions.go and
+// cmd/server/diff_preview.go.
+
+export type PendingActionStatus = "pending" | "applied" | "rejected" | "expired"
+
+export interface PendingActionDecision {
+  decided_at: string
+  decided_by?: string
+  decided_via?: string
+  disposition: string
+  note?: string
+}
+
+export interface PendingAction {
+  tenant_id: string
+  board_id: string
+  action_id: string
+  tool: string
+  args?: Record<string, unknown>
+  intent?: Record<string, unknown>
+  created_at: string
+  expires_at?: string
+  status: PendingActionStatus
+  result?: Record<string, unknown>
+  decision?: PendingActionDecision
+}
+
+export interface PendingActionDiff {
+  action_id: string
+  tool: string
+  args?: Record<string, unknown>
+  before: Card[]
+  after: Card[]
+  changed_card_ids?: string[]
+  created_card_ids?: string[]
+  removed_card_ids?: string[]
+  error?: string
+  sequence_before: number
+  sequence_after: number
+  meeting_changed?: boolean
+}
+
+export interface PendingActionEnvelope {
+  action: PendingAction
+  diff: PendingActionDiff
+}
+
+export interface TenantSettings {
+  tenant_id: string
+  dry_run_enabled: boolean
+  agents_paused: boolean
+  updated_at?: string
+}
