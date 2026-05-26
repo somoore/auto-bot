@@ -204,3 +204,40 @@ func (store *RunStore) MarkRunQuestionAnswered(_ context.Context, tenantID, boar
 	store.questions[key] = q
 	return nil
 }
+
+// ExpireRunQuestions walks the open questions for (tenantID, boardID) and
+// transitions any that have passed asked_at + TTLSeconds into the "expired"
+// state. Returns the number of questions that were expired in this pass.
+// Idempotent: re-running with the same `now` returns 0 because already-
+// expired rows are no longer in the "open" set.
+func (store *RunStore) ExpireRunQuestions(_ context.Context, tenantID, boardID string, now time.Time) (int, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	expired := 0
+	for key, q := range store.questions {
+		if q.TenantID != tenantID || q.BoardID != boardID {
+			continue
+		}
+		if q.Status != "open" {
+			continue
+		}
+		askedAt, err := time.Parse(time.RFC3339Nano, q.AskedAt)
+		if err != nil {
+			askedAt, err = time.Parse(time.RFC3339, q.AskedAt)
+			if err != nil {
+				continue
+			}
+		}
+		ttl := q.TTLSeconds
+		if ttl <= 0 {
+			ttl = 14400
+		}
+		deadline := askedAt.Add(time.Duration(ttl) * time.Second)
+		if !now.Before(deadline) {
+			q.Status = "expired"
+			store.questions[key] = q
+			expired++
+		}
+	}
+	return expired, nil
+}

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrRunNotFound is returned by RunStore.LoadRun when no Run exists for the
@@ -61,4 +62,12 @@ type RunStore interface {
 	// "answered", stamping the answer body, identity, and channel. It is
 	// a no-op-but-error if the question is already terminal.
 	MarkRunQuestionAnswered(ctx context.Context, tenantID, boardID, questionID, answer, answeredBy, answeredVia string) error
+
+	// ExpireRunQuestions transitions any open RunQuestion whose
+	// asked_at + TTLSeconds is at or before `now` into the "expired"
+	// state and returns the count of questions expired in this pass. A
+	// background sweeper calls this on a fixed cadence; MCP tooling may
+	// also call it on-demand. Implementations must be idempotent: a
+	// second pass with the same `now` returns 0.
+	ExpireRunQuestions(ctx context.Context, tenantID, boardID string, now time.Time) (int, error)
 }

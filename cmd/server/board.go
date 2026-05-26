@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/somoore/auto-bot/internal/agent"
 	"github.com/somoore/auto-bot/internal/board"
 	"github.com/somoore/auto-bot/internal/meetings"
 )
@@ -95,6 +96,12 @@ type (
 
 // kanbanBoardState is the client snapshot broadcast over WebSocket and
 // persisted by the board store.
+//
+// OpenRunQuestions is populated at broadcast time only — see
+// broadcastKanbanEventForBoard. It is intentionally absent from persisted
+// snapshots so the run_questions table remains the source of truth. The
+// omitempty tag ensures stored snapshots that have never carried the field
+// round-trip cleanly.
 type kanbanBoardState struct {
 	Cards                []kanbanCard              `json:"cards"`
 	Meeting              *scrumMeetingState        `json:"meeting,omitempty"`
@@ -102,6 +109,7 @@ type kanbanBoardState struct {
 	PendingConfirmations []pendingConfirmationView `json:"pendingConfirmations,omitempty"`
 	RecentMutations      []boardMutationView       `json:"recentMutations,omitempty"`
 	Conflicts            []jiraConflict            `json:"conflicts,omitempty"`
+	OpenRunQuestions     []agent.RunQuestion       `json:"open_run_questions,omitempty"`
 	UpdatedAt            string                    `json:"updatedAt,omitempty"`
 	SequenceNumber       int64                     `json:"sequenceNumber"`
 }
@@ -2297,7 +2305,67 @@ func broadcastKanbanEvent(event string, data any) {
 	broadcastKanbanEventForBoard(appBoardID, event, data)
 }
 
+// broadcastSink is the seam tests use to capture WS broadcasts without
+// spinning up a real websocket client. Production code leaves it set to
+// defaultBroadcastSink which fans out to wsClients. Tests overwrite it via
+// withBroadcastCapture, restoring the default on cleanup.
+var broadcastSink = defaultBroadcastSink
+
+// openRunQuestionsProvider is the test-and-shutdown seam for hydrating the
+// `open_run_questions` field on broadcast `"board"` payloads. It returns the
+// list of open RunQuestions for (tenantID, boardID) or nil when no store is
+// configured. Defaults to a board-store-backed implementation; the TTL
+// sweeper and unit tests reassign it.
+var openRunQuestionsProvider func(boardID string) []agent.RunQuestion = defaultOpenRunQuestionsProvider
+
+func defaultOpenRunQuestionsProvider(boardID string) []agent.RunQuestion {
+	board := lookupBoardForBroadcast(boardID)
+	if board == nil || board.store == nil {
+		return nil
+	}
+	store, ok := board.store.(agent.RunStore)
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	questions, err := store.ListOpenRunQuestions(ctx, board.tenantID, board.boardID)
+	if err != nil {
+		log.Errorf("ListOpenRunQuestions for broadcast (board %s): %v", boardID, err)
+		return nil
+	}
+	return questions
+}
+
+// lookupBoardForBroadcast resolves a boardID to the in-process *kanbanBoard.
+// Today there is exactly one board (sharedBoard); when multi-board lands the
+// lookup will consult a registry. Returns nil if the board is not known.
+func lookupBoardForBroadcast(boardID string) *kanbanBoard {
+	if sharedBoard != nil && sharedBoard.boardID == boardID {
+		return sharedBoard
+	}
+	if jiraSync != nil && jiraSync.board != nil && jiraSync.board.boardID == boardID {
+		return jiraSync.board
+	}
+	return sharedBoard
+}
+
 func broadcastKanbanEventForBoard(boardID string, event string, data any) {
+	// Enrich `"board"` snapshots with open RunQuestions so the WS payload
+	// carries the Sprint 1 ask-the-human surface. Persisted snapshots stay
+	// clean — the field is populated only at broadcast time.
+	if event == "board" {
+		if state, ok := data.(kanbanBoardState); ok {
+			if openRunQuestionsProvider != nil {
+				state.OpenRunQuestions = openRunQuestionsProvider(boardID)
+			}
+			data = state
+		}
+	}
+	broadcastSink(boardID, event, data)
+}
+
+func defaultBroadcastSink(boardID string, event string, data any) {
 	raw, err := json.Marshal(map[string]any{
 		"event": event,
 		"data":  data,

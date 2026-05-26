@@ -41,9 +41,9 @@ type agentRunStore interface {
 }
 
 // Compile-time check that *sqliteBoardStore satisfies the agent.RunStore
-// surface MCP tools (Sprint 2) depend on. ExpireRunQuestions remains a
-// *sqliteBoardStore-only housekeeping method and is intentionally absent
-// from RunStore.
+// surface MCP tools (Sprint 2) depend on. ExpireRunQuestions is part of
+// that surface so the S1.4 background sweeper and Sprint 2 MCP housekeeping
+// tools share a single implementation across sqlite and the in-memory mock.
 var _ agent.RunStore = (*sqliteBoardStore)(nil)
 
 // runCheckpoint is a local alias for agent.RunStepCheckpoint. The durable
@@ -57,9 +57,8 @@ var _ agent.RunStore = (*sqliteBoardStore)(nil)
 //
 // The store methods that satisfy agent.RunStore are
 // SaveRun, LoadRun, AppendRunCheckpoint, ListRunCheckpoints, SaveRunQuestion,
-// LoadRunQuestion, ListOpenRunQuestions, and MarkRunQuestionAnswered.
-// ExpireRunQuestions remains a *sqliteBoardStore-only operator-housekeeping
-// method (not part of the coordinator surface).
+// LoadRunQuestion, ListOpenRunQuestions, MarkRunQuestionAnswered, and
+// ExpireRunQuestions.
 type runCheckpoint = agent.RunStepCheckpoint
 
 type mutationLedgerStore interface {

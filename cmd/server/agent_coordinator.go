@@ -151,6 +151,16 @@ func (orchestrator *agentRunOrchestrator) AskHuman(ctx context.Context, runID st
 			CreatedAt: q.AskedAt,
 		})
 	})
+
+	// Surface the ask-the-human pause over WebSocket. run_question_asked
+	// carries the full question for drawers/MCP consumers; run_paused
+	// carries the updated Run view so timeline UIs reflect the
+	// waiting_on_human transition without a separate fetch.
+	broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_question_asked", q)
+	if updated, ok := orchestrator.board.agentRunByID(runID); ok {
+		broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_paused", updated.View())
+	}
+	broadcastKanbanEventForBoard(orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
 	return q.ID, nil
 }
 
@@ -205,6 +215,25 @@ func (orchestrator *agentRunOrchestrator) Resume(ctx context.Context, answer age
 	if !ok {
 		return agent.Run{}, fmt.Errorf("run %s vanished during resume", existing.RunID)
 	}
+
+	// Reload the question so the broadcast carries answered_at, answered_by,
+	// and answered_via for clients that surface the answer alongside the
+	// prompt. run_resumed carries the Run so timeline UIs can paint the
+	// transition out of waiting_on_human.
+	answered, loadErr := store.LoadRunQuestion(ctx, tenantID, boardID, answer.QuestionID)
+	if loadErr != nil {
+		// The answer was persisted; missing-question on reload is an audit
+		// concern but should not fail the Resume. Fall back to the request
+		// shape so downstream clients still see the transition.
+		answered = existing
+		answered.Answer = answer.Answer
+		answered.AnsweredBy = answer.AnsweredBy
+		answered.AnsweredVia = answer.AnsweredVia
+		answered.Status = "answered"
+	}
+	broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_question_answered", answered)
+	broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_resumed", run.View())
+	broadcastKanbanEventForBoard(orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
 	return run, nil
 }
 

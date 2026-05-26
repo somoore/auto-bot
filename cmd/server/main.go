@@ -119,7 +119,13 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	appContext := context.Background()
+	appContext, cancelAppContext := context.WithCancel(context.Background())
+	defer cancelAppContext()
+	// Background sweeper: expire RunQuestions whose TTL has elapsed and
+	// broadcast `"run_question_expired"` so the UI drops them in real time.
+	// The goroutine exits on appContext cancellation (deferred above) so
+	// shutdown is leak-free.
+	startRunQuestionSweeper(appContext, sharedBoard, defaultRunQuestionSweepInterval)
 	configuredJiraSync, err := setupJiraSync(appContext, sharedBoard)
 	if err != nil {
 		log.Errorf("Jira sync disabled: %v", err)
