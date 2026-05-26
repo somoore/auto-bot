@@ -213,6 +213,11 @@ func main() {
 	mux.HandleFunc("/workspace/status", workspaceStatusHandler)
 	mux.HandleFunc("/voice/status", voiceStatusHandler)
 
+	// Serve the React SPA built by `web/app/npm run build` under /app/*.
+	// If web/app/dist does not exist (frontend not built), http.FileServer
+	// returns 404 cleanly; the rest of the server is unaffected.
+	mux.Handle("/app/", http.StripPrefix("/app/", http.FileServer(http.Dir("web/app/dist"))))
+
 	baseURL := strings.TrimSpace(os.Getenv("APP_BASE_URL"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)

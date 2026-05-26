@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: dev docker-up docker-down test eval lint security boundary actions precommit tidy hooks
+.PHONY: dev docker-up docker-down test eval lint security boundary actions precommit tidy hooks web-app-build
 
 dev:
 	scripts/local-up.sh
@@ -40,3 +40,6 @@ precommit:
 
 hooks:
 	scripts/install-hooks.sh
+
+web-app-build:
+	cd web/app && npm ci && npm run build
