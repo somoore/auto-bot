@@ -21,6 +21,7 @@ const (
 	defaultSessionTTL    = 12 * time.Hour
 	defaultAppRoomID     = "kanban-meeting"
 	defaultAppBoardID    = "default"
+	defaultTenantID      = "default"
 	defaultLocalAPIToken = "local-dev-only-change-me" // #nosec G101 -- local-only fallback rejected outside local mode.
 )
 
@@ -34,7 +35,11 @@ var (
 )
 
 type requestAuthContext struct {
-	SessionID   string `json:"-"`
+	SessionID string `json:"-"`
+	// TenantID scopes the request to a single tenant. Defaults to "default"
+	// while auto-bot remains single-tenant. TODO(sprint-5): derive TenantID
+	// from the bearer token / OIDC claims once the hosted control plane lands.
+	TenantID    string `json:"tenant_id,omitempty"`
 	Identity    string `json:"participant_identity"`
 	RoomID      string `json:"room_id"`
 	BoardID     string `json:"board_id"`
@@ -46,6 +51,7 @@ type requestAuthContext struct {
 
 type webSession struct {
 	ID        string
+	TenantID  string
 	Identity  string
 	RoomID    string
 	BoardID   string
@@ -114,6 +120,14 @@ func validateLiveKitSecretSafety() error {
 	return nil
 }
 
+// normalizeTenantID validates a tenant identifier with the same character
+// rules as normalizeRuntimeID, falling back to defaultTenantID when blank or
+// invalid. Until the hosted control plane lands, the only legal tenant ID is
+// the single-tenant default.
+func normalizeTenantID(value string) string {
+	return normalizeRuntimeID(value, defaultTenantID)
+}
+
 func normalizeRuntimeID(value string, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -148,6 +162,7 @@ func defaultAuthContext(identity string) requestAuthContext {
 		identity = "participant"
 	}
 	return requestAuthContext{
+		TenantID: defaultTenantID,
 		Identity: identity,
 		RoomID:   appRoomID,
 		BoardID:  appBoardID,
@@ -202,6 +217,7 @@ func authorizeBaseRequest(r *http.Request) (requestAuthContext, bool) {
 	}
 	ctx := requestAuthContext{
 		SessionID: session.ID,
+		TenantID:  sessionTenantID(session),
 		Identity:  session.Identity,
 		RoomID:    session.RoomID,
 		BoardID:   session.BoardID,
@@ -249,7 +265,11 @@ func (store *webAuthStore) create(identity string) (webSession, error) {
 		return webSession{}, err
 	}
 	session := webSession{
-		ID:        id,
+		ID: id,
+		// TODO(sprint-5): derive tenant from the auth token / OIDC claim once
+		// the hosted control plane lands. Until then, every session is scoped
+		// to the single "default" tenant.
+		TenantID:  defaultTenantID,
 		Identity:  identity,
 		RoomID:    appRoomID,
 		BoardID:   appBoardID,
@@ -456,11 +476,21 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 func sessionAuthContext(session webSession) requestAuthContext {
 	return requestAuthContext{
 		SessionID: session.ID,
+		TenantID:  sessionTenantID(session),
 		Identity:  session.Identity,
 		RoomID:    session.RoomID,
 		BoardID:   session.BoardID,
 		AuthMode:  appAuthMode,
 	}
+}
+
+// sessionTenantID returns the tenant scope for a session, defaulting to the
+// single-tenant fallback when the session predates tenant scoping.
+func sessionTenantID(session webSession) string {
+	if strings.TrimSpace(session.TenantID) != "" {
+		return session.TenantID
+	}
+	return defaultTenantID
 }
 
 func sessionResponseExpiresAt(session webSession) string {

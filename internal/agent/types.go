@@ -32,6 +32,7 @@ const (
 // Jira/GitHub run.
 type Run struct {
 	RunID              string              `json:"run_id"`
+	TenantID           string              `json:"tenant_id,omitempty"`
 	BoardID            string              `json:"board_id"`
 	CardID             string              `json:"card_id"`
 	JiraIssueKey       string              `json:"jira_issue_key,omitempty"`

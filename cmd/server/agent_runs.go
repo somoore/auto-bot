@@ -61,6 +61,7 @@ type (
 // until the cmd/server-bound methods on agentRun move alongside it.
 type agentRun struct {
 	RunID              string               `json:"run_id"`
+	TenantID           string               `json:"tenant_id,omitempty"`
 	BoardID            string               `json:"board_id"`
 	CardID             string               `json:"card_id"`
 	JiraIssueKey       string               `json:"jira_issue_key,omitempty"`
@@ -170,6 +171,7 @@ func (board *kanbanBoard) assignTicketToAgent(args map[string]any) (map[string]a
 	}
 	run = agentRun{
 		RunID:             board.nextOperationIDLocked("agent-run"),
+		TenantID:          board.tenantID,
 		BoardID:           board.boardID,
 		CardID:            card.ID,
 		JiraIssueKey:      jiraIssueKeyIfKnown(card.ID),
@@ -800,8 +802,11 @@ func (board *kanbanBoard) updateAgentRun(runID string, mutate func(*agentRun)) {
 }
 
 func (board *kanbanBoard) persistAgentRun(run agentRun) {
+	if run.TenantID == "" {
+		run.TenantID = board.tenantID
+	}
 	if store, ok := board.store.(agentRunStore); ok {
-		if err := store.SaveAgentRun(context.Background(), board.boardID, run); err != nil {
+		if err := store.SaveAgentRun(context.Background(), board.tenantID, board.boardID, run); err != nil {
 			log.Errorf("Failed to persist agent run: %v", err)
 		}
 	}

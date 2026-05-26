@@ -119,6 +119,7 @@ type kanbanBoardState struct {
 
 type kanbanBoard struct {
 	mu                   sync.Mutex
+	tenantID             string
 	boardID              string
 	cards                []kanbanCard
 	nextCreatedIndex     int
@@ -178,6 +179,7 @@ var initialKanbanBoardCards = []kanbanCard{
 
 func newKanbanBoard() *kanbanBoard {
 	return &kanbanBoard{
+		tenantID:             defaultTenantID,
 		boardID:              defaultAppBoardID,
 		cards:                cloneKanbanCards(initialKanbanBoardCards),
 		nextCreatedIndex:     1,
@@ -190,14 +192,19 @@ func newKanbanBoard() *kanbanBoard {
 }
 
 func newPersistentKanbanBoard(boardID string, store boardStore) (*kanbanBoard, error) {
+	return newPersistentTenantBoard(defaultTenantID, boardID, store)
+}
+
+func newPersistentTenantBoard(tenantID string, boardID string, store boardStore) (*kanbanBoard, error) {
 	board := newKanbanBoard()
+	board.tenantID = normalizeTenantID(tenantID)
 	board.boardID = normalizeRuntimeID(boardID, defaultAppBoardID)
 	board.store = store
 	if store == nil {
 		return board, nil
 	}
 
-	state, ok, err := store.LoadBoard(context.Background(), board.boardID)
+	state, ok, err := store.LoadBoard(context.Background(), board.tenantID, board.boardID)
 	if err != nil {
 		return nil, fmt.Errorf("load board state: %w", err)
 	}
@@ -222,7 +229,7 @@ func newPersistentKanbanBoard(boardID string, store boardStore) (*kanbanBoard, e
 		}
 		board.nextCreatedIndex = nextCreatedIndexForCards(board.cards)
 		if agentStore, ok := store.(agentRunStore); ok {
-			runs, err := agentStore.ListAgentRuns(context.Background(), board.boardID, 50)
+			runs, err := agentStore.ListAgentRuns(context.Background(), board.tenantID, board.boardID, 50)
 			if err != nil {
 				return nil, fmt.Errorf("load agent runs: %w", err)
 			}
@@ -231,7 +238,7 @@ func newPersistentKanbanBoard(boardID string, store boardStore) (*kanbanBoard, e
 			}
 		}
 		if ledgerStore, ok := store.(mutationLedgerStore); ok {
-			mutations, err := ledgerStore.ListMutationRecords(context.Background(), board.boardID, 200)
+			mutations, err := ledgerStore.ListMutationRecords(context.Background(), board.tenantID, board.boardID, 200)
 			if err != nil {
 				return nil, fmt.Errorf("load action replay ledger: %w", err)
 			}
@@ -2243,16 +2250,17 @@ func (board *kanbanBoard) persistSnapshot(reason string) {
 		return
 	}
 	state := board.SnapshotState()
-	if err := board.store.SaveSnapshot(context.Background(), board.boardID, state); err != nil {
+	if err := board.store.SaveSnapshot(context.Background(), board.tenantID, board.boardID, state); err != nil {
 		log.Errorf("Failed to persist board snapshot: %v", err)
 	}
 	event := boardEventRecord{
+		TenantID:       board.tenantID,
 		BoardID:        board.boardID,
 		OccurredAt:     time.Now().UTC().Format(time.RFC3339Nano),
 		ToolName:       reason,
 		SequenceNumber: state.SequenceNumber,
 	}
-	if err := board.store.AppendEvent(context.Background(), board.boardID, event, state); err != nil {
+	if err := board.store.AppendEvent(context.Background(), board.tenantID, board.boardID, event, state); err != nil {
 		log.Errorf("Failed to persist board snapshot event: %v", err)
 	}
 }

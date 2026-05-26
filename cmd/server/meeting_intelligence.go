@@ -1282,10 +1282,11 @@ func (board *kanbanBoard) persistMutationRecord(record boardMutationRecord, stat
 	if board.store == nil {
 		return
 	}
-	if err := board.store.SaveSnapshot(context.Background(), board.boardID, state); err != nil {
+	if err := board.store.SaveSnapshot(context.Background(), board.tenantID, board.boardID, state); err != nil {
 		log.Errorf("Failed to persist board snapshot: %v", err)
 	}
 	event := boardEventRecord{
+		TenantID:       board.tenantID,
 		BoardID:        board.boardID,
 		OccurredAt:     record.OccurredAt,
 		ToolName:       record.ToolName,
@@ -1300,11 +1301,11 @@ func (board *kanbanBoard) persistMutationRecord(record boardMutationRecord, stat
 		UndoOf:         record.UndoOf,
 		Summary:        record.Summary,
 	}
-	if err := board.store.AppendEvent(context.Background(), board.boardID, event, state); err != nil {
+	if err := board.store.AppendEvent(context.Background(), board.tenantID, board.boardID, event, state); err != nil {
 		log.Errorf("Failed to persist board event: %v", err)
 	}
 	if ledgerStore, ok := board.store.(mutationLedgerStore); ok {
-		if err := ledgerStore.SaveMutationRecord(context.Background(), board.boardID, record, state); err != nil {
+		if err := ledgerStore.SaveMutationRecord(context.Background(), board.tenantID, board.boardID, record, state); err != nil {
 			log.Errorf("Failed to persist action replay event: %v", err)
 		}
 	}

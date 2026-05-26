@@ -15,6 +15,7 @@ import (
 // /meeting/intelligence and archived when durable storage is configured.
 type meetingIntelligenceReport struct {
 	OK                   bool                       `json:"ok"`
+	TenantID             string                     `json:"tenant_id,omitempty"`
 	BoardID              string                     `json:"board_id"`
 	MeetingID            string                     `json:"meeting_id"`
 	MeetingType          string                     `json:"meeting_type,omitempty"`
@@ -208,6 +209,7 @@ func (board *kanbanBoard) BuildMeetingIntelligenceReport(source string) meetingI
 
 	report := meetingIntelligenceReport{
 		OK:                   true,
+		TenantID:             board.tenantID,
 		BoardID:              stateBoardID(state, board.boardID),
 		MeetingID:            meeting.MeetingID,
 		MeetingType:          firstNonEmpty(access.MeetingType, string(meeting.Mode)),
@@ -961,7 +963,7 @@ func loadMeetingReportFromStore(boardID string, meetingID string) (meetingIntell
 	if !ok {
 		return meetingIntelligenceReport{}, false, nil
 	}
-	return store.LoadMeetingReport(context.Background(), boardID, meetingID)
+	return store.LoadMeetingReport(context.Background(), sharedBoard.tenantID, boardID, meetingID)
 }
 
 func listMeetingReportsFromStore(boardID string, limit int) ([]meetingReportSummary, error) {
@@ -972,5 +974,5 @@ func listMeetingReportsFromStore(boardID string, limit int) ([]meetingReportSumm
 	if !ok {
 		return nil, nil
 	}
-	return store.ListMeetingReports(context.Background(), boardID, limit)
+	return store.ListMeetingReports(context.Background(), sharedBoard.tenantID, boardID, limit)
 }

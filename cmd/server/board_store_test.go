@@ -163,7 +163,7 @@ func TestSQLiteBoardStorePersistsMeetingReports(t *testing.T) {
 		t.Fatal("end_meeting should mutate")
 	}
 
-	summaries, err := store.ListMeetingReports(context.Background(), "team-board", 10)
+	summaries, err := store.ListMeetingReports(context.Background(), defaultTenantID, "team-board", 10)
 	if err != nil {
 		t.Fatalf("ListMeetingReports returned error: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestSQLiteBoardStorePersistsMeetingReports(t *testing.T) {
 		t.Fatalf("summary counts = %#v, want Jira changes and action items", summaries[0])
 	}
 
-	report, found, err := store.LoadMeetingReport(context.Background(), "team-board", "standup-report-1")
+	report, found, err := store.LoadMeetingReport(context.Background(), defaultTenantID, "team-board", "standup-report-1")
 	if err != nil {
 		t.Fatalf("LoadMeetingReport returned error: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestSQLiteBoardStorePersistsAgentRuns(t *testing.T) {
 	}
 	run := runResult["agent_run"].(agentRunView)
 
-	stored, found, err := store.LoadAgentRun(context.Background(), "team-board", run.RunID)
+	stored, found, err := store.LoadAgentRun(context.Background(), defaultTenantID, "team-board", run.RunID)
 	if err != nil {
 		t.Fatalf("LoadAgentRun returned error: %v", err)
 	}
