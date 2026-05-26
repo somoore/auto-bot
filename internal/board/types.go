@@ -2,8 +2,17 @@ package board
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 )
+
+// ErrInvalidActor is returned by Actor.UnmarshalJSON when the decoded payload
+// does not carry at least one identifier. SE-1 F1: prior to this guard an
+// empty JSON object ({}) deserialized into Actor{Kind:Human} with empty ID,
+// DisplayName, and Email — a fabricated human assignee with no anchor in any
+// identity system. Callers should branch on errors.Is(err, ErrInvalidActor)
+// to distinguish "caller sent garbage" from transport errors.
+var ErrInvalidActor = errors.New("actor: requires at least one identifier (id, display_name, or email)")
 
 // Status is the kanban column / workflow state of a Card.
 type Status string
@@ -113,7 +122,7 @@ func (a *Actor) UnmarshalJSON(data []byte) error {
 		if strings.TrimSpace(string(a.Kind)) == "" {
 			a.Kind = ActorKindHuman
 		}
-		return nil
+		return validateActor(*a)
 	}
 	var legacy User
 	if err := json.Unmarshal(data, &legacy); err != nil {
@@ -125,7 +134,28 @@ func (a *Actor) UnmarshalJSON(data []byte) error {
 		DisplayName: legacy.DisplayName,
 		Email:       legacy.EmailAddress,
 	}
-	return nil
+	return validateActor(*a)
+}
+
+// validateActor enforces the SE-1 F1 invariant: a Human-kind Actor must
+// carry at least one identifier (ID, DisplayName, or Email). Without this
+// guard an empty `{}` JSON payload produced a fabricated human with no
+// way to authenticate or contact. Agent-kind Actors are out of scope for
+// this check — the agent path mints its own ID at the assign-ticket site.
+func validateActor(a Actor) error {
+	if a.Kind != ActorKindHuman {
+		return nil
+	}
+	if strings.TrimSpace(a.ID) != "" {
+		return nil
+	}
+	if strings.TrimSpace(a.DisplayName) != "" {
+		return nil
+	}
+	if strings.TrimSpace(a.Email) != "" {
+		return nil
+	}
+	return ErrInvalidActor
 }
 
 // Comment is a single comment attached to a Card.
