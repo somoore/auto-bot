@@ -65,7 +65,7 @@ func internalToolsDispatchHandler(w http.ResponseWriter, r *http.Request) {
 	if dispatcher == "" {
 		dispatcher = "mcp"
 	}
-	meta := toolCallMeta{Source: dispatcher, Actor: dispatcher}
+	meta := toolCallMeta{Dispatcher: dispatcher, Actor: dispatcher}
 
 	switch tool {
 	case "card.create":

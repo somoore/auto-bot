@@ -22,11 +22,25 @@ const (
 	toolRiskHigh   = meetings.RiskHigh
 )
 
+// toolCallMeta carries provenance about an ApplyToolCallWithMeta invocation.
+//
+// Dispatcher describes the dispatcher that produced the tool call (e.g.
+// "nova-sonic", "openai-realtime", "ui", "tool"). It is propagated to audit
+// records as the mutation's `source` and is never used as a trust signal.
+//
+// SkipConfirmation is the explicit opt-out gate for the confirmation queue.
+// It must only be set by trusted in-process call paths whose intent is to
+// bypass the human confirmation step (e.g. tests that exercise direct
+// mutation, replay-by-event-id, and the confirmed-action execution path).
+// Default-deny: every external dispatcher (Nova Sonic, OpenAI realtime, MCP,
+// REST) must leave SkipConfirmation false so risky tools always queue a
+// pending confirmation. See SecArch-002.
 type toolCallMeta struct {
-	Source     string
-	Actor      string
-	CallID     string
-	Transcript string
+	Dispatcher       string
+	Actor            string
+	CallID           string
+	Transcript       string
+	SkipConfirmation bool
 }
 
 // pendingConfirmation, pendingConfirmationView, transcriptEntry,
@@ -94,10 +108,10 @@ type jiraConflict struct {
 }
 
 func normalizeToolCallMeta(meta toolCallMeta) toolCallMeta {
-	if strings.TrimSpace(meta.Source) == "" {
-		meta.Source = "tool"
+	if strings.TrimSpace(meta.Dispatcher) == "" {
+		meta.Dispatcher = "tool"
 	}
-	meta.Source = truncateString(meta.Source, 80)
+	meta.Dispatcher = truncateString(meta.Dispatcher, 80)
 	meta.Actor = truncateString(meta.Actor, 120)
 	meta.CallID = truncateString(meta.CallID, 160)
 	meta.Transcript = truncateString(meta.Transcript, 2000)
@@ -129,7 +143,7 @@ func (board *kanbanBoard) createPendingConfirmation(toolName string, args map[st
 		Arguments:      cloneToolArgs(args),
 		RiskLevel:      riskForTool(toolName),
 		Prompt:         confirmationPrompt(toolName, args),
-		Source:         meta.Source,
+		Source:         meta.Dispatcher,
 		Actor:          meta.Actor,
 		CallID:         meta.CallID,
 		CreatedAt:      now.Format(time.RFC3339Nano),
@@ -139,7 +153,7 @@ func (board *kanbanBoard) createPendingConfirmation(toolName string, args map[st
 		board.pendingConfirmations = map[string]pendingConfirmation{}
 	}
 	board.pendingConfirmations[confirmation.ConfirmationID] = confirmation
-	broadcastKanbanEventForBoard(board.boardID, "confirmation", pendingConfirmationToView(confirmation))
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "confirmation", pendingConfirmationToView(confirmation))
 	return map[string]any{
 		"ok":                    false,
 		"requires_confirmation": true,
@@ -244,7 +258,7 @@ func (board *kanbanBoard) cancelPendingConfirmation(args map[string]any) (map[st
 	if !ok {
 		return map[string]any{"ok": false, "error": "pending confirmation not found"}, false, nil
 	}
-	broadcastKanbanEventForBoard(board.boardID, "confirmation_cancelled", pendingConfirmationToView(confirmation))
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "confirmation_cancelled", pendingConfirmationToView(confirmation))
 	return map[string]any{"ok": true, "cancelled": true, "confirmation_id": confirmationID}, false, nil
 }
 
@@ -290,7 +304,7 @@ func (board *kanbanBoard) recordMutation(toolName string, args map[string]any, r
 	record := boardMutationRecord{
 		EventID:       eventID,
 		OccurredAt:    time.Now().UTC().Format(time.RFC3339Nano),
-		Source:        meta.Source,
+		Source:        meta.Dispatcher,
 		Actor:         meta.Actor,
 		ToolName:      toolName,
 		Arguments:     cloneToolArgs(args),
@@ -601,7 +615,7 @@ func (board *kanbanBoard) undoLastMutation(args map[string]any, meta toolCallMet
 	}
 	record := board.recordMutation("undo_last_mutation", args, result, before, after, meta, "", target.EventID)
 	board.persistMutationRecord(record, after)
-	broadcastKanbanEventForBoard(board.boardID, "undo_result", boardMutationToView(record))
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "undo_result", boardMutationToView(record))
 	return result, true, nil
 }
 

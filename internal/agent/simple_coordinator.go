@@ -203,6 +203,12 @@ func (coord *SimpleRunCoordinator) Resume(ctx context.Context, answer HumanAnswe
 	if question.Status == "answered" {
 		return Run{}, fmt.Errorf("run question %s is already answered", answer.QuestionID)
 	}
+	// DA-1: refuse to mark an expired question as answered. See the
+	// matching guard in cmd/server/agent_coordinator.go's Resume — both
+	// implementations must agree so MCP clients see consistent semantics.
+	if question.Status == "expired" {
+		return Run{}, fmt.Errorf("resume: question %s: %w", answer.QuestionID, ErrRunQuestionExpired)
+	}
 	if err := coord.store.MarkRunQuestionAnswered(ctx, answer.TenantID, answer.BoardID, answer.QuestionID, answer.Answer, answer.AnsweredBy, answer.AnsweredVia); err != nil {
 		return Run{}, fmt.Errorf("mark run question answered: %w", err)
 	}

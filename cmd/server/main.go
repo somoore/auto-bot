@@ -594,7 +594,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 	defer c.Close() //nolint
 
-	if !registerWSClient(c, authCtx.BoardID) {
+	if !registerWSClient(c, authCtx.TenantID, authCtx.BoardID) {
 		log.Warnf("Rejecting WebSocket: max clients (%d) reached", maxWSClients)
 		return
 	}
@@ -822,7 +822,7 @@ func handleClientKanbanCommand(c *threadSafeWriter, rawData string, authCtx requ
 		return
 	}
 	rawArgs := mustMarshalJSON(request.Arguments)
-	result, changed, err := sharedBoard.ApplyToolCallWithMeta(request.Tool, rawArgs, toolCallMeta{Source: "ui"})
+	result, changed, err := sharedBoard.ApplyToolCallWithMeta(request.Tool, rawArgs, toolCallMeta{Dispatcher: "ui"})
 	if err != nil {
 		result = map[string]any{"ok": false, "error": err.Error()}
 	}

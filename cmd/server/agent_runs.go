@@ -170,8 +170,10 @@ func (board *kanbanBoard) assignTicketToAgent(args map[string]any) (map[string]a
 	board.touchLocked()
 	board.mu.Unlock()
 
-	board.persistAgentRun(run)
-	broadcastKanbanEventForBoard(board.boardID, "agent_run", run.View())
+	if err := board.persistAgentRun(context.Background(), run); err != nil {
+		log.Errorf("Failed to persist agent run %s on assign: %v", run.RunID, err)
+	}
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "agent_run", run.View())
 	if agentOrchestrator != nil {
 		time.AfterFunc(100*time.Millisecond, func() { agentOrchestrator.executeRun(run.RunID) })
 	}
@@ -233,7 +235,7 @@ func (board *kanbanBoard) cancelAgentRun(args map[string]any) (map[string]any, b
 	}
 	var view agentRunView
 	var found bool
-	board.updateAgentRun(runID, func(next *agentRun) {
+	if err := board.updateAgentRun(context.Background(), runID, func(next *agentRun) {
 		if agentRunIsTerminal(next.Status) {
 			found = true
 			view = next.View()
@@ -246,7 +248,9 @@ func (board *kanbanBoard) cancelAgentRun(args map[string]any) (map[string]any, b
 		next.AddCheckpoint(agentRunCancelled, "cancelled", reason)
 		found = true
 		view = next.View()
-	})
+	}); err != nil {
+		return nil, false, fmt.Errorf("cancel agent run: %w", err)
+	}
 	if !found {
 		return map[string]any{"ok": false, "error": "agent run not found", "run_id": runID}, false, nil
 	}
@@ -294,9 +298,11 @@ func (board *kanbanBoard) takeOverAgentRun(args map[string]any) (map[string]any,
 	if !found {
 		return map[string]any{"ok": false, "error": "agent run not found", "run_id": runID}, false, nil
 	}
-	board.persistAgentRun(run)
-	broadcastKanbanEventForBoard(board.boardID, "agent_run", run.View())
-	broadcastKanbanEventForBoard(board.boardID, "board", board.SnapshotState())
+	if err := board.persistAgentRun(context.Background(), run); err != nil {
+		return nil, false, fmt.Errorf("take over agent run: %w", err)
+	}
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "agent_run", run.View())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "board", board.SnapshotState())
 	return map[string]any{"ok": true, "taken_over": true, "run_id": runID, "tagged_partial_work": tagged, "agent_run": run.View()}, true, nil
 }
 
@@ -314,7 +320,7 @@ func (board *kanbanBoard) retryAgentRun(args map[string]any) (map[string]any, bo
 	if additional != "" {
 		retryObjective = strings.TrimSpace(retryObjective + "\nRetry constraint: " + additional)
 	}
-	board.updateAgentRun(runID, func(next *agentRun) {
+	if err := board.updateAgentRun(context.Background(), runID, func(next *agentRun) {
 		if agentRunIsTerminal(next.Status) {
 			return
 		}
@@ -322,7 +328,9 @@ func (board *kanbanBoard) retryAgentRun(args map[string]any) (map[string]any, bo
 		next.CurrentStep = "Retry requested; replacement agent run is being queued."
 		next.CompletedAt = nowRFC3339Nano()
 		next.AddCheckpoint(agentRunRetrying, "retry", "Retry requested with updated constraints.")
-	})
+	}); err != nil {
+		return nil, false, fmt.Errorf("retry agent run: %w", err)
+	}
 	result, changed, err := board.assignTicketToAgent(map[string]any{
 		"card_id":             original.CardID,
 		"objective":           retryObjective,
@@ -365,7 +373,7 @@ func (orchestrator *agentRunOrchestrator) executeRun(runID string) {
 		orchestrator.failRun(runID, err.Error())
 		return
 	}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 		if agentRunIsTerminal(next.Status) {
 			return
 		}
@@ -383,7 +391,7 @@ func (orchestrator *agentRunOrchestrator) executeRun(runID string) {
 	if orchestrator.agentRunStopped(runID) {
 		return
 	}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 		next.Classification = classification
 		next.RequestType = firstNonEmpty(classification.RequestType, next.RequestType)
 		next.Specialist = firstNonEmpty(classification.Specialist, "code_reviewer")
@@ -397,7 +405,7 @@ func (orchestrator *agentRunOrchestrator) executeRun(runID string) {
 	}
 	if !agentRunCanUsePullRequestReviewer(run) {
 		message := fmt.Sprintf("Agent PM classified this as %s for %s. This build supports PR-backed code and security reviews; this run needs another specialist implementation before it can continue.", run.RequestType, run.Specialist)
-		orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+		orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 			next.Status = agentRunUnsupported
 			next.CurrentStep = message
 			next.CompletedAt = nowRFC3339Nano()
@@ -482,7 +490,7 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 		return
 	}
 	if run.PullRequestNumber <= 0 {
-		orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+		orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 			next.Status = agentRunNeedsInput
 			next.CurrentStep = "Code review needs a pull_request_number or a PR remote link on the Jira ticket."
 			next.CompletedAt = nowRFC3339Nano()
@@ -493,7 +501,7 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 		return
 	}
 
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 		next.Status = agentRunFetchingContext
 		next.CurrentStep = "Fetching pull request diff with a short-lived GitHub App installation token."
 		next.AddCheckpoint(agentRunFetchingContext, "github_pr_files", "Fetching PR files through GitHub App read-only access.")
@@ -507,7 +515,7 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 	if orchestrator.agentRunStopped(runID) {
 		return
 	}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 		next.PullRequestURL = prURL
 		next.AddCheckpoint(agentRunFetchingContext, "github_pr_files", fmt.Sprintf("Fetched %d changed files.", len(files)))
 	})
@@ -520,7 +528,7 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 	if orchestrator.agentRunStopped(runID) {
 		return
 	}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 		next.Status = agentRunReviewing
 		next.ReviewLens = reviewLensForRun(*next)
 		next.CurrentStep = fmt.Sprintf("PR reviewer is applying the %s lens with Bedrock.", next.ReviewLens)
@@ -536,19 +544,19 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 	if orchestrator.agentRunStopped(runID) {
 		return
 	}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 		next.Findings = review.Findings
 		next.Summary = review.Summary
 		next.ReviewLens = review.ReviewLens
 		next.AddCheckpoint(agentRunReviewing, "code_review", fmt.Sprintf("Completed review with %d finding%s.", len(review.Findings), plural(len(review.Findings))))
 	})
 
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 		next.Status = agentRunPublishing
 		next.CurrentStep = "Publishing review results to Jira and PR surfaces."
 		next.AddCheckpoint(agentRunPublishing, "publish", "Publishing Jira comment and optional PR review comment.")
 	})
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 		next.Status = agentRunCompleted
 		next.CurrentStep = "Agent run completed."
 		next.CompletedAt = nowRFC3339Nano()
@@ -558,12 +566,12 @@ func (orchestrator *agentRunOrchestrator) runCodeReview(ctx context.Context, run
 	run, _ = orchestrator.board.agentRunByID(runID)
 	if orchestrator.github.PRCommentsEnabled() {
 		if err := orchestrator.github.CreatePullRequestReview(ctx, run.Repo, run.PullRequestNumber, formatAgentRunComment(run), run.Findings); err != nil {
-			orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+			orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 				next.PublishWarnings = append(next.PublishWarnings, truncateString("GitHub PR review failed: "+err.Error(), 1000))
 				next.AddCheckpoint(next.Status, "pr_review", "PR review comment failed: "+err.Error())
 			})
 		} else {
-			orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+			orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 				next.PRReviewPosted = true
 				next.AddCheckpoint(next.Status, "pr_review", "PR review comment posted.")
 			})
@@ -669,20 +677,20 @@ func (orchestrator *agentRunOrchestrator) postRunJiraComment(ctx context.Context
 		return
 	}
 	if err := orchestrator.jira.client.AddComment(ctx, run.JiraIssueKey, comment); err != nil {
-		orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+		orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 			next.PublishWarnings = append(next.PublishWarnings, truncateString("Jira comment failed: "+err.Error(), 1000))
 			next.AddCheckpoint(next.Status, "jira_comment", "Jira comment failed: "+err.Error())
 		})
 		return
 	}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(ctx, runID, func(next *agentRun) {
 		next.JiraCommentPosted = true
 		next.AddCheckpoint(next.Status, "jira_comment", "Jira comment posted.")
 	})
 }
 
 func (orchestrator *agentRunOrchestrator) failRun(runID string, message string) {
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(context.Background(), runID, func(next *agentRun) {
 		if agentRunIsTerminal(next.Status) {
 			return
 		}
@@ -712,7 +720,7 @@ func (orchestrator *agentRunOrchestrator) reserveAgentRunCost(runID string, step
 	if run.EstimatedCostCents+cents > budget {
 		return fmt.Errorf("agent run cost budget exceeded before %s: estimated %d cents + %d cents would exceed %d cents", step, run.EstimatedCostCents, cents, budget)
 	}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	orchestrator.board.updateAgentRunLogged(context.Background(), runID, func(next *agentRun) {
 		if next.CostBudgetCents <= 0 {
 			next.CostBudgetCents = budget
 		}
@@ -748,9 +756,15 @@ func (board *kanbanBoard) agentRunByID(runID string) (agentRun, bool) {
 	return agentRun{}, false
 }
 
-func (board *kanbanBoard) updateAgentRun(runID string, mutate func(*agentRun)) {
+// updateAgentRun applies `mutate` to the targeted agentRun under the board
+// lock, persists the result, and fans out the broadcast. It returns an
+// error when persistence fails so coordinator callers (Cancel, AskHuman,
+// Resume, Checkpoint, and the legacy orchestrator paths) can surface the
+// failure instead of silently lying about success (SE-1 F3). The caller's
+// context is threaded into persistAgentRun so cancellations are honored.
+func (board *kanbanBoard) updateAgentRun(ctx context.Context, runID string, mutate func(*agentRun)) error {
 	if mutate == nil {
-		return
+		return nil
 	}
 	var run agentRun
 	var found bool
@@ -768,23 +782,45 @@ func (board *kanbanBoard) updateAgentRun(runID string, mutate func(*agentRun)) {
 	}
 	board.mu.Unlock()
 	if !found {
-		return
+		return nil
 	}
-	board.persistAgentRun(run)
-	broadcastKanbanEventForBoard(board.boardID, "agent_run", run.View())
-	broadcastKanbanEventForBoard(board.boardID, "board", board.SnapshotState())
+	if err := board.persistAgentRun(ctx, run); err != nil {
+		return err
+	}
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "agent_run", run.View())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "board", board.SnapshotState())
+	return nil
 }
 
-func (board *kanbanBoard) persistAgentRun(run agentRun) {
+// updateAgentRunLogged is the fire-and-forget wrapper used by the legacy
+// background orchestrator paths in executeRun / runCodeReview. Those paths
+// have no caller waiting on a return value, but their persistence failures
+// must still hit the operator log instead of disappearing silently.
+// Coordinator methods (Cancel, AskHuman, Resume, Checkpoint) call
+// updateAgentRun directly and propagate the error.
+func (board *kanbanBoard) updateAgentRunLogged(ctx context.Context, runID string, mutate func(*agentRun)) {
+	if err := board.updateAgentRun(ctx, runID, mutate); err != nil {
+		log.Errorf("Failed to persist agent run %s: %v", runID, err)
+	}
+}
+
+// persistAgentRun writes the agentRun through to the underlying RunStore
+// (when one is configured) using the caller's context. SE-1 F3: prior to
+// this fix the function dropped SaveRun errors to a log and used
+// context.Background(); callers thought their mutations had been persisted
+// when they had not. The signature now returns the error so coordinator
+// methods can fail loud and the caller's deadline is respected.
+func (board *kanbanBoard) persistAgentRun(ctx context.Context, run agentRun) error {
 	if run.TenantID == "" {
 		run.TenantID = board.tenantID
 	}
 	if store, ok := board.store.(agentRunStore); ok {
-		if err := store.SaveRun(context.Background(), board.tenantID, board.boardID, run); err != nil {
-			log.Errorf("Failed to persist agent run: %v", err)
+		if err := store.SaveRun(ctx, board.tenantID, board.boardID, run); err != nil {
+			return fmt.Errorf("persist agent run %s: %w", run.RunID, err)
 		}
 	}
 	board.persistSnapshot("agent_run_update")
+	return nil
 }
 
 func (board *kanbanBoard) agentRunViewsLocked(limit int) []agentRunView {
@@ -816,7 +852,7 @@ func (board *kanbanBoard) addAgentRunLocalComment(cardID string, body string) {
 	board.mu.Unlock()
 	if ok {
 		board.persistSnapshot("agent_run_comment")
-		broadcastKanbanEventForBoard(board.boardID, "board", board.SnapshotState())
+		broadcastKanbanEventForBoard(board.tenantID, board.boardID, "board", board.SnapshotState())
 	}
 }
 

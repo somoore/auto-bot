@@ -852,8 +852,8 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 		result = hostOnlyToolResult(tu.ToolName)
 	} else {
 		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
-			Source: "nova-sonic",
-			CallID: tu.ToolUseID,
+			Dispatcher: "nova-sonic",
+			CallID:     tu.ToolUseID,
 		})
 		if err != nil {
 			log.Errorf("Nova Sonic tool call %q failed: %v", tu.ToolName, err)

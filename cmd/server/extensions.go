@@ -248,7 +248,7 @@ func (connector boardToolConnector) Execute(ctx context.Context, action core.Con
 		return core.ConnectorResult{}, fmt.Errorf("marshal connector action parameters: %w", err)
 	}
 	result, changed, err := connector.board.ApplyToolCallWithMeta(action.Type, string(rawArgs), toolCallMeta{
-		Source:     "connector:" + action.Connector,
+		Dispatcher: "connector:" + action.Connector,
 		Actor:      action.RequestedBy,
 		Transcript: evidenceText(action.Evidence),
 	})
@@ -279,7 +279,7 @@ func (connector boardToolConnector) Undo(ctx context.Context, receipt core.Actio
 		return core.ConnectorResult{OK: false, Status: "not_configured"}, nil
 	}
 	result, changed, err := connector.board.undoLastMutation(map[string]any{}, toolCallMeta{
-		Source: "connector:" + connector.Name(),
+		Dispatcher: "connector:" + connector.Name(),
 	})
 	if err != nil {
 		return core.ConnectorResult{OK: false, Status: "undo_failed", Message: err.Error()}, nil

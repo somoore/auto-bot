@@ -54,11 +54,13 @@ func main() {
 			log.Println("mcpd: WARNING — BOARD_URL is set but BOARD_TOKEN is empty; cmd/server will reject dispatches")
 		}
 		client = mcp.NewHTTPBoardClient(*boardURL, boardToken, "mcp")
+		// #nosec G706 -- boardURL, tenantID, boardID are run through sanitizeForLog before interpolation; gosec's taint analysis does not recognize the sanitizer wrapper.
 		log.Printf("mcpd: routing tools to cmd/server at %s (tenant=%s board=%s)", sanitizeForLog(*boardURL), sanitizeForLog(*tenantID), sanitizeForLog(*boardID))
 	} else {
 		fallback := mocks.NewBoardClient()
 		seedDefaultCards(fallback, *tenantID, *boardID)
 		client = fallback
+		// #nosec G706 -- tenantID and boardID are run through sanitizeForLog before interpolation; gosec's taint analysis does not recognize the sanitizer wrapper.
 		log.Printf("mcpd: BOARD_URL is empty; running with in-memory mock (tenant=%s board=%s)", sanitizeForLog(*tenantID), sanitizeForLog(*boardID))
 	}
 
@@ -98,7 +100,7 @@ func main() {
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		go func() {
-			// #nosec G706 -- addr is fmt.Sprintf(":%d", *port) (digits only); tenant/board are sanitized.
+			// #nosec G706 -- addr is fmt.Sprintf(":%d", *port) (digits only); tenantID and boardID are run through sanitizeForLog. gosec's taint analysis does not recognize the sanitizer wrapper.
 			log.Printf("mcpd: serving HTTP transport on %s (tenant=%s board=%s, auth=%v)", addr, sanitizeForLog(*tenantID), sanitizeForLog(*boardID), token != "")
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Fatalf("mcpd: http: %v", err)

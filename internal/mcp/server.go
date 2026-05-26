@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/somoore/auto-bot/internal/agent"
 )
 
 // Protocol-level constants for the minimal JSON-RPC 2.0 / MCP slice. Full MCP
@@ -202,6 +204,20 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) *Response {
 	}
 	out, err := tool.Handler(ctx, p.Arguments)
 	if err != nil {
+		// SE-1 F6: surface RunStore "not found" sentinels as JSON-RPC
+		// InvalidParams (-32602) so MCP clients can distinguish "the run
+		// or question id you sent does not exist" from generic internal
+		// errors (-32603). Other errors continue to land in the
+		// IsError-styled tool result envelope, which preserves the
+		// JSON-RPC contract while letting tool authors return free-form
+		// failure context. Use errors.Is so wrapped chains (e.g.
+		// "load run %s: %w" upstream) keep mapping correctly.
+		if errors.Is(err, agent.ErrRunNotFound) {
+			return s.errorResponse(req.ID, ErrCodeInvalidParams, fmt.Sprintf("run not found: %v", err), nil)
+		}
+		if errors.Is(err, agent.ErrRunQuestionNotFound) {
+			return s.errorResponse(req.ID, ErrCodeInvalidParams, fmt.Sprintf("run question not found: %v", err), nil)
+		}
 		text := err.Error()
 		return &Response{JSONRPC: "2.0", ID: req.ID, Result: ToolCallResult{
 			Content: []ToolCallContent{{Type: "text", Text: text}},

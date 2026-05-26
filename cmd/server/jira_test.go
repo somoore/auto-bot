@@ -381,7 +381,7 @@ func TestJiraRenamedCardAliasAllowsConfirmedAssignment(t *testing.T) {
 	}
 
 	assignArgs := `{"card_id":"` + localID + `","account_id":"account-123","display_name":"Scott Moore"}`
-	result, changed, err = board.ApplyToolCallWithMeta("assign_ticket", assignArgs, toolCallMeta{Source: "nova-sonic"})
+	result, changed, err = board.ApplyToolCallWithMeta("assign_ticket", assignArgs, toolCallMeta{Dispatcher: "nova-sonic"})
 	if err != nil {
 		t.Fatalf("assign_ticket returned error: %v", err)
 	}
@@ -399,7 +399,7 @@ func TestJiraRenamedCardAliasAllowsConfirmedAssignment(t *testing.T) {
 		t.Fatalf("pending matched card = %q, want KAN-42", pending[0].MatchedCardID)
 	}
 
-	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{}`, toolCallMeta{Source: "nova-sonic"})
+	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{}`, toolCallMeta{Dispatcher: "nova-sonic"})
 	if err != nil {
 		t.Fatalf("confirm_action returned error: %v", err)
 	}

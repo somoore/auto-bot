@@ -104,7 +104,7 @@ func sweepRunQuestionsOnce(ctx context.Context, board *kanbanBoard, store agent.
 		}
 		expiredCopy := q
 		expiredCopy.Status = "expired"
-		broadcastKanbanEventForBoard(board.boardID, "run_question_expired", expiredCopy)
+		broadcastKanbanEventForBoard(board.tenantID, board.boardID, "run_question_expired", expiredCopy)
 	}
-	broadcastKanbanEventForBoard(board.boardID, "board", board.SnapshotState())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "board", board.SnapshotState())
 }

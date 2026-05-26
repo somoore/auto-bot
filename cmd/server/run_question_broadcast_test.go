@@ -13,9 +13,10 @@ import (
 // tests can assert which typed events the coordinator emitted and what
 // payload the WS layer would have shipped to clients.
 type capturedBroadcast struct {
-	BoardID string
-	Event   string
-	Data    any
+	TenantID string
+	BoardID  string
+	Event    string
+	Data     any
 }
 
 // broadcastCapture is the test-side sink installed via withBroadcastCapture.
@@ -26,10 +27,10 @@ type broadcastCapture struct {
 	events []capturedBroadcast
 }
 
-func (c *broadcastCapture) record(boardID string, event string, data any) {
+func (c *broadcastCapture) record(tenantID string, boardID string, event string, data any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.events = append(c.events, capturedBroadcast{BoardID: boardID, Event: event, Data: data})
+	c.events = append(c.events, capturedBroadcast{TenantID: tenantID, BoardID: boardID, Event: event, Data: data})
 }
 
 func (c *broadcastCapture) snapshot() []capturedBroadcast {

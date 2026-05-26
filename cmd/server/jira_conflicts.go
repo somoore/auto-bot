@@ -165,7 +165,7 @@ func (board *kanbanBoard) resolveJiraConflict(args map[string]any) (map[string]a
 		}
 		conflict.Resolution = resolution
 		conflict.ResolvedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		broadcastKanbanEventForBoard(board.boardID, "conflict_resolved", *conflict)
+		broadcastKanbanEventForBoard(board.tenantID, board.boardID, "conflict_resolved", *conflict)
 		return map[string]any{"ok": true, "conflict": *conflict, "resolution": resolution}, resolution == "use_jira", nil
 	}
 	return map[string]any{"ok": false, "error": "conflict not found"}, false, nil

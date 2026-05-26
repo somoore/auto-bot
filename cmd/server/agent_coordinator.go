@@ -86,15 +86,28 @@ func (orchestrator *agentRunOrchestrator) Checkpoint(ctx context.Context, runID 
 		cp.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 
-	if store, ok := orchestrator.board.store.(agent.RunStore); ok {
+	// SE-1 F2: fail loud when the configured board store does not satisfy
+	// agent.RunStore. The previous shape silently dropped the checkpoint
+	// audit append on a type-assertion miss — callers thought the
+	// checkpoint had been written when nothing landed in the durable log.
+	// A nil store remains acceptable (tests bootstrap kanbanBoards without
+	// persistence); a non-nil store that does not implement RunStore is a
+	// configuration bug and must surface.
+	if orchestrator.board.store != nil {
+		store, ok := orchestrator.board.store.(agent.RunStore)
+		if !ok {
+			return fmt.Errorf("checkpoint: %w: board store of type %T does not implement agent.RunStore", agent.ErrCheckpointAuditFailed, orchestrator.board.store)
+		}
 		if err := store.AppendRunCheckpoint(ctx, orchestrator.board.tenantID, orchestrator.board.boardID, runID, cp); err != nil {
-			return fmt.Errorf("append run checkpoint: %w", err)
+			return fmt.Errorf("checkpoint: %w: %v", agent.ErrCheckpointAuditFailed, err)
 		}
 	}
 
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	if err := orchestrator.board.updateAgentRun(ctx, runID, func(next *agentRun) {
 		agent.ApplyCheckpointToPlan(next, cp)
-	})
+	}); err != nil {
+		return fmt.Errorf("checkpoint: persist run plan: %w", err)
+	}
 	return nil
 }
 
@@ -137,7 +150,7 @@ func (orchestrator *agentRunOrchestrator) AskHuman(ctx context.Context, runID st
 	}
 
 	ref := agent.RunQuestionRef{QuestionID: q.ID, Prompt: q.Prompt, AskedAt: q.AskedAt}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	if err := orchestrator.board.updateAgentRun(ctx, runID, func(next *agentRun) {
 		if agentRunIsTerminal(next.Status) {
 			return
 		}
@@ -150,17 +163,19 @@ func (orchestrator *agentRunOrchestrator) AskHuman(ctx context.Context, runID st
 			Kind:      agent.CheckpointKindPaused,
 			CreatedAt: q.AskedAt,
 		})
-	})
+	}); err != nil {
+		return "", fmt.Errorf("ask_human: persist waiting state: %w", err)
+	}
 
 	// Surface the ask-the-human pause over WebSocket. run_question_asked
 	// carries the full question for drawers/MCP consumers; run_paused
 	// carries the updated Run view so timeline UIs reflect the
 	// waiting_on_human transition without a separate fetch.
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_question_asked", q)
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "run_question_asked", q)
 	if updated, ok := orchestrator.board.agentRunByID(runID); ok {
-		broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_paused", updated.View())
+		broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "run_paused", updated.View())
 	}
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
 	return q.ID, nil
 }
 
@@ -200,17 +215,29 @@ func (orchestrator *agentRunOrchestrator) Resume(ctx context.Context, answer age
 	if existing.Status == "answered" {
 		return agent.Run{}, fmt.Errorf("run question %s is already answered", answer.QuestionID)
 	}
+	// DA-1: refuse to mark an expired question as answered. The TTL sweeper
+	// may have transitioned the question to "expired" between the
+	// ask-the-human broadcast and the human answer; advancing it through
+	// "answered" would zombie the Run (the sweeper already cleared
+	// WaitingOn and the answer would be applied to a timed-out prompt).
+	// Callers branch on agent.ErrRunQuestionExpired to surface a distinct
+	// "ask timed out; restart the question" affordance.
+	if existing.Status == "expired" {
+		return agent.Run{}, fmt.Errorf("resume: question %s: %w", answer.QuestionID, agent.ErrRunQuestionExpired)
+	}
 	if err := store.MarkRunQuestionAnswered(ctx, tenantID, boardID, answer.QuestionID, answer.Answer, answer.AnsweredBy, answer.AnsweredVia); err != nil {
 		return agent.Run{}, fmt.Errorf("mark run question answered: %w", err)
 	}
 
-	orchestrator.board.updateAgentRun(existing.RunID, func(next *agentRun) {
+	if err := orchestrator.board.updateAgentRun(ctx, existing.RunID, func(next *agentRun) {
 		next.WaitingOn = nil
 		if next.Status == agentRunWaitingOnHuman {
 			next.Status = agentRunReviewing
 		}
 		next.AddCheckpoint(next.Status, "resume", fmt.Sprintf("Resumed after answer from %s via %s.", answer.AnsweredBy, answer.AnsweredVia))
-	})
+	}); err != nil {
+		return agent.Run{}, fmt.Errorf("resume: persist run state: %w", err)
+	}
 	run, ok := orchestrator.board.agentRunByID(existing.RunID)
 	if !ok {
 		return agent.Run{}, fmt.Errorf("run %s vanished during resume", existing.RunID)
@@ -231,9 +258,9 @@ func (orchestrator *agentRunOrchestrator) Resume(ctx context.Context, answer age
 		answered.AnsweredVia = answer.AnsweredVia
 		answered.Status = "answered"
 	}
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_question_answered", answered)
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_resumed", run.View())
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "run_question_answered", answered)
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "run_resumed", run.View())
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
 	return run, nil
 }
 
@@ -258,7 +285,7 @@ func (orchestrator *agentRunOrchestrator) Cancel(ctx context.Context, runID stri
 	if reason == "" {
 		reason = "Cancelled by coordinator."
 	}
-	orchestrator.board.updateAgentRun(runID, func(next *agentRun) {
+	if err := orchestrator.board.updateAgentRun(ctx, runID, func(next *agentRun) {
 		if agentRunIsTerminal(next.Status) {
 			return
 		}
@@ -267,7 +294,9 @@ func (orchestrator *agentRunOrchestrator) Cancel(ctx context.Context, runID stri
 		next.Summary = reason
 		next.CompletedAt = nowRFC3339Nano()
 		next.AddCheckpoint(agentRunCancelled, "cancelled", reason)
-	})
+	}); err != nil {
+		return fmt.Errorf("cancel: persist run state: %w", err)
+	}
 	return nil
 }
 
