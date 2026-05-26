@@ -92,7 +92,7 @@ func TestLiveAgentRunCodeReview(t *testing.T) {
 		t.Fatal("assign_ticket_to_agent did not mutate")
 	}
 	run := runResult["agent_run"].(agentRunView)
-	orchestrator.Start(run.RunID)
+	orchestrator.executeRun(run.RunID)
 
 	finalRun, ok := board.agentRunByID(run.RunID)
 	if !ok {

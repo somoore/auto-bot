@@ -126,10 +126,11 @@ type CostBreakdown struct {
 // persisted in the run_questions SQLite table so that operators can answer it
 // via the UI, voice ("hey, that question on EMAL-12 - the answer is ..."), or
 // MCP. The Run itself stores only a RunQuestionRef pointer.
-//
-// TODO(sprint-1.3): swap ID for a ULID once the helper exists. For now callers
-// supply an opaque string ID; the orchestrator wires up generation.
 type RunQuestion struct {
+	// ID is a Crockford-base32 ULID minted by NewQuestionID. Mint at the
+	// edge (RunCoordinator.AskHuman or the legacy orchestrator) so the
+	// store sees an already-stable identifier and the asked_at-ordered
+	// listing matches lexical ULID order. Closes the sprint-1.2 TODO.
 	ID          string   `json:"id"`
 	TenantID    string   `json:"tenant_id"`
 	BoardID     string   `json:"board_id"`

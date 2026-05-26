@@ -30,32 +30,37 @@ type meetingReportStore interface {
 	ListMeetingReports(ctx context.Context, tenantID string, boardID string, limit int) ([]meetingReportSummary, error)
 }
 
+// agentRunStore is the legacy cmd/server-local interface for persisting
+// agentRun snapshots. Most callers should depend on agent.RunStore instead;
+// agentRunStore remains for the small list-on-board-load path that needs the
+// bulk ListAgentRuns query.
 type agentRunStore interface {
-	SaveAgentRun(ctx context.Context, tenantID string, boardID string, run agentRun) error
-	LoadAgentRun(ctx context.Context, tenantID string, boardID string, runID string) (agentRun, bool, error)
+	SaveRun(ctx context.Context, tenantID string, boardID string, run agentRun) error
+	LoadRun(ctx context.Context, tenantID string, boardID string, runID string) (agentRun, error)
 	ListAgentRuns(ctx context.Context, tenantID string, boardID string, limit int) ([]agentRun, error)
 }
 
-// runCheckpoint is the SQL-row shape persisted in the run_checkpoints table.
-// It is intentionally distinct from agent.Checkpoint: the run timeline that
-// the orchestrator threads through Run.Checkpoints is a UI projection bounded
-// to 50 entries, while runCheckpoint is the durable per-step audit log keyed
-// by (run_id, step_index, kind, created_at). Tests round-trip the payload
-// through PayloadJSON so the schema can evolve without migrations.
+// Compile-time check that *sqliteBoardStore satisfies the agent.RunStore
+// surface MCP tools (Sprint 2) depend on. ExpireRunQuestions remains a
+// *sqliteBoardStore-only housekeeping method and is intentionally absent
+// from RunStore.
+var _ agent.RunStore = (*sqliteBoardStore)(nil)
+
+// runCheckpoint is a local alias for agent.RunStepCheckpoint. The durable
+// per-step audit log lives in internal/agent so the S1.3 RunCoordinator
+// interface and the in-memory mock RunStore can share the type. The shape is
+// intentionally distinct from agent.Checkpoint: agent.Checkpoint is the UI
+// projection threaded through Run.Checkpoints (capped at 50 entries), while
+// RunStepCheckpoint is keyed by (run_id, step_index, kind, created_at). Tests
+// round-trip the payload through PayloadJSON so the schema can evolve without
+// migrations.
 //
-// The store methods (AppendRunCheckpoint, ListRunCheckpoints,
-// SaveRunQuestion, LoadRunQuestion, ListOpenRunQuestions,
-// MarkRunQuestionAnswered, ExpireRunQuestions) hang directly off
-// *sqliteBoardStore. They are not promoted to a separate interface yet
-// because the RunCoordinator interface that wraps them lands in S1.3 — at
-// that point a runQuestionStore / runCheckpointStore interface will be
-// extracted with the right callers in mind.
-type runCheckpoint struct {
-	StepIndex   int    `json:"step_index"`
-	Kind        string `json:"kind"`
-	PayloadJSON string `json:"payload_json"`
-	CreatedAt   string `json:"created_at"`
-}
+// The store methods that satisfy agent.RunStore are
+// SaveRun, LoadRun, AppendRunCheckpoint, ListRunCheckpoints, SaveRunQuestion,
+// LoadRunQuestion, ListOpenRunQuestions, and MarkRunQuestionAnswered.
+// ExpireRunQuestions remains a *sqliteBoardStore-only operator-housekeeping
+// method (not part of the coordinator surface).
+type runCheckpoint = agent.RunStepCheckpoint
 
 type mutationLedgerStore interface {
 	SaveMutationRecord(ctx context.Context, tenantID string, boardID string, record boardMutationRecord, state kanbanBoardState) error
@@ -544,7 +549,10 @@ func (store *sqliteBoardStore) ListMeetingReports(ctx context.Context, tenantID 
 	return summaries, nil
 }
 
-func (store *sqliteBoardStore) SaveAgentRun(ctx context.Context, tenantID string, boardID string, run agentRun) error {
+// SaveRun persists an agent Run for the given tenant + board. The method
+// name aligns with agent.RunStore so *sqliteBoardStore can serve as the
+// production RunStore implementation. Renamed from SaveAgentRun in S1.3.
+func (store *sqliteBoardStore) SaveRun(ctx context.Context, tenantID string, boardID string, run agentRun) error {
 	tenantID = normalizeTenantID(tenantID)
 	if run.RunID == "" {
 		return fmt.Errorf("agent run requires run_id")
@@ -577,7 +585,10 @@ func (store *sqliteBoardStore) SaveAgentRun(ctx context.Context, tenantID string
 	return err
 }
 
-func (store *sqliteBoardStore) LoadAgentRun(ctx context.Context, tenantID string, boardID string, runID string) (agentRun, bool, error) {
+// LoadRun returns the persisted Run for (tenant, board, runID). Missing rows
+// surface as agent.ErrRunNotFound; transport failures surface as ordinary
+// errors. Renamed from LoadAgentRun in S1.3 to match agent.RunStore.
+func (store *sqliteBoardStore) LoadRun(ctx context.Context, tenantID string, boardID string, runID string) (agentRun, error) {
 	tenantID = normalizeTenantID(tenantID)
 	var raw string
 	err := store.db.QueryRowContext(ctx, `
@@ -586,16 +597,16 @@ func (store *sqliteBoardStore) LoadAgentRun(ctx context.Context, tenantID string
 		WHERE tenant_id = ? AND board_id = ? AND run_id = ?
 	`, tenantID, boardID, runID).Scan(&raw)
 	if err == sql.ErrNoRows {
-		return agentRun{}, false, nil
+		return agentRun{}, fmt.Errorf("load run %s: %w", runID, agent.ErrRunNotFound)
 	}
 	if err != nil {
-		return agentRun{}, false, err
+		return agentRun{}, err
 	}
 	var run agentRun
 	if err := json.Unmarshal([]byte(raw), &run); err != nil {
-		return agentRun{}, false, fmt.Errorf("decode agent run: %w", err)
+		return agentRun{}, fmt.Errorf("decode agent run: %w", err)
 	}
-	return run, true, nil
+	return run, nil
 }
 
 func (store *sqliteBoardStore) ListAgentRuns(ctx context.Context, tenantID string, boardID string, limit int) (runs []agentRun, err error) {
@@ -730,7 +741,7 @@ func (store *sqliteBoardStore) ListMutationRecords(ctx context.Context, tenantID
 	return records, nil
 }
 
-func (store *sqliteBoardStore) AppendRunCheckpoint(ctx context.Context, tenantID string, boardID string, runID string, cp runCheckpoint) error {
+func (store *sqliteBoardStore) AppendRunCheckpoint(ctx context.Context, tenantID string, boardID string, runID string, cp agent.RunStepCheckpoint) error {
 	tenantID = normalizeTenantID(tenantID)
 	if runID == "" {
 		return fmt.Errorf("run checkpoint requires run_id")
@@ -753,7 +764,7 @@ func (store *sqliteBoardStore) AppendRunCheckpoint(ctx context.Context, tenantID
 	return err
 }
 
-func (store *sqliteBoardStore) ListRunCheckpoints(ctx context.Context, tenantID string, boardID string, runID string) (checkpoints []runCheckpoint, err error) {
+func (store *sqliteBoardStore) ListRunCheckpoints(ctx context.Context, tenantID string, boardID string, runID string) (checkpoints []agent.RunStepCheckpoint, err error) {
 	tenantID = normalizeTenantID(tenantID)
 	rows, err := store.db.QueryContext(ctx, `
 		SELECT step_index, kind, payload_json, created_at
@@ -770,9 +781,9 @@ func (store *sqliteBoardStore) ListRunCheckpoints(ctx context.Context, tenantID 
 		}
 	}()
 
-	checkpoints = make([]runCheckpoint, 0)
+	checkpoints = make([]agent.RunStepCheckpoint, 0)
 	for rows.Next() {
-		var cp runCheckpoint
+		var cp agent.RunStepCheckpoint
 		if err := rows.Scan(&cp.StepIndex, &cp.Kind, &cp.PayloadJSON, &cp.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -784,18 +795,23 @@ func (store *sqliteBoardStore) ListRunCheckpoints(ctx context.Context, tenantID 
 	return checkpoints, nil
 }
 
-func (store *sqliteBoardStore) SaveRunQuestion(ctx context.Context, tenantID string, boardID string, q agent.RunQuestion) error {
-	tenantID = normalizeTenantID(tenantID)
+// SaveRunQuestion persists a RunQuestion. The S1.3 signature derives tenant
+// and board scope from q.TenantID / q.BoardID to match agent.RunStore;
+// tenant defaults to the legacy "default" tenant when q.TenantID is empty so
+// historical writers keep working.
+func (store *sqliteBoardStore) SaveRunQuestion(ctx context.Context, q agent.RunQuestion) error {
+	tenantID := normalizeTenantID(q.TenantID)
+	boardID := q.BoardID
 	if q.ID == "" {
 		return fmt.Errorf("run question requires id")
 	}
 	if q.RunID == "" {
 		return fmt.Errorf("run question requires run_id")
 	}
-	q.TenantID = tenantID
-	if q.BoardID == "" {
-		q.BoardID = boardID
+	if boardID == "" {
+		return fmt.Errorf("run question requires board_id")
 	}
+	q.TenantID = tenantID
 	if q.Status == "" {
 		q.Status = "open"
 	}
@@ -829,7 +845,11 @@ func (store *sqliteBoardStore) SaveRunQuestion(ctx context.Context, tenantID str
 	return err
 }
 
-func (store *sqliteBoardStore) LoadRunQuestion(ctx context.Context, tenantID string, boardID string, questionID string) (agent.RunQuestion, bool, error) {
+// LoadRunQuestion returns the persisted RunQuestion for (tenant, board,
+// questionID). Missing rows surface as agent.ErrRunQuestionNotFound; other
+// errors indicate transport failures. Signature changed from the legacy
+// three-return shape in S1.3 to match agent.RunStore.
+func (store *sqliteBoardStore) LoadRunQuestion(ctx context.Context, tenantID string, boardID string, questionID string) (agent.RunQuestion, error) {
 	tenantID = normalizeTenantID(tenantID)
 	var raw string
 	err := store.db.QueryRowContext(ctx, `
@@ -838,16 +858,16 @@ func (store *sqliteBoardStore) LoadRunQuestion(ctx context.Context, tenantID str
 		WHERE tenant_id = ? AND board_id = ? AND question_id = ?
 	`, tenantID, boardID, questionID).Scan(&raw)
 	if err == sql.ErrNoRows {
-		return agent.RunQuestion{}, false, nil
+		return agent.RunQuestion{}, fmt.Errorf("load run question %s: %w", questionID, agent.ErrRunQuestionNotFound)
 	}
 	if err != nil {
-		return agent.RunQuestion{}, false, err
+		return agent.RunQuestion{}, err
 	}
 	var q agent.RunQuestion
 	if err := json.Unmarshal([]byte(raw), &q); err != nil {
-		return agent.RunQuestion{}, false, fmt.Errorf("decode run question: %w", err)
+		return agent.RunQuestion{}, fmt.Errorf("decode run question: %w", err)
 	}
-	return q, true, nil
+	return q, nil
 }
 
 func (store *sqliteBoardStore) ListOpenRunQuestions(ctx context.Context, tenantID string, boardID string) (questions []agent.RunQuestion, err error) {
@@ -887,19 +907,18 @@ func (store *sqliteBoardStore) ListOpenRunQuestions(ctx context.Context, tenantI
 
 func (store *sqliteBoardStore) MarkRunQuestionAnswered(ctx context.Context, tenantID string, boardID string, questionID string, answer string, answeredBy string, answeredVia string) error {
 	tenantID = normalizeTenantID(tenantID)
-	q, found, err := store.LoadRunQuestion(ctx, tenantID, boardID, questionID)
+	q, err := store.LoadRunQuestion(ctx, tenantID, boardID, questionID)
 	if err != nil {
 		return err
 	}
-	if !found {
-		return fmt.Errorf("run question %s was not found", questionID)
-	}
+	q.TenantID = tenantID
+	q.BoardID = boardID
 	q.Answer = answer
 	q.AnsweredBy = answeredBy
 	q.AnsweredVia = answeredVia
 	q.AnsweredAt = time.Now().UTC().Format(time.RFC3339Nano)
 	q.Status = "answered"
-	return store.SaveRunQuestion(ctx, tenantID, boardID, q)
+	return store.SaveRunQuestion(ctx, q)
 }
 
 func (store *sqliteBoardStore) ExpireRunQuestions(ctx context.Context, tenantID string, boardID string, now time.Time) (int, error) {
@@ -951,7 +970,9 @@ func (store *sqliteBoardStore) ExpireRunQuestions(ctx context.Context, tenantID 
 		deadline := askedAt.Add(time.Duration(ttl) * time.Second)
 		if !now.Before(deadline) {
 			q.Status = "expired"
-			if err := store.SaveRunQuestion(ctx, tenantID, boardID, q); err != nil {
+			q.TenantID = tenantID
+			q.BoardID = boardID
+			if err := store.SaveRunQuestion(ctx, q); err != nil {
 				return expired, err
 			}
 			expired++

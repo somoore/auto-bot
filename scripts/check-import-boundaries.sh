@@ -9,34 +9,68 @@ fail() {
   FAIL=1
 }
 
-check_pure_internal_package() {
+check_internal_package() {
   local pkg="$1"
+  local kind="$2"
+  local allowed_internal_re="$3"
   local imports
   imports="$(go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}' "$pkg")"
   while IFS= read -r import_path; do
     [ -z "$import_path" ] && continue
 
     if [[ "$import_path" == "$MODULE/"* ]]; then
-      case "$import_path" in
-        "$MODULE/internal/core"|"$MODULE/internal/core/"*|"$MODULE/internal/mocks"|"$MODULE/internal/mocks/"*) ;;
-        *) fail "$pkg must not import application/runtime package $import_path" ;;
-      esac
+      if [[ "$import_path" =~ $allowed_internal_re ]]; then
+        continue
+      fi
+      fail "$pkg ($kind) must not import application/runtime package $import_path"
       continue
     fi
 
+    # External imports: standard library has no '.' before the first '/'.
+    # Allow oklog/ulid/v2 (pure ULID helper used by internal/agent) so the
+    # provider-neutral packages can mint stable IDs without pulling in any
+    # provider SDK. Update this list deliberately — every entry is a
+    # cross-tier dependency promise.
     if [[ "$import_path" == *"."*"/"* ]]; then
-      fail "$pkg must stay provider-neutral; external import $import_path is not allowed"
+      case "$import_path" in
+        github.com/oklog/ulid/v2) ;;
+        *) fail "$pkg ($kind) must stay provider-neutral; external import $import_path is not allowed" ;;
+      esac
     fi
   done <<< "$imports"
 }
 
+# internal/core: most-isolated tier. May import only itself.
 while IFS= read -r pkg; do
   case "$pkg" in
-    "$MODULE/internal/core"|"$MODULE/internal/core/"*|"$MODULE/internal/mocks"|"$MODULE/internal/mocks/"*)
-      check_pure_internal_package "$pkg"
+    "$MODULE/internal/core"|"$MODULE/internal/core/"*)
+      check_internal_package "$pkg" core \
+        "^$MODULE/internal/core(/.*)?\$"
       ;;
   esac
-done < <(go list ./internal/core/... ./internal/mocks/...)
+done < <(go list ./internal/core/...)
+
+# internal/agent: provider-neutral domain tier. May import internal/core
+# and itself. Must not pull in cmd/server or any provider SDK.
+while IFS= read -r pkg; do
+  case "$pkg" in
+    "$MODULE/internal/agent"|"$MODULE/internal/agent/"*)
+      check_internal_package "$pkg" agent \
+        "^$MODULE/internal/(core|agent)(/.*)?\$"
+      ;;
+  esac
+done < <(go list ./internal/agent/...)
+
+# internal/mocks: test-only fakes. May import internal/core, internal/agent,
+# and itself.
+while IFS= read -r pkg; do
+  case "$pkg" in
+    "$MODULE/internal/mocks"|"$MODULE/internal/mocks/"*)
+      check_internal_package "$pkg" mocks \
+        "^$MODULE/internal/(core|agent|mocks)(/.*)?\$"
+      ;;
+  esac
+done < <(go list ./internal/mocks/...)
 
 if rg -n "github.com/somoore/auto-bot/cmd/server" --glob '*.go' . >/tmp/auto-bot-boundary-server-imports.$$ 2>/dev/null; then
   cat /tmp/auto-bot-boundary-server-imports.$$ >&2

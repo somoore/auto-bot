@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -45,16 +46,13 @@ func TestRunQuestionRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	q := sampleRunQuestion("q-roundtrip-1", time.Now(), 14400)
-	if err := store.SaveRunQuestion(ctx, defaultTenantID, "team-board", q); err != nil {
+	if err := store.SaveRunQuestion(ctx, q); err != nil {
 		t.Fatalf("SaveRunQuestion: %v", err)
 	}
 
-	loaded, found, err := store.LoadRunQuestion(ctx, defaultTenantID, "team-board", q.ID)
+	loaded, err := store.LoadRunQuestion(ctx, defaultTenantID, "team-board", q.ID)
 	if err != nil {
 		t.Fatalf("LoadRunQuestion: %v", err)
-	}
-	if !found {
-		t.Fatalf("LoadRunQuestion did not find saved question %q", q.ID)
 	}
 	if loaded.ID != q.ID || loaded.RunID != q.RunID || loaded.CardID != q.CardID {
 		t.Fatalf("loaded ids = %+v, want %+v", loaded, q)
@@ -88,7 +86,7 @@ func TestRunQuestionListOpenOnlyReturnsOpen(t *testing.T) {
 	expired := sampleRunQuestion("q-expired-1", now.Add(-2*time.Hour), 60)
 
 	for _, q := range []agent.RunQuestion{open, answered, expired} {
-		if err := store.SaveRunQuestion(ctx, defaultTenantID, "team-board", q); err != nil {
+		if err := store.SaveRunQuestion(ctx, q); err != nil {
 			t.Fatalf("SaveRunQuestion(%s): %v", q.ID, err)
 		}
 	}
@@ -119,7 +117,7 @@ func TestRunQuestionMarkAnswered(t *testing.T) {
 	ctx := context.Background()
 
 	q := sampleRunQuestion("q-answer-1", time.Now(), 14400)
-	if err := store.SaveRunQuestion(ctx, defaultTenantID, "team-board", q); err != nil {
+	if err := store.SaveRunQuestion(ctx, q); err != nil {
 		t.Fatalf("SaveRunQuestion: %v", err)
 	}
 
@@ -127,12 +125,9 @@ func TestRunQuestionMarkAnswered(t *testing.T) {
 		t.Fatalf("MarkRunQuestionAnswered: %v", err)
 	}
 
-	loaded, found, err := store.LoadRunQuestion(ctx, defaultTenantID, "team-board", q.ID)
+	loaded, err := store.LoadRunQuestion(ctx, defaultTenantID, "team-board", q.ID)
 	if err != nil {
 		t.Fatalf("LoadRunQuestion: %v", err)
-	}
-	if !found {
-		t.Fatalf("LoadRunQuestion did not find %q", q.ID)
 	}
 	if loaded.Status != "answered" {
 		t.Fatalf("status = %q, want answered", loaded.Status)
@@ -157,7 +152,7 @@ func TestRunQuestionTTLExpiry(t *testing.T) {
 
 	askedAt := time.Now()
 	q := sampleRunQuestion("q-ttl-1", askedAt, 1)
-	if err := store.SaveRunQuestion(ctx, defaultTenantID, "team-board", q); err != nil {
+	if err := store.SaveRunQuestion(ctx, q); err != nil {
 		t.Fatalf("SaveRunQuestion: %v", err)
 	}
 
@@ -172,12 +167,9 @@ func TestRunQuestionTTLExpiry(t *testing.T) {
 		t.Fatalf("ExpireRunQuestions returned %d, want 1", expired)
 	}
 
-	loaded, found, err := store.LoadRunQuestion(ctx, defaultTenantID, "team-board", q.ID)
+	loaded, err := store.LoadRunQuestion(ctx, defaultTenantID, "team-board", q.ID)
 	if err != nil {
-		t.Fatalf("LoadRunQuestion: %v", err)
-	}
-	if !found {
-		t.Fatalf("question %q vanished after expiry", q.ID)
+		t.Fatalf("question %q vanished after expiry: %v", q.ID, err)
 	}
 	if loaded.Status != "expired" {
 		t.Fatalf("status = %q, want expired", loaded.Status)
@@ -197,7 +189,7 @@ func TestRunQuestionTenantIsolation(t *testing.T) {
 
 	q := sampleRunQuestion("q-tenant-a-1", time.Now(), 14400)
 	q.TenantID = "tenant-a"
-	if err := store.SaveRunQuestion(ctx, "tenant-a", "team-board", q); err != nil {
+	if err := store.SaveRunQuestion(ctx, q); err != nil {
 		t.Fatalf("SaveRunQuestion(tenant-a): %v", err)
 	}
 
@@ -209,10 +201,10 @@ func TestRunQuestionTenantIsolation(t *testing.T) {
 		t.Fatalf("tenant-b saw %d questions, want 0: %+v", len(open), open)
 	}
 
-	if _, found, err := store.LoadRunQuestion(ctx, "tenant-b", "team-board", q.ID); err != nil {
-		t.Fatalf("LoadRunQuestion(tenant-b): %v", err)
-	} else if found {
+	if _, err := store.LoadRunQuestion(ctx, "tenant-b", "team-board", q.ID); err == nil {
 		t.Fatalf("tenant-b loaded tenant-a's question %q", q.ID)
+	} else if !errors.Is(err, agent.ErrRunQuestionNotFound) {
+		t.Fatalf("LoadRunQuestion(tenant-b) error = %v, want ErrRunQuestionNotFound", err)
 	}
 
 	// And the original tenant still sees it.

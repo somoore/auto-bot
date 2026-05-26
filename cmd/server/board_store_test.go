@@ -228,12 +228,9 @@ func TestSQLiteBoardStorePersistsAgentRuns(t *testing.T) {
 	}
 	run := runResult["agent_run"].(agentRunView)
 
-	stored, found, err := store.LoadAgentRun(context.Background(), defaultTenantID, "team-board", run.RunID)
+	stored, err := store.LoadRun(context.Background(), defaultTenantID, "team-board", run.RunID)
 	if err != nil {
-		t.Fatalf("LoadAgentRun returned error: %v", err)
-	}
-	if !found {
-		t.Fatal("agent run not found")
+		t.Fatalf("LoadRun returned error: %v", err)
 	}
 	if stored.CardID != card.ID || stored.PullRequestNumber != 7 {
 		t.Fatalf("stored run = %#v, want card/pr", stored)

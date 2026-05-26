@@ -24,6 +24,10 @@ type ActionIntent struct {
 	Risk       RiskLevel      `json:"risk"`
 	Evidence   []Evidence     `json:"evidence,omitempty"`
 	Confidence Confidence     `json:"confidence,omitempty"`
+	// RunID is the agent.Run that produced this intent, when applicable.
+	// Empty for human-initiated meeting intents. Omitted from JSON when
+	// empty so historical events deserialize cleanly without a migration.
+	RunID string `json:"run_id,omitempty"`
 	// CreatedAt is stored in UTC when the ledger fills it.
 	CreatedAt time.Time `json:"created_at"`
 }

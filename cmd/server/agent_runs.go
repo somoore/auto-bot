@@ -173,7 +173,7 @@ func (board *kanbanBoard) assignTicketToAgent(args map[string]any) (map[string]a
 	board.persistAgentRun(run)
 	broadcastKanbanEventForBoard(board.boardID, "agent_run", run.View())
 	if agentOrchestrator != nil {
-		time.AfterFunc(100*time.Millisecond, func() { agentOrchestrator.Start(run.RunID) })
+		time.AfterFunc(100*time.Millisecond, func() { agentOrchestrator.executeRun(run.RunID) })
 	}
 
 	return map[string]any{
@@ -342,7 +342,12 @@ func (board *kanbanBoard) retryAgentRun(args map[string]any) (map[string]any, bo
 	return result, changed || err == nil, err
 }
 
-func (orchestrator *agentRunOrchestrator) Start(runID string) {
+// executeRun drives the PR-review run loop for an already-persisted Run:
+// project-manager classification, PR diff fetch, code-review pass, and Jira
+// comment publishing. It is invoked asynchronously by Start after the Run is
+// persisted. Renamed from Start in S1.3 so the public Start method can match
+// the agent.RunCoordinator interface (which is a constructor, not a runner).
+func (orchestrator *agentRunOrchestrator) executeRun(runID string) {
 	if orchestrator == nil || orchestrator.board == nil {
 		return
 	}
@@ -775,7 +780,7 @@ func (board *kanbanBoard) persistAgentRun(run agentRun) {
 		run.TenantID = board.tenantID
 	}
 	if store, ok := board.store.(agentRunStore); ok {
-		if err := store.SaveAgentRun(context.Background(), board.tenantID, board.boardID, run); err != nil {
+		if err := store.SaveRun(context.Background(), board.tenantID, board.boardID, run); err != nil {
 			log.Errorf("Failed to persist agent run: %v", err)
 		}
 	}
