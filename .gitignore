@@ -92,3 +92,6 @@ $RECYCLE.BIN/
 # ignore runtime volumes and overrides
 docker-compose.override.yml
 var/
+
+# Agent worktrees
+.claude/
