@@ -45,6 +45,7 @@ func main() {
 
 	sqlitePath := os.Getenv("BOARD_SQLITE_PATH")
 	if sqlitePath != "" {
+		// #nosec G706 -- sqlitePath is run through sanitizeForLog before interpolation; gosec's taint analysis does not recognize the sanitizer wrapper.
 		log.Printf("mcpd: BOARD_SQLITE_PATH=%q noted; running with in-memory adapter (shared SQLite adapter lands in S2.1)", sanitizeForLog(sqlitePath))
 	}
 
@@ -87,6 +88,7 @@ func main() {
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		go func() {
+			// #nosec G706 -- tenantID/boardID are run through sanitizeForLog before interpolation; gosec's taint analysis does not recognize the sanitizer wrapper.
 			log.Printf("mcpd: serving HTTP transport on %s (tenant=%s board=%s, auth=%v)", addr, sanitizeForLog(*tenantID), sanitizeForLog(*boardID), token != "")
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Fatalf("mcpd: http: %v", err)
