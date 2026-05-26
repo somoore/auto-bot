@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -252,6 +253,206 @@ func TestIntakeStandupGetIsTenantScoped(t *testing.T) {
 	if resp.Intakes[0].Submitter != "daria" {
 		t.Errorf("cross-tenant leak: %+v", resp.Intakes[0])
 	}
+}
+
+// TestIntakeSlackRejectsMissingSecret asserts that with
+// slackSigningSecret unset, /intake/slack rejects every request.
+func TestIntakeSlackRejectsMissingSecret(t *testing.T) {
+	restoreAuth := snapshotAuthGlobals()
+	defer restoreAuth()
+	restoreIntake := snapshotIntakeGlobals()
+	defer restoreIntake()
+
+	apiToken = "intake-secret"
+	appAuthMode = "token"
+	appRoomID = "kanban-meeting"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+	slackSigningSecret = ""
+
+	body := []byte(`user_name=daria&text=Yesterday%3A+shipped`)
+	req := httptest.NewRequest(http.MethodPost, "/intake/slack", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Slack-Request-Timestamp", "1748272800")
+	req.Header.Set("X-Slack-Signature", "v0=deadbeef")
+	rec := httptest.NewRecorder()
+	intakeSlackHandler(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body.String())
+	}
+	if all := intakeStore.All(defaultTenantID, appBoardID); len(all) != 0 {
+		t.Errorf("intake recorded despite missing secret: %+v", all)
+	}
+}
+
+// TestIntakeSlackRejectsBadSignature asserts a Slack body signed with the
+// wrong secret is rejected and never reaches intakeStore.
+func TestIntakeSlackRejectsBadSignature(t *testing.T) {
+	restoreAuth := snapshotAuthGlobals()
+	defer restoreAuth()
+	restoreIntake := snapshotIntakeGlobals()
+	defer restoreIntake()
+
+	apiToken = "intake-secret"
+	appAuthMode = "token"
+	appRoomID = "kanban-meeting"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+	slackSigningSecret = "real-secret"
+
+	now := time.Now()
+	ts := unixSecondsStr(now)
+	body := []byte(`user_name=daria&text=test`)
+	// Sign with the wrong secret.
+	sig := intake.ComputeSlackSignature("attacker-secret", ts, body)
+
+	req := httptest.NewRequest(http.MethodPost, "/intake/slack", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", sig)
+	rec := httptest.NewRecorder()
+	intakeSlackHandler(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestIntakeSlackHappyPathFormEncoded asserts a valid Slack form POST
+// (with the correct signature) parses into an Intake and is persisted.
+func TestIntakeSlackHappyPathFormEncoded(t *testing.T) {
+	restoreAuth := snapshotAuthGlobals()
+	defer restoreAuth()
+	restoreIntake := snapshotIntakeGlobals()
+	defer restoreIntake()
+
+	apiToken = "intake-secret"
+	appAuthMode = "token"
+	appRoomID = "kanban-meeting"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+	slackSigningSecret = "slack-secret"
+
+	now := time.Now()
+	ts := unixSecondsStr(now)
+	body := []byte("user_name=daria&text=" + urlEncode(
+		"Yesterday: shipped IPv6\nToday: continue auth\nBlockers: need Linear creds"))
+	sig := intake.ComputeSlackSignature("slack-secret", ts, body)
+
+	req := httptest.NewRequest(http.MethodPost, "/intake/slack", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", sig)
+	rec := httptest.NewRecorder()
+	intakeSlackHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body = %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Intake intake.Intake `json:"intake"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Intake.Submitter != "daria" {
+		t.Errorf("submitter = %q", resp.Intake.Submitter)
+	}
+	if resp.Intake.Source != intake.SourceSlack {
+		t.Errorf("source = %q, want slack", resp.Intake.Source)
+	}
+	if resp.Intake.Today != "continue auth" {
+		t.Errorf("today = %q", resp.Intake.Today)
+	}
+	if len(resp.Intake.Blockers) != 1 || resp.Intake.Blockers[0].Text != "need Linear creds" {
+		t.Errorf("blockers = %+v", resp.Intake.Blockers)
+	}
+	if got := intakeStore.All(defaultTenantID, appBoardID); len(got) != 1 {
+		t.Errorf("intakeStore count = %d, want 1", len(got))
+	}
+}
+
+// TestIntakeSlackRejectsStaleTimestamp asserts a >5 minute drift is
+// rejected with 401 even when the signature is otherwise valid.
+func TestIntakeSlackRejectsStaleTimestamp(t *testing.T) {
+	restoreAuth := snapshotAuthGlobals()
+	defer restoreAuth()
+	restoreIntake := snapshotIntakeGlobals()
+	defer restoreIntake()
+
+	apiToken = "intake-secret"
+	appAuthMode = "token"
+	appRoomID = "kanban-meeting"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+	slackSigningSecret = "slack-secret"
+
+	// 10 minutes ago — outside the SlackReplayWindow.
+	stale := time.Now().Add(-10 * time.Minute)
+	ts := unixSecondsStr(stale)
+	body := []byte("user_name=daria&text=x")
+	sig := intake.ComputeSlackSignature("slack-secret", ts, body)
+
+	req := httptest.NewRequest(http.MethodPost, "/intake/slack", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", sig)
+	rec := httptest.NewRecorder()
+	intakeSlackHandler(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 for stale timestamp; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func unixSecondsStr(t time.Time) string {
+	const digits = "0123456789"
+	n := t.Unix()
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = digits[n%10]
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+func urlEncode(s string) string {
+	// Minimal URL encoding for the test body. Replaces only the bytes
+	// that matter for our payloads. Avoid net/url here because we already
+	// import it from the handler and want the test self-contained.
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == ' ':
+			b.WriteByte('+')
+		case c == '\n':
+			b.WriteString("%0A")
+		case c == ':':
+			b.WriteString("%3A")
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'):
+			b.WriteByte(c)
+		case c == '-' || c == '.' || c == '_' || c == '~':
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
 }
 
 // TestIntakeStandupPostAcceptsPlainText asserts a text/plain body is

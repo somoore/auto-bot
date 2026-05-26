@@ -229,9 +229,11 @@ func main() {
 	mux.HandleFunc("/internal/board/cards/", internalBoardCardsHandler)
 
 	// Async-standup intake (Daria persona, docs/persona-feedback/
-	// daria-first-week.md). The /intake/slack route lands with the
-	// Slack adapter in the next commit.
+	// daria-first-week.md). /intake/standup carries the form + API
+	// surface; /intake/slack carries the Slack webhook adapter behind
+	// HMAC signature verification (SLACK_SIGNING_SECRET).
 	mux.HandleFunc("/intake/standup", intakeStandupHandler)
+	mux.HandleFunc("/intake/slack", intakeSlackHandler)
 
 	// Serve the React SPA built by `web/app/npm run build` under /app/*.
 	// If web/app/dist does not exist (frontend not built), http.FileServer
