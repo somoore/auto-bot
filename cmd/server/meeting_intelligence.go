@@ -153,7 +153,7 @@ func (board *kanbanBoard) createPendingConfirmation(toolName string, args map[st
 		board.pendingConfirmations = map[string]pendingConfirmation{}
 	}
 	board.pendingConfirmations[confirmation.ConfirmationID] = confirmation
-	broadcastKanbanEventForBoard(board.boardID, "confirmation", pendingConfirmationToView(confirmation))
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "confirmation", pendingConfirmationToView(confirmation))
 	return map[string]any{
 		"ok":                    false,
 		"requires_confirmation": true,
@@ -258,7 +258,7 @@ func (board *kanbanBoard) cancelPendingConfirmation(args map[string]any) (map[st
 	if !ok {
 		return map[string]any{"ok": false, "error": "pending confirmation not found"}, false, nil
 	}
-	broadcastKanbanEventForBoard(board.boardID, "confirmation_cancelled", pendingConfirmationToView(confirmation))
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "confirmation_cancelled", pendingConfirmationToView(confirmation))
 	return map[string]any{"ok": true, "cancelled": true, "confirmation_id": confirmationID}, false, nil
 }
 
@@ -615,7 +615,7 @@ func (board *kanbanBoard) undoLastMutation(args map[string]any, meta toolCallMet
 	}
 	record := board.recordMutation("undo_last_mutation", args, result, before, after, meta, "", target.EventID)
 	board.persistMutationRecord(record, after)
-	broadcastKanbanEventForBoard(board.boardID, "undo_result", boardMutationToView(record))
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "undo_result", boardMutationToView(record))
 	return result, true, nil
 }
 

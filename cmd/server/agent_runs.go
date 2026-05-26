@@ -171,7 +171,7 @@ func (board *kanbanBoard) assignTicketToAgent(args map[string]any) (map[string]a
 	board.mu.Unlock()
 
 	board.persistAgentRun(run)
-	broadcastKanbanEventForBoard(board.boardID, "agent_run", run.View())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "agent_run", run.View())
 	if agentOrchestrator != nil {
 		time.AfterFunc(100*time.Millisecond, func() { agentOrchestrator.executeRun(run.RunID) })
 	}
@@ -295,8 +295,8 @@ func (board *kanbanBoard) takeOverAgentRun(args map[string]any) (map[string]any,
 		return map[string]any{"ok": false, "error": "agent run not found", "run_id": runID}, false, nil
 	}
 	board.persistAgentRun(run)
-	broadcastKanbanEventForBoard(board.boardID, "agent_run", run.View())
-	broadcastKanbanEventForBoard(board.boardID, "board", board.SnapshotState())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "agent_run", run.View())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "board", board.SnapshotState())
 	return map[string]any{"ok": true, "taken_over": true, "run_id": runID, "tagged_partial_work": tagged, "agent_run": run.View()}, true, nil
 }
 
@@ -771,8 +771,8 @@ func (board *kanbanBoard) updateAgentRun(runID string, mutate func(*agentRun)) {
 		return
 	}
 	board.persistAgentRun(run)
-	broadcastKanbanEventForBoard(board.boardID, "agent_run", run.View())
-	broadcastKanbanEventForBoard(board.boardID, "board", board.SnapshotState())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "agent_run", run.View())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "board", board.SnapshotState())
 }
 
 func (board *kanbanBoard) persistAgentRun(run agentRun) {
@@ -816,7 +816,7 @@ func (board *kanbanBoard) addAgentRunLocalComment(cardID string, body string) {
 	board.mu.Unlock()
 	if ok {
 		board.persistSnapshot("agent_run_comment")
-		broadcastKanbanEventForBoard(board.boardID, "board", board.SnapshotState())
+		broadcastKanbanEventForBoard(board.tenantID, board.boardID, "board", board.SnapshotState())
 	}
 }
 

@@ -951,7 +951,7 @@ func (board *kanbanBoard) persistMeetingReport(report meetingIntelligenceReport)
 func (board *kanbanBoard) archiveMeetingReport(source string) meetingIntelligenceReport {
 	report := board.BuildMeetingIntelligenceReport(source)
 	board.persistMeetingReport(report)
-	broadcastKanbanEventForBoard(board.boardID, "meeting_report", report.SummaryView())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "meeting_report", report.SummaryView())
 	return report
 }
 

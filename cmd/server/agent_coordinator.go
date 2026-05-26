@@ -156,11 +156,11 @@ func (orchestrator *agentRunOrchestrator) AskHuman(ctx context.Context, runID st
 	// carries the full question for drawers/MCP consumers; run_paused
 	// carries the updated Run view so timeline UIs reflect the
 	// waiting_on_human transition without a separate fetch.
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_question_asked", q)
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "run_question_asked", q)
 	if updated, ok := orchestrator.board.agentRunByID(runID); ok {
-		broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_paused", updated.View())
+		broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "run_paused", updated.View())
 	}
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
 	return q.ID, nil
 }
 
@@ -231,9 +231,9 @@ func (orchestrator *agentRunOrchestrator) Resume(ctx context.Context, answer age
 		answered.AnsweredVia = answer.AnsweredVia
 		answered.Status = "answered"
 	}
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_question_answered", answered)
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "run_resumed", run.View())
-	broadcastKanbanEventForBoard(orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "run_question_answered", answered)
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "run_resumed", run.View())
+	broadcastKanbanEventForBoard(orchestrator.board.tenantID, orchestrator.board.boardID, "board", orchestrator.board.SnapshotState())
 	return run, nil
 }
 

@@ -2271,18 +2271,30 @@ func (board *kanbanBoard) persistSnapshot(reason string) {
 
 // --- WebSocket client registry for board event broadcasting ---
 
+// wsClientKey scopes a registered WebSocket client to a single (tenantID,
+// boardID) pair so the fanout loop can route events without leaking across
+// tenant boundaries. SecArch-001: a tenant-A client must never receive a
+// broadcast intended for tenant B even when both happen to share a boardID.
+type wsClientKey struct {
+	tenantID string
+	boardID  string
+}
+
 var (
 	wsClientsLock sync.RWMutex
-	wsClients     = map[*threadSafeWriter]string{}
+	wsClients     = map[*threadSafeWriter]wsClientKey{}
 )
 
-func registerWSClient(c *threadSafeWriter, boardID string) bool {
+func registerWSClient(c *threadSafeWriter, tenantID string, boardID string) bool {
 	wsClientsLock.Lock()
 	defer wsClientsLock.Unlock()
 	if len(wsClients) >= maxWSClients {
 		return false
 	}
-	wsClients[c] = normalizeRuntimeID(boardID, appBoardID)
+	wsClients[c] = wsClientKey{
+		tenantID: normalizeTenantID(tenantID),
+		boardID:  normalizeRuntimeID(boardID, appBoardID),
+	}
 	return true
 }
 
@@ -2290,6 +2302,24 @@ func unregisterWSClient(c *threadSafeWriter) {
 	wsClientsLock.Lock()
 	delete(wsClients, c)
 	wsClientsLock.Unlock()
+}
+
+// wsClientsForTenantBoard snapshots the set of registered WebSocket clients
+// whose (tenantID, boardID) key matches the broadcast target. Extracted from
+// defaultBroadcastSink so the SecArch-001 isolation contract is unit-testable
+// without a real gorilla websocket connection.
+func wsClientsForTenantBoard(tenantID string, boardID string) []*threadSafeWriter {
+	wantTenant := normalizeTenantID(tenantID)
+	wantBoard := normalizeRuntimeID(boardID, appBoardID)
+	wsClientsLock.RLock()
+	defer wsClientsLock.RUnlock()
+	clients := make([]*threadSafeWriter, 0, len(wsClients))
+	for ws, clientKey := range wsClients {
+		if clientKey.tenantID == wantTenant && clientKey.boardID == wantBoard {
+			clients = append(clients, ws)
+		}
+	}
+	return clients
 }
 
 func sendKanbanEvent(ws *threadSafeWriter, event string, data any) error {
@@ -2307,8 +2337,14 @@ func sendKanbanEvent(ws *threadSafeWriter, event string, data any) error {
 	})
 }
 
+// broadcastKanbanEvent is the legacy single-tenant entry point used by call
+// sites that do not have ready access to a board pointer (UI shortcuts,
+// nova-sonic status pings, voice readiness updates, jira webhook fanout).
+// It resolves to (defaultTenantID, appBoardID); this is correct today
+// because auto-bot still runs as a single tenant. Multi-tenant call sites
+// thread the pair explicitly via broadcastKanbanEventForBoard.
 func broadcastKanbanEvent(event string, data any) {
-	broadcastKanbanEventForBoard(appBoardID, event, data)
+	broadcastKanbanEventForBoard(defaultTenantID, appBoardID, event, data)
 }
 
 // broadcastSink is the seam tests use to capture WS broadcasts without
@@ -2356,7 +2392,7 @@ func lookupBoardForBroadcast(boardID string) *kanbanBoard {
 	return sharedBoard
 }
 
-func broadcastKanbanEventForBoard(boardID string, event string, data any) {
+func broadcastKanbanEventForBoard(tenantID string, boardID string, event string, data any) {
 	// Enrich `"board"` snapshots with open RunQuestions so the WS payload
 	// carries the Sprint 1 ask-the-human surface. Persisted snapshots stay
 	// clean — the field is populated only at broadcast time.
@@ -2368,10 +2404,10 @@ func broadcastKanbanEventForBoard(boardID string, event string, data any) {
 			data = state
 		}
 	}
-	broadcastSink(boardID, event, data)
+	broadcastSink(tenantID, boardID, event, data)
 }
 
-func defaultBroadcastSink(boardID string, event string, data any) {
+func defaultBroadcastSink(tenantID string, boardID string, event string, data any) {
 	raw, err := json.Marshal(map[string]any{
 		"event": event,
 		"data":  data,
@@ -2381,14 +2417,7 @@ func defaultBroadcastSink(boardID string, event string, data any) {
 		return
 	}
 
-	wsClientsLock.RLock()
-	clients := make([]*threadSafeWriter, 0, len(wsClients))
-	for ws, clientBoardID := range wsClients {
-		if clientBoardID == boardID {
-			clients = append(clients, ws)
-		}
-	}
-	wsClientsLock.RUnlock()
+	clients := wsClientsForTenantBoard(tenantID, boardID)
 
 	for _, ws := range clients {
 		if err := ws.WriteJSON(&websocketMessage{

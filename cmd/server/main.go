@@ -586,7 +586,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 	defer c.Close() //nolint
 
-	if !registerWSClient(c, authCtx.BoardID) {
+	if !registerWSClient(c, authCtx.TenantID, authCtx.BoardID) {
 		log.Warnf("Rejecting WebSocket: max clients (%d) reached", maxWSClients)
 		return
 	}
