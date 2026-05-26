@@ -72,6 +72,34 @@ while IFS= read -r pkg; do
   esac
 done < <(go list ./internal/mocks/...)
 
+# internal/mcp: provider-neutral MCP protocol surface. May import
+# internal/core, internal/agent, internal/board, and itself. Must not
+# pull in cmd/server (the application entrypoint) or any provider SDK.
+# cmd/mcpd is the binary that wires this package; cmd/mcpd is allowed to
+# import internal/mocks (it does so for the foundational in-memory
+# RunStore in S2.0).
+while IFS= read -r pkg; do
+  case "$pkg" in
+    "$MODULE/internal/mcp"|"$MODULE/internal/mcp/"*)
+      check_internal_package "$pkg" mcp \
+        "^$MODULE/internal/(core|agent|board|mcp)(/.*)?\$"
+      ;;
+  esac
+done < <(go list ./internal/mcp/...)
+
+# internal/projection: provider-neutral Projection contract + per-system
+# projection implementations (jira, linear, github-issues). May import
+# internal/core, internal/board, and itself. Must not pull in cmd/server
+# (the application entrypoint) or any provider SDK.
+while IFS= read -r pkg; do
+  case "$pkg" in
+    "$MODULE/internal/projection"|"$MODULE/internal/projection/"*)
+      check_internal_package "$pkg" projection \
+        "^$MODULE/internal/(core|board|projection)(/.*)?\$"
+      ;;
+  esac
+done < <(go list ./internal/projection/...)
+
 if rg -n "github.com/somoore/auto-bot/cmd/server" --glob '*.go' . >/tmp/auto-bot-boundary-server-imports.$$ 2>/dev/null; then
   cat /tmp/auto-bot-boundary-server-imports.$$ >&2
   fail "cmd/server is an application entrypoint and must not be imported"
