@@ -7,15 +7,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/somoore/auto-bot/internal/board"
 )
 
-type kanbanStatus string
+// kanbanStatus and the canonical status constants are aliased to the pure
+// domain types in internal/board. Behavior in cmd/server is unchanged; the
+// aliases let existing code keep referring to the local names.
+type kanbanStatus = board.Status
 
 const (
-	kanbanStatusBacklog    kanbanStatus = "Backlog"
-	kanbanStatusInProgress kanbanStatus = "In Progress"
-	kanbanStatusBlocked    kanbanStatus = "Blocked"
-	kanbanStatusDone       kanbanStatus = "Done"
+	kanbanStatusBacklog    = board.StatusBacklog
+	kanbanStatusInProgress = board.StatusInProgress
+	kanbanStatusBlocked    = board.StatusBlocked
+	kanbanStatusDone       = board.StatusDone
 )
 
 var kanbanStatuses = []kanbanStatus{
@@ -25,102 +30,20 @@ var kanbanStatuses = []kanbanStatus{
 	kanbanStatusDone,
 }
 
-// kanbanCard is the JSON card shape shared by browser clients, Jira sync,
-// meeting reports, and model-safe board snapshots.
-type kanbanCard struct {
-	ID                string                 `json:"id"`
-	Status            kanbanStatus           `json:"status"`
-	Title             string                 `json:"title"`
-	Notes             string                 `json:"notes"`
-	Tags              []string               `json:"tags"`
-	IssueType         string                 `json:"issueType,omitempty"`
-	ParentID          string                 `json:"parentId,omitempty"`
-	EpicKey           string                 `json:"epicKey,omitempty"`
-	Assignee          *kanbanUser            `json:"assignee,omitempty"`
-	Reporter          *kanbanUser            `json:"reporter,omitempty"`
-	Watchers          []kanbanUser           `json:"watchers,omitempty"`
-	DueDate           string                 `json:"dueDate,omitempty"`
-	Priority          string                 `json:"priority,omitempty"`
-	StoryPoints       *float64               `json:"storyPoints,omitempty"`
-	Estimate          *kanbanEstimate        `json:"estimate,omitempty"`
-	OriginalEstimate  string                 `json:"originalEstimate,omitempty"`
-	RemainingEstimate string                 `json:"remainingEstimate,omitempty"`
-	Sprint            *kanbanSprint          `json:"sprint,omitempty"`
-	Rank              string                 `json:"rank,omitempty"`
-	RankHint          string                 `json:"rankHint,omitempty"`
-	Components        []string               `json:"components,omitempty"`
-	FixVersions       []string               `json:"fixVersions,omitempty"`
-	BlockedReason     string                 `json:"blockedReason,omitempty"`
-	Comments          []kanbanComment        `json:"comments,omitempty"`
-	IssueLinks        []kanbanIssueLink      `json:"issueLinks,omitempty"`
-	Worklogs          []kanbanWorklog        `json:"worklogs,omitempty"`
-	RemoteLinks       []kanbanRemoteLink     `json:"remoteLinks,omitempty"`
-	CustomFields      map[string]kanbanField `json:"customFields,omitempty"`
-}
-
-// kanbanUser is the normalized user identity shape used for assignees,
-// reporters, and watchers.
-type kanbanUser struct {
-	AccountID    string `json:"accountId,omitempty"`
-	DisplayName  string `json:"displayName,omitempty"`
-	EmailAddress string `json:"emailAddress,omitempty"`
-	Active       bool   `json:"active"`
-}
-
-type kanbanComment struct {
-	ID        string `json:"id,omitempty"`
-	Body      string `json:"body"`
-	Author    string `json:"author,omitempty"`
-	CreatedAt string `json:"createdAt,omitempty"`
-}
-
-type kanbanEstimate struct {
-	Original  string `json:"original,omitempty"`
-	Remaining string `json:"remaining,omitempty"`
-}
-
-type kanbanSprint struct {
-	ID        int    `json:"id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	State     string `json:"state,omitempty"`
-	Goal      string `json:"goal,omitempty"`
-	StartDate string `json:"startDate,omitempty"`
-	EndDate   string `json:"endDate,omitempty"`
-}
-
-type kanbanIssueLink struct {
-	ID             string `json:"id,omitempty"`
-	Type           string `json:"type"`
-	Direction      string `json:"direction,omitempty"`
-	SourceCardID   string `json:"sourceCardId,omitempty"`
-	TargetCardID   string `json:"targetCardId"`
-	TargetSummary  string `json:"targetSummary,omitempty"`
-	TargetStatus   string `json:"targetStatus,omitempty"`
-	Relationship   string `json:"relationship,omitempty"`
-	CreatedByVoice bool   `json:"createdByVoice,omitempty"`
-}
-
-type kanbanWorklog struct {
-	ID               string `json:"id,omitempty"`
-	Author           string `json:"author,omitempty"`
-	TimeSpent        string `json:"timeSpent"`
-	TimeSpentSeconds int64  `json:"timeSpentSeconds,omitempty"`
-	Started          string `json:"started,omitempty"`
-	Comment          string `json:"comment,omitempty"`
-	CreatedAt        string `json:"createdAt,omitempty"`
-}
-
-type kanbanRemoteLink struct {
-	ID      string `json:"id,omitempty"`
-	URL     string `json:"url"`
-	Title   string `json:"title"`
-	Summary string `json:"summary,omitempty"`
-}
-
-type kanbanField struct {
-	Name  string `json:"name,omitempty"`
-	Value any    `json:"value,omitempty"`
-}
+// kanbanCard and its sub-types are aliased to internal/board so the JSON
+// shape, field tags, and value identity are shared with any future internal
+// package. See internal/board/types.go for the canonical definitions.
+type (
+	kanbanCard       = board.Card
+	kanbanUser       = board.User
+	kanbanComment    = board.Comment
+	kanbanEstimate   = board.Estimate
+	kanbanSprint     = board.Sprint
+	kanbanIssueLink  = board.IssueLink
+	kanbanWorklog    = board.Worklog
+	kanbanRemoteLink = board.RemoteLink
+	kanbanField      = board.Field
+)
 
 type scrumMeetingMode string
 
