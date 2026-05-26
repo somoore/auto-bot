@@ -86,9 +86,20 @@ func (orchestrator *agentRunOrchestrator) Checkpoint(ctx context.Context, runID 
 		cp.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 
-	if store, ok := orchestrator.board.store.(agent.RunStore); ok {
+	// SE-1 F2: fail loud when the configured board store does not satisfy
+	// agent.RunStore. The previous shape silently dropped the checkpoint
+	// audit append on a type-assertion miss — callers thought the
+	// checkpoint had been written when nothing landed in the durable log.
+	// A nil store remains acceptable (tests bootstrap kanbanBoards without
+	// persistence); a non-nil store that does not implement RunStore is a
+	// configuration bug and must surface.
+	if orchestrator.board.store != nil {
+		store, ok := orchestrator.board.store.(agent.RunStore)
+		if !ok {
+			return fmt.Errorf("checkpoint: %w: board store of type %T does not implement agent.RunStore", agent.ErrCheckpointAuditFailed, orchestrator.board.store)
+		}
 		if err := store.AppendRunCheckpoint(ctx, orchestrator.board.tenantID, orchestrator.board.boardID, runID, cp); err != nil {
-			return fmt.Errorf("append run checkpoint: %w", err)
+			return fmt.Errorf("checkpoint: %w: %v", agent.ErrCheckpointAuditFailed, err)
 		}
 	}
 

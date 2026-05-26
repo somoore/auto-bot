@@ -26,6 +26,16 @@ var ErrRunQuestionNotFound = errors.New("agent: run question not found")
 // duplicate of the already-answered case.
 var ErrRunQuestionExpired = errors.New("agent: run question expired")
 
+// ErrCheckpointAuditFailed wraps the error chain returned by
+// RunCoordinator.Checkpoint when the durable audit append could not run.
+// SE-1 F2: prior to this sentinel, a type-assertion miss against the
+// board store silently skipped AppendRunCheckpoint and Checkpoint
+// returned nil; the caller thought the audit entry had been written.
+// Callers branch on errors.Is so MCP and the UI can surface a distinct
+// "checkpoint did not persist to the audit log" failure mode rather
+// than treating it as a generic plan-update error.
+var ErrCheckpointAuditFailed = errors.New("agent: checkpoint audit write failed")
+
 // RunStore is the persistence surface RunCoordinator depends on.
 // Implementations live outside internal/agent (cmd/server's sqliteBoardStore
 // today, MCP servers tomorrow) so the agent package stays provider-neutral.
