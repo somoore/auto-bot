@@ -103,6 +103,20 @@ while IFS= read -r pkg; do
   esac
 done < <(go list ./internal/projection/...)
 
+# internal/intake: provider-neutral async-standup intake (form, Slack,
+# api). May import internal/core, internal/board, internal/agent, and
+# itself. Must not pull in cmd/server (the application entrypoint) or
+# any provider SDK. The Slack adapter uses only stdlib crypto/hmac so
+# the boundary stays clean.
+while IFS= read -r pkg; do
+  case "$pkg" in
+    "$MODULE/internal/intake"|"$MODULE/internal/intake/"*)
+      check_internal_package "$pkg" intake \
+        "^$MODULE/internal/(core|board|agent|intake)(/.*)?\$"
+      ;;
+  esac
+done < <(go list ./internal/intake/...)
+
 if rg -n "github.com/somoore/auto-bot/cmd/server" --glob '*.go' . >/tmp/auto-bot-boundary-server-imports.$$ 2>/dev/null; then
   cat /tmp/auto-bot-boundary-server-imports.$$ >&2
   fail "cmd/server is an application entrypoint and must not be imported"
