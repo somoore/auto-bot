@@ -215,6 +215,35 @@ func (store *sqliteBoardStore) init(ctx context.Context) error {
 			)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_questions_open ON run_questions (tenant_id, board_id, status, asked_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_run_questions_run ON run_questions (tenant_id, board_id, run_id)`,
+		// Sprint 4.0: tenant_settings holds tenant-scoped trust-ceremony
+		// toggles (dry-run, pause-all-agents). One row per tenant; rows are
+		// created lazily on the first toggle and read with a fallback to
+		// all-defaults so untouched tenants stay on legacy behavior.
+		`CREATE TABLE IF NOT EXISTS tenant_settings (
+				tenant_id        TEXT NOT NULL PRIMARY KEY,
+				dry_run_enabled  INTEGER NOT NULL DEFAULT 0,
+				agents_paused    INTEGER NOT NULL DEFAULT 0,
+				updated_at       TEXT NOT NULL
+			)`,
+		// Sprint 4.0: pending_actions holds tool calls staged by dry-run
+		// mode. Each row carries the original args/intent so the UI can
+		// render a diff preview, and a status that the approve/reject
+		// endpoints transition. ExpiresAt is a soft TTL the sweeper honors.
+		`CREATE TABLE IF NOT EXISTS pending_actions (
+				tenant_id      TEXT NOT NULL,
+				board_id       TEXT NOT NULL,
+				action_id      TEXT NOT NULL,
+				tool           TEXT NOT NULL,
+				args_json      TEXT NOT NULL,
+				intent_json    TEXT NOT NULL,
+				created_at     TEXT NOT NULL,
+				expires_at     TEXT NOT NULL,
+				status         TEXT NOT NULL DEFAULT 'pending',
+				result_json    TEXT,
+				decision_json  TEXT,
+				PRIMARY KEY (tenant_id, board_id, action_id)
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_pending_actions_status ON pending_actions (tenant_id, board_id, status, created_at)`,
 	}
 	// Migrate pre-tenant databases before issuing the new CREATE statements so
 	// that older tables get rewritten with tenant_id='default' on every row.
@@ -231,6 +260,13 @@ func (store *sqliteBoardStore) init(ctx context.Context) error {
 	// only thing recording that this database has the S1.2 shape.
 	if err := store.bumpUserVersionTo(ctx, 2); err != nil {
 		return fmt.Errorf("bump board sqlite user_version to 2: %w", err)
+	}
+	// Bump user_version 2 -> 3 once Sprint 4 tables (tenant_settings,
+	// pending_actions) exist. Idempotent for fresh databases; pre-S4 databases
+	// pick up the new tables via the CREATE TABLE IF NOT EXISTS statements
+	// above.
+	if err := store.bumpUserVersionTo(ctx, 3); err != nil {
+		return fmt.Errorf("bump board sqlite user_version to 3: %w", err)
 	}
 	return nil
 }

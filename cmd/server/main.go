@@ -115,6 +115,11 @@ func main() {
 	if boardStore != nil {
 		defer closeBoardStore(boardStore)
 	}
+	// Sprint 4.0: wire tenant settings + pending actions stores into the
+	// process-wide dry-run registry. When BOARD_SQLITE_PATH is unset the
+	// helpers fall back to in-memory stores so the trust ceremony APIs stay
+	// callable in tests and ephemeral demo runs.
+	installDryRunRuntime(boardStore)
 	sharedBoard, err = newPersistentKanbanBoard(appBoardID, boardStore)
 	if err != nil {
 		panic(err)
