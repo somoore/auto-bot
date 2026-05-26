@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -185,6 +186,63 @@ func TestRunCoordinatorStartValidatesInputs(t *testing.T) {
 	}
 	if _, err := coord.Start(ctx, agent.RunRequest{CardID: "EMAL-1"}); err == nil {
 		t.Fatal("Start with empty objective should error")
+	}
+}
+
+// TestSimpleRunCoordinatorResumeRejectsExpiredQuestion is the DA-1 regression
+// test for the reference SimpleRunCoordinator. It mirrors the production
+// orchestrator's guard in cmd/server/agent_coordinator.go so MCP clients
+// that wrap either implementation see consistent ErrRunQuestionExpired
+// semantics.
+func TestSimpleRunCoordinatorResumeRejectsExpiredQuestion(t *testing.T) {
+	store := mocks.NewRunStore()
+	clock := newStepClock(time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+	store.WithClock(clock.Now)
+	coord := agent.NewSimpleRunCoordinator(store, clock.Now)
+	ctx := context.Background()
+	tenant := "tenant-a"
+	board := "board-a"
+
+	run, err := coord.Start(ctx, agent.RunRequest{
+		TenantID: tenant, BoardID: board,
+		CardID: "EMAL-da-1", Objective: "test expired question guard",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	questionID, err := coord.AskHuman(ctx, run.RunID, agent.RunQuestion{
+		StepIndex:  1,
+		Prompt:     "Proceed with failover?",
+		AskedAt:    time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339Nano),
+		TTLSeconds: 1,
+	})
+	if err != nil {
+		t.Fatalf("AskHuman: %v", err)
+	}
+
+	// Flip the question to expired via the store's ExpireRunQuestions sweep.
+	if _, err := store.ExpireRunQuestions(ctx, tenant, board, time.Now().UTC()); err != nil {
+		t.Fatalf("ExpireRunQuestions: %v", err)
+	}
+	q, err := store.LoadRunQuestion(ctx, tenant, board, questionID)
+	if err != nil {
+		t.Fatalf("LoadRunQuestion: %v", err)
+	}
+	if q.Status != "expired" {
+		t.Fatalf("question status after sweep = %q, want expired", q.Status)
+	}
+
+	_, err = coord.Resume(ctx, agent.HumanAnswer{
+		TenantID: tenant, BoardID: board,
+		QuestionID: questionID,
+		Answer:     "yes",
+		AnsweredBy: "scott", AnsweredVia: "ui",
+	})
+	if err == nil {
+		t.Fatal("Resume returned nil error against an expired question; DA-1 guard missing in SimpleRunCoordinator")
+	}
+	if !errors.Is(err, agent.ErrRunQuestionExpired) {
+		t.Fatalf("Resume error = %v, want errors.Is(err, agent.ErrRunQuestionExpired)", err)
 	}
 }
 

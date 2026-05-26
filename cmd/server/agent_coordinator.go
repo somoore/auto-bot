@@ -204,6 +204,16 @@ func (orchestrator *agentRunOrchestrator) Resume(ctx context.Context, answer age
 	if existing.Status == "answered" {
 		return agent.Run{}, fmt.Errorf("run question %s is already answered", answer.QuestionID)
 	}
+	// DA-1: refuse to mark an expired question as answered. The TTL sweeper
+	// may have transitioned the question to "expired" between the
+	// ask-the-human broadcast and the human answer; advancing it through
+	// "answered" would zombie the Run (the sweeper already cleared
+	// WaitingOn and the answer would be applied to a timed-out prompt).
+	// Callers branch on agent.ErrRunQuestionExpired to surface a distinct
+	// "ask timed out; restart the question" affordance.
+	if existing.Status == "expired" {
+		return agent.Run{}, fmt.Errorf("resume: question %s: %w", answer.QuestionID, agent.ErrRunQuestionExpired)
+	}
 	if err := store.MarkRunQuestionAnswered(ctx, tenantID, boardID, answer.QuestionID, answer.Answer, answer.AnsweredBy, answer.AnsweredVia); err != nil {
 		return agent.Run{}, fmt.Errorf("mark run question answered: %w", err)
 	}
