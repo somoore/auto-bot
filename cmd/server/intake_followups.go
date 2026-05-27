@@ -22,16 +22,20 @@ import (
 // All board mutations route through sharedBoard.ApplyToolCallWithMeta
 // using a dedicated dispatcher ("intake") so ActionLedger,
 // risk-classification, and confirmation gates fire exactly the same
-// way they do for voice-driven and MCP-driven calls. The intake
-// handler authenticates the caller before this fires, so the SkipConfir-
-// mation gate is taken for assign_ticket only — keeping the human in
-// the loop for create_ticket/add_comment would create UI friction that
-// the persona doc explicitly calls out as the wrong default for the
-// async flow.
+// way they do for voice-driven and MCP-driven calls.
+//
+// SecArch-002 alignment: assign_ticket is risk-medium and normally
+// queues a confirmation. We skip that queue ONLY when the caller is
+// self-assigning (the authenticated identity matches the intake's
+// submitter). EM-files-on-behalf intakes go through the normal
+// confirmation queue so the assignee gets the standard 6-second window
+// to reject. callerIdentity is the request-auth identity; an empty
+// callerIdentity (test paths) is treated as untrusted and queues the
+// confirmation.
 //
 // Returns a summary the HTTP layer echoes back to the React form so the
 // user sees what changed without a board refresh.
-func runIntakeFollowups(in intake.Intake) intakeFollowupResult {
+func runIntakeFollowups(in intake.Intake, callerIdentity string) intakeFollowupResult {
 	result := intakeFollowupResult{}
 	if sharedBoard == nil {
 		return result
@@ -41,6 +45,8 @@ func runIntakeFollowups(in intake.Intake) intakeFollowupResult {
 		Dispatcher: "intake",
 		Actor:      in.Submitter,
 	}
+	selfAssigning := callerIdentity != "" &&
+		strings.EqualFold(strings.TrimSpace(callerIdentity), strings.TrimSpace(in.Submitter))
 
 	// Track every card we touch so MentionedCards comments fire against
 	// just-created cards too. Use the canonical case so the membership
@@ -62,18 +68,26 @@ func runIntakeFollowups(in intake.Intake) intakeFollowupResult {
 			log.Errorf("intake/followups: create blocker card failed: %v", err)
 			continue
 		}
-		result.CreatedCards = append(result.CreatedCards, card)
 
-		// Self-assign the submitter so the new card shows up on the
-		// submitter's queue immediately. Skip-confirmation is justified
-		// because the request is authenticated AS the submitter and the
-		// blocker text came from them; queueing a confirmation back to
-		// the same user would be ceremony with no consent value. The
-		// ApplyToolCall path still records the assignment in
-		// ActionLedger.
-		if assignErr := assignCardToSubmitter(cardID, in.Submitter, meta); assignErr != nil {
+		// Assign the submitter so the new card shows up on their queue
+		// immediately. Skip-confirmation only when the authenticated
+		// caller IS the submitter; cross-user EM-files-on-behalf goes
+		// through the normal confirmation queue (SecArch-002). The
+		// ApplyToolCall path records the assignment in ActionLedger
+		// either way.
+		assignMeta := meta
+		assignMeta.SkipConfirmation = selfAssigning
+		if assignErr := assignCardToSubmitter(cardID, in.Submitter, assignMeta); assignErr != nil {
 			log.Errorf("intake/followups: assign blocker card to submitter failed: %v", assignErr)
 		}
+
+		// Re-snapshot the card so the response reflects the post-
+		// assignment state — the React confirmation list reads
+		// CreatedCards.Assignee to render attribution.
+		if refreshed, ok := lookupCardFromBoard(cardID); ok {
+			card = refreshed
+		}
+		result.CreatedCards = append(result.CreatedCards, card)
 	}
 
 	// Post a thread comment for every MentionedCards entry that exists
@@ -128,10 +142,10 @@ func createBlockerCard(in intake.Intake, blocker intake.BlockerItem, meta toolCa
 }
 
 // assignCardToSubmitter posts an assign_ticket call carrying the
-// submitter as both account_id and display_name. SkipConfirmation is
-// set so the confirmation queue does not stall the followup — the
-// intake handler already authenticated as the submitter and is
-// self-assigning a card the same caller just created.
+// submitter as both account_id and display_name. The caller decides
+// whether to set meta.SkipConfirmation: self-assignment skips the
+// queue, cross-user assignment goes through the standard medium-risk
+// confirmation gate (SecArch-002).
 func assignCardToSubmitter(cardID string, submitter string, meta toolCallMeta) error {
 	args := map[string]any{
 		"card_id":      cardID,
@@ -142,9 +156,7 @@ func assignCardToSubmitter(cardID string, submitter string, meta toolCallMeta) e
 	if err != nil {
 		return fmt.Errorf("marshal assign_ticket args: %w", err)
 	}
-	skipMeta := meta
-	skipMeta.SkipConfirmation = true
-	_, _, err = sharedBoard.ApplyToolCallWithMeta("assign_ticket", string(raw), skipMeta)
+	_, _, err = sharedBoard.ApplyToolCallWithMeta("assign_ticket", string(raw), meta)
 	return err
 }
 

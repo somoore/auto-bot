@@ -283,6 +283,10 @@ func TestIntakeStandupCreatesBlockerCards(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/intake/standup", bytes.NewReader(postBody))
 	req.Header.Set("Authorization", "Bearer intake-secret")
 	req.Header.Set("Content-Type", "application/json")
+	// X-Participant-Identity flips the bearer-token path into a self-
+	// assigning identity, which matches the intake submitter and
+	// therefore takes the SecArch-002 skip-confirmation branch.
+	req.Header.Set("X-Participant-Identity", "daria")
 	rec := httptest.NewRecorder()
 	intakeStandupHandler(rec, req)
 	if rec.Code != http.StatusOK {
@@ -308,6 +312,11 @@ func TestIntakeStandupCreatesBlockerCards(t *testing.T) {
 	if !containsTag(created.Tags, "intake") || !containsTag(created.Tags, "blocker") {
 		t.Errorf("created card missing intake/blocker tags: %+v", created.Tags)
 	}
+	// The response card now reflects the post-assignment state so the
+	// React confirmation can render attribution without a board refresh.
+	if created.Assignee == nil || created.Assignee.DisplayName != "daria" {
+		t.Errorf("response card missing self-assignment: %+v", created.Assignee)
+	}
 
 	// The board snapshot should now have one more card.
 	cardsAfter := sharedBoard.SnapshotState().Cards
@@ -326,6 +335,63 @@ func TestIntakeStandupCreatesBlockerCards(t *testing.T) {
 	}
 	if !foundAssigned {
 		t.Errorf("created card not assigned to submitter; cards = %+v", cardsAfter)
+	}
+}
+
+// TestIntakeStandupCrossUserQueuesConfirmation asserts the SecArch-002
+// branch: when the authenticated caller is NOT the submitter (EM files
+// a standup on behalf of a teammate), the assign_ticket call queues a
+// confirmation instead of mutating directly. The blocker card is
+// created (low-risk) but the assignment waits for human approval.
+func TestIntakeStandupCrossUserQueuesConfirmation(t *testing.T) {
+	restoreAuth := snapshotAuthGlobals()
+	defer restoreAuth()
+	restoreIntake := snapshotIntakeGlobals()
+	defer restoreIntake()
+
+	apiToken = "intake-secret"
+	appAuthMode = "token"
+	appRoomID = "kanban-meeting"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+
+	// Caller is the EM; submitter is the teammate — the assignment to
+	// the teammate must NOT skip confirmation.
+	postBody := []byte(`{
+		"submitter":"priya",
+		"today":"reviewing the auth refactor",
+		"blockers":[{"text":"need staging access"}],
+		"source":"form"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/intake/standup", bytes.NewReader(postBody))
+	req.Header.Set("Authorization", "Bearer intake-secret")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Participant-Identity", "daria")
+	rec := httptest.NewRecorder()
+	intakeStandupHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body = %s", rec.Code, rec.Body.String())
+	}
+
+	// The blocker card was created (low-risk path runs immediately).
+	state := sharedBoard.SnapshotState()
+	var blockerCard *kanbanCard
+	for i := range state.Cards {
+		if state.Cards[i].Title == "need staging access" {
+			blockerCard = &state.Cards[i]
+		}
+	}
+	if blockerCard == nil {
+		t.Fatalf("expected blocker card to be created")
+	}
+	// The assignee MUST still be nil — the assign_ticket call queued.
+	if blockerCard.Assignee != nil {
+		t.Errorf("cross-user assignment was applied without confirmation: %+v", blockerCard.Assignee)
+	}
+	// And a pending confirmation must exist on the board.
+	if len(state.PendingConfirmations) == 0 {
+		t.Errorf("expected a pending assign_ticket confirmation, found none")
 	}
 }
 

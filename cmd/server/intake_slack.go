@@ -88,7 +88,13 @@ func intakeSlackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stored := intakeStore.Put(normalized)
-	followups := runIntakeFollowups(stored)
+	// Slack-origin intakes are treated as third-party for the purposes
+	// of SecArch-002: the caller identity is the Slack server, not the
+	// submitter directly, so assignments go through the standard
+	// confirmation queue rather than skipping it. Passing the empty
+	// string here mirrors that — runIntakeFollowups only skips
+	// confirmation when callerIdentity matches the submitter.
+	followups := runIntakeFollowups(stored, "")
 
 	writeIntakeJSON(w, http.StatusOK, map[string]any{
 		"ok":       true,

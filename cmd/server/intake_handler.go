@@ -103,11 +103,11 @@ func handleIntakePost(w http.ResponseWriter, r *http.Request, ctx requestAuthCon
 
 	stored := intakeStore.Put(normalized)
 
-	// Commit 4 will fan out card creation / comments from the stored
-	// intake here via runIntakeFollowups(stored). The seam stays
-	// intentionally narrow so this commit can land before the
-	// ApplyToolCall wiring.
-	followups := runIntakeFollowups(stored)
+	// Fan out card creation + comments. The caller identity is passed
+	// in so runIntakeFollowups can decide whether assign_ticket
+	// confirmation should be skipped (self-assign) or queued
+	// (EM-files-on-behalf path; SecArch-002).
+	followups := runIntakeFollowups(stored, ctx.Identity)
 
 	writeIntakeJSON(w, http.StatusOK, map[string]any{
 		"ok":       true,
