@@ -59,12 +59,14 @@ scripts/local-up.sh
 
 ### Linux / no-Keychain
 
-Use the bare docker-compose path. `APP_API_TOKEN` and `MCPD_TOKEN` are the
-two required env vars; see `docker-compose.yml:20` and `docker-compose.yml:76`:
+Use the bare docker-compose path. Two env vars are required: `APP_API_TOKEN`
+(browser/internal-API bearer; see `docker-compose.yml:20`) and `MCP_SIGNING_KEYS`
+(symmetric secret for MCP bearer-token sign/verify; #58 hard cut removed the
+static `MCPD_TOKEN`):
 
 ```bash
 export APP_API_TOKEN=$(openssl rand -hex 32)
-export MCPD_TOKEN=$(openssl rand -hex 32)
+export MCP_SIGNING_KEYS="k1:$(openssl rand -base64 32)"
 docker compose build
 docker compose up -d
 curl -fsS http://localhost:3001/healthz   # → {"ok":true}
@@ -290,8 +292,10 @@ curl -fsS http://localhost:3001/app/ | head -5
 # WebSocket: open the SPA at /app/ and check the browser devtools network
 # tab for a successful upgrade to /websocket.
 
-# MCP daemon health: hit the mcpd container directly.
-curl -fsS -H "Authorization: Bearer $MCPD_TOKEN" http://localhost:4000/healthz
+# MCP daemon health: hit the mcpd container directly. /healthz is unauth'd;
+# /mcp requires a signed bearer token (mint one via POST /admin/mcp-tokens
+# on the app service — see docs/api/mcp-tools.md#authentication).
+curl -fsS http://localhost:4000/healthz
 
 # Voice path (needs AWS credentials).
 scripts/run-openai-keychain.sh    # OpenAI Realtime via Keychain-stored key

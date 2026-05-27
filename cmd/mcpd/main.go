@@ -42,10 +42,32 @@ func main() {
 	)
 	flag.Parse()
 
-	token := os.Getenv("MCPD_TOKEN")
-	if *transport == "http" && token == "" {
-		log.Println("mcpd: WARNING — MCPD_TOKEN is empty; HTTP transport will accept anonymous requests")
+	// #58 hard cut: MCPD_TOKEN is gone. HTTP callers must present a signed
+	// token (POST /admin/mcp-tokens on cmd/server); the keys to verify
+	// those tokens are loaded from MCP_SIGNING_KEYS at boot. Missing keys
+	// for the http transport is a hard error — fail-closed means the
+	// process refuses to come up rather than serving anonymous requests.
+	var verifier *mcp.Verifier
+	if *transport == "http" {
+		rawKeys := strings.TrimSpace(os.Getenv("MCP_SIGNING_KEYS"))
+		if rawKeys == "" {
+			log.Fatalf("mcpd: MCP_SIGNING_KEYS is required for HTTP transport; refusing to serve anonymous requests")
+		}
+		keys, err := mcp.ParseSigningKeys(rawKeys)
+		if err != nil {
+			log.Fatalf("mcpd: MCP_SIGNING_KEYS invalid: %v", err)
+		}
+		verifier, err = mcp.NewVerifier(keys, mcp.NewMemoryReplayTracker())
+		if err != nil {
+			log.Fatalf("mcpd: NewVerifier: %v", err)
+		}
 	}
+
+	// Stdio callers cross only the OS process boundary, so the trust
+	// model is the local OS. The operator declares the scopes the stdio
+	// caller gets via MCPD_STDIO_SCOPES (comma-separated). Omitted →
+	// the full set, since the operator is the only one with stdio.
+	stdioScopes := parseStdioScopes(os.Getenv("MCPD_STDIO_SCOPES"))
 
 	boardToken := os.Getenv("BOARD_TOKEN")
 	var client mcp.BoardClient
@@ -76,7 +98,18 @@ func main() {
 		DefaultActor: "mcp",
 	})
 	server := mcp.NewServer(tools)
-	server.AuthToken = token
+	server.Verifier = verifier
+	// StdioClaims is only meaningful for the stdio transport — HTTP path
+	// reads claims from the bearer. Leave it zero for HTTP runs so the
+	// stdio default scope list does not silently shadow a misconfigured
+	// HTTP deployment.
+	if strings.ToLower(*transport) == "stdio" {
+		server.StdioClaims = mcp.Claims{
+			Subject:  "stdio:" + *tenantID,
+			TenantID: *tenantID,
+			Scopes:   stdioScopes,
+		}
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -101,7 +134,7 @@ func main() {
 		}
 		go func() {
 			// #nosec G706 -- addr is fmt.Sprintf(":%d", *port) (digits only); tenantID and boardID are run through sanitizeForLog. gosec's taint analysis does not recognize the sanitizer wrapper.
-			log.Printf("mcpd: serving HTTP transport on %s (tenant=%s board=%s, auth=%v)", addr, sanitizeForLog(*tenantID), sanitizeForLog(*boardID), token != "")
+			log.Printf("mcpd: serving HTTP transport on %s (tenant=%s board=%s, signed_tokens=true)", addr, sanitizeForLog(*tenantID), sanitizeForLog(*boardID))
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Fatalf("mcpd: http: %v", err)
 			}
@@ -113,6 +146,28 @@ func main() {
 	default:
 		log.Fatalf("mcpd: unknown transport %q (want stdio or http)", *transport)
 	}
+}
+
+// parseStdioScopes splits a comma-separated MCPD_STDIO_SCOPES into the
+// canonical scope slice. Empty input defaults to the full tool-scope
+// set so an operator running stdio locally doesn't have to think about
+// scopes at all (the trust boundary is the OS process). Explicit empty
+// list (a single comma) yields an empty scope slice, which the centralized
+// scope check will then reject for any gated tool.
+func parseStdioScopes(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return mcp.AllToolScopes()
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func seedDefaultCards(client *mocks.BoardClient, tenantID, boardID string) {

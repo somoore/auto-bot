@@ -21,11 +21,23 @@ scripts/install-hooks.sh
 
 # 3. Build and start the stack. APP_API_TOKEN authenticates browser sessions
 #    and is also the bearer cmd/mcpd uses to call /internal/tools/dispatch.
-#    MCPD_TOKEN authenticates MCP clients (Claude Code, Cursor) against mcpd.
+#    MCP_SIGNING_KEYS is the symmetric secret cmd/server uses to sign MCP
+#    bearer tokens and cmd/mcpd uses to verify them (#58 hard cut: the
+#    static MCPD_TOKEN was removed). Format: "kid:base64-32-byte-key".
 export APP_API_TOKEN=$(openssl rand -hex 32)
-export MCPD_TOKEN=$(openssl rand -hex 32)
+export MCP_SIGNING_KEYS="k1:$(openssl rand -base64 32)"
 docker compose build
 docker compose up -d
+
+# 3b. Mint an MCP bearer token for your client (Claude Code / Cursor).
+#     Scopes: board:read, card:write, runs:start. TTL default is 15 min;
+#     max is 24h. The endpoint is gated by APP_API_TOKEN.
+MCP_BEARER=$(curl -s -X POST http://localhost:3001/admin/mcp-tokens \
+  -H "Authorization: Bearer $APP_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"subject":"agent:me","scopes":["board:read","card:write","runs:start"],"ttl_seconds":3600}' \
+  | jq -r '.token')
+echo "MCP_BEARER=$MCP_BEARER"
 
 # 4. Build the React SPA served at /app/.
 cd web/app && npm install && npm run build && cd ../..
@@ -188,7 +200,7 @@ The script assumes the `local-aws-refresh-broker` (started by `scripts/local-up.
 
 ## The MCP path
 
-`cmd/mcpd` runs as a separate container (see `docker-compose.yml:65-89`). It listens on `127.0.0.1:4000` and dispatches every MCP tool call through `cmd/server`'s `/internal/tools/dispatch` endpoint — so the `ActionLedger`, risk gates, and trust-ceremony confirmations apply uniformly to voice, UI, and MCP callers. The `MCPD_TOKEN` env var authenticates MCP clients; `BOARD_TOKEN` (which equals `APP_API_TOKEN`) authenticates `mcpd` against the app.
+`cmd/mcpd` runs as a separate container (see `docker-compose.yml:65-89`). It listens on `127.0.0.1:4000` and dispatches every MCP tool call through `cmd/server`'s `/internal/tools/dispatch` endpoint — so the `ActionLedger`, risk gates, and trust-ceremony confirmations apply uniformly to voice, UI, and MCP callers. MCP clients authenticate with signed bearer tokens issued by `POST /admin/mcp-tokens` (verified against `MCP_SIGNING_KEYS`, shared by app and mcpd); `BOARD_TOKEN` (which equals `APP_API_TOKEN`) authenticates `mcpd` against the app's internal dispatch endpoint. See [docs/api/mcp-tools.md#authentication](docs/api/mcp-tools.md#authentication) for the full token model.
 
 To connect Claude Code, add this to `~/.claude/mcp.json` (full snippet in [`docs/marketing/dev-adoption.md`](./docs/marketing/dev-adoption.md) line 27-43):
 

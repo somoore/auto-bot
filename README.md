@@ -63,7 +63,7 @@ Full system tour: [docs/architecture.md](docs/architecture.md).
 ```bash
 git clone https://github.com/somoore/auto-bot
 cd auto-bot
-APP_API_TOKEN=dev MCPD_TOKEN=dev docker compose up -d
+APP_API_TOKEN=dev MCP_SIGNING_KEYS="k1:$(openssl rand -base64 32)" docker compose up -d
 # wait ~15 seconds for the Go server to come up
 open http://localhost:3001/app/
 ```
@@ -82,7 +82,17 @@ curl -s -H "Authorization: Bearer dev" http://localhost:3001/observability/statu
 
 ## MCP integration
 
-Point any MCP client at the running mcpd. The HTTP transport requires a bearer token; the stdio transport is unauthenticated and assumes the parent process tree is the perimeter (see [docs/api/mcp-tools.md](docs/api/mcp-tools.md#authentication)).
+Point any MCP client at the running mcpd. The HTTP transport requires a **signed bearer token** issued by `cmd/server`'s `POST /admin/mcp-tokens` endpoint (HMAC-SHA256, scopes, ~15-minute default expiry, jti replay defense). The stdio transport is unauthenticated and assumes the parent process tree is the perimeter; the scopes the local caller gets are configured via `MCPD_STDIO_SCOPES`. See [docs/api/mcp-tools.md](docs/api/mcp-tools.md#authentication) for the full token model.
+
+Mint a token for Claude Code:
+
+```bash
+curl -s -X POST http://localhost:3001/admin/mcp-tokens \
+  -H "Authorization: Bearer dev" \
+  -H "Content-Type: application/json" \
+  -d '{"subject":"agent:claude-code","scopes":["board:read","card:write","runs:start"],"ttl_seconds":3600}' \
+  | jq -r '.token'
+```
 
 Claude Code (`~/.claude/mcp.json`):
 
@@ -92,7 +102,7 @@ Claude Code (`~/.claude/mcp.json`):
     "auto-bot": {
       "transport": "http",
       "url": "http://localhost:4000",
-      "headers": { "Authorization": "Bearer dev" }
+      "headers": { "Authorization": "Bearer <signed-token-from-curl-above>" }
     }
   }
 }
@@ -105,7 +115,7 @@ Cursor (`.cursor/mcp.json` or settings UI):
   "mcpServers": {
     "auto-bot": {
       "url": "http://localhost:4000",
-      "headers": { "Authorization": "Bearer dev" }
+      "headers": { "Authorization": "Bearer <signed-token-from-curl-above>" }
     }
   }
 }

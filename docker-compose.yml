@@ -19,6 +19,11 @@ services:
       - APP_AUTH_MODE=${APP_AUTH_MODE:-token}
       - APP_API_TOKEN=${APP_API_TOKEN:?set APP_API_TOKEN via scripts/dc-up-keychain.sh or an exported environment variable}
       - APP_LOCAL_LOGIN_TOKEN=${APP_LOCAL_LOGIN_TOKEN:-}
+      # MCP signing keys (#58 hard cut). Required for the /admin/mcp-tokens
+      # issuer endpoint and shared with mcpd's verifier. Format:
+      # "kid1:base64key1,kid2:base64key2"; first kid is the active signer.
+      # Generate a fresh 32-byte key with: openssl rand -base64 32
+      - MCP_SIGNING_KEYS=${MCP_SIGNING_KEYS:?set MCP_SIGNING_KEYS, e.g. MCP_SIGNING_KEYS=k1:$$(openssl rand -base64 32)}
       - APP_ROOM_ID=${APP_ROOM_ID:-kanban-meeting}
       - APP_BOARD_ID=${APP_BOARD_ID:-default}
       - BOARD_SQLITE_PATH=${BOARD_SQLITE_PATH:-/srv/data/board.sqlite}
@@ -73,7 +78,11 @@ services:
     environment:
       - MCPD_TRANSPORT=http
       - MCPD_PORT=4000
-      - MCPD_TOKEN=${MCPD_TOKEN:-dev-mcp-token-change-me}
+      # MCP_SIGNING_KEYS must match cmd/server (the issuer) so mcpd can
+      # verify tokens issued by cmd/server's /admin/mcp-tokens endpoint.
+      # MCPD_TOKEN (the legacy static bearer) was removed in #58.
+      - MCP_SIGNING_KEYS=${MCP_SIGNING_KEYS:?set MCP_SIGNING_KEYS to match the app service}
+      - MCPD_STDIO_SCOPES=${MCPD_STDIO_SCOPES:-}
       - APP_TENANT_ID=${APP_TENANT_ID:-default}
       - APP_BOARD_ID=${APP_BOARD_ID:-default}
       # mcpd dispatches every MCP tool call through cmd/server's

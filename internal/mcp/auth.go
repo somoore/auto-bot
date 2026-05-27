@@ -1,33 +1,24 @@
 package mcp
 
-import (
-	"crypto/subtle"
-	"strings"
-)
+import "strings"
 
-// checkBearer compares the Authorization header value against the configured
-// token in constant time. Returns true iff the header is "Bearer <token>"
-// with an exact match. We trim the scheme case-insensitively because some
-// clients send "bearer" lowercase.
-//
-// Sprint 2.1 will replace this single-token gate with scoped per-agent
-// tokens minted at agent-profile registration time; the call site will
-// stay the same.
-func checkBearer(header, expected string) bool {
-	if expected == "" {
-		return true
-	}
+// extractBearerToken pulls the token portion out of an Authorization
+// header value of the form "Bearer <token>" (case-insensitive scheme).
+// Returns the token and true on success; empty string and false if the
+// header is missing or malformed. The actual cryptographic check is
+// performed by Verifier.Verify; this helper only parses.
+func extractBearerToken(header string) (string, bool) {
 	const prefix = "bearer "
 	h := strings.TrimSpace(header)
 	if len(h) < len(prefix) {
-		return false
+		return "", false
 	}
 	if !strings.EqualFold(h[:len(prefix)], prefix) {
-		return false
+		return "", false
 	}
-	got := strings.TrimSpace(h[len(prefix):])
-	if got == "" {
-		return false
+	token := strings.TrimSpace(h[len(prefix):])
+	if token == "" {
+		return "", false
 	}
-	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
+	return token, true
 }

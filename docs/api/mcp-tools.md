@@ -16,25 +16,143 @@ alongside `tools.go` (search for `ServeStdio`, `HTTPHandler`, and
 
 ## Authentication
 
-The MCP server runs two transports with **different trust models**:
+> **S2.2 / #58 hard cut:** `MCPD_TOKEN` (single static bearer) has been
+> removed. The HTTP transport now requires signed bearer tokens minted
+> by `cmd/server`'s admin endpoint; the stdio transport carries
+> explicit scopes via `MCPD_STDIO_SCOPES`.
 
-- **stdio** (default for editor clients such as Claude Code / Cursor)
-  — no authentication. The MCP client launches the MCP server as a
-  child process; the process tree itself is the perimeter.
+### Signed bearer tokens (HTTP transport)
 
-- **HTTP** (used by automation, CI, remote agents) — Bearer-token
-  auth. When the server is started with a non-empty `AuthToken`, every
-  POST must carry an `Authorization: Bearer <token>` header. The check
-  is constant-time (`checkBearer`).
+Tokens are HMAC-SHA256-signed envelopes in three base64url-encoded
+segments:
 
-The bearer token in S2.0 is a single shared secret; S2.1 will replace
-this with scoped per-agent tokens minted at agent-profile registration
-time. The call site stays the same — only the verification widens.
+```
+<base64url(header)>.<base64url(payload)>.<base64url(hmac)>
+```
 
-Tenant scoping: each tool call is implicitly scoped by the
-`(tenant_id, board_id)` configured in `ToolDeps`
-(`internal/mcp/tools.go:116`). Cross-tenant access is not possible
-through this surface. ADR 0004 covers the multi-tenant model.
+The header pins `alg=HS256` and carries a `kid` so signing keys can
+rotate without invalidating in-flight tokens. The payload carries:
+
+| Claim       | Value                                      |
+| ----------- | ------------------------------------------ |
+| `iss`       | `"auto-bot"` (constant)                    |
+| `aud`       | `"mcp"` (constant)                         |
+| `sub`       | Caller identity (e.g. `agent:claude-code`) |
+| `tenant_id` | Tenant the token is bound to               |
+| `scopes`    | Array of scope strings (see below)         |
+| `iat`       | Issued-at, unix seconds                    |
+| `exp`       | Expires-at, unix seconds                   |
+| `jti`       | ULID, unique per issue                     |
+
+Signature: HMAC-SHA256(key, base64url(header) + "." + base64url(payload)).
+
+The verifier pins `alg=HS256` (rejects `none` and every other
+algorithm), enforces `iss == "auto-bot"`, `aud == "mcp"`, and checks
+`exp` with a 60-second clock-skew window. The `jti` is recorded in an
+in-memory `MemoryReplayTracker` so a second presentation of the same
+token returns 401 with `WWW-Authenticate: Bearer error="invalid_token"`.
+
+#### Issuing a token
+
+```bash
+curl -s -X POST http://localhost:3001/admin/mcp-tokens \
+  -H "Authorization: Bearer $APP_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "subject":   "agent:claude-code",
+        "tenant_id": "default",
+        "scopes":    ["board:read", "card:write", "runs:start"],
+        "ttl_seconds": 900
+      }' \
+  | jq
+```
+
+Response:
+
+```json
+{
+  "token": "<base64url.b.c>",
+  "expires_at": "2026-05-26T22:30:00Z",
+  "jti": "01HM...",
+  "subject": "agent:claude-code",
+  "tenant_id": "default",
+  "scopes": ["board:read", "card:write", "runs:start"]
+}
+```
+
+Defaults: TTL is 15 minutes; max is 24 hours. Unknown scope strings
+fail loud with `400 unknown scope` so operators cannot accidentally
+grant phantom privileges.
+
+#### Scopes
+
+| Scope         | Tools                                                  |
+| ------------- | ------------------------------------------------------ |
+| `board:read`  | `board.list_cards`, `board.get_card`                   |
+| `card:write`  | `card.create`, `card.update`, `card.comment`           |
+| `runs:start`  | `runs.start`                                           |
+| `admin:issue` | Reserved for the issuer endpoint itself (future)       |
+
+The dispatcher (`internal/mcp/server.go` `handleToolsCall`) checks the
+scope BEFORE invoking the handler, so tool implementations cannot
+forget to enforce. Insufficient scope returns JSON-RPC error
+`-32001 Forbidden`.
+
+#### Signing keys + rotation
+
+Both `cmd/server` (issuer) and `cmd/mcpd` (verifier) read the same env
+var:
+
+```
+MCP_SIGNING_KEYS=k1:base64-32-byte-key[,k2:base64-key2,...]
+```
+
+The first key is the active signer (used by `Issue`); the rest are
+verifier-only — they exist so previously-active keys still accept
+tokens minted under them while clients rotate. To roll a key:
+
+1. Generate a new key: `openssl rand -base64 32`
+2. Update env to `k2:NEWKEY,k1:OLDKEY` (k2 active, k1 still verified)
+3. Restart cmd/server and mcpd; new tokens are now signed under k2
+4. After old tokens expire (≤ 24h), drop k1 from the env
+
+Symmetric keys must be shared by every cmd/server + mcpd in the
+deployment. The hosted control plane will swap to JWKS-served
+asymmetric public keys; until then `MCP_SIGNING_KEYS` is a top-tier
+secret.
+
+### Stdio transport
+
+The stdio transport assumes the parent process tree is the perimeter
+— the OS process boundary is the trust boundary. Scopes are still
+enforced, but the caller does not present a bearer; instead, the
+operator declares the scopes via:
+
+```
+MCPD_STDIO_SCOPES=board:read,card:write,runs:start
+```
+
+Empty (default) → full tool-scope set, which is the practical case
+when an operator runs mcpd locally for their own use. A single comma
+yields an empty scope slice, which forbids every gated tool.
+
+### Replay defense — known limit
+
+`MemoryReplayTracker` does NOT survive a process restart. A token
+issued and used before the restart can theoretically be replayed in
+the (≤15-minute default) window after the restart. With short TTLs
+the practical risk is small; documented as residual under
+`R-MCP-REPLAY-RESTART` and tracked for a SQLite-backed promotion.
+
+---
+
+## Tenant scoping
+
+Each tool call is implicitly scoped by the `(tenant_id, board_id)`
+configured in `ToolDeps` (`internal/mcp/tools.go`). Tenant binding is
+also enforced at the store layer — every SQLite query filters by
+tenant — so a leaked token still cannot cross tenants at the data
+plane. ADR 0004 covers the multi-tenant model.
 
 ## How dispatch works (S2.1 wire-through)
 

@@ -451,6 +451,75 @@ paths:
           description: Referenced `card_id` does not exist on the active board.
         "405":
           description: Only POST is accepted.
+  /admin/mcp-tokens:
+    post:
+      summary: Issue an MCP bearer token (HMAC-signed, scoped, time-limited).
+      description: >
+        Operators POST here to mint signed bearer tokens that MCP clients
+        (Claude Code, Cursor, agent SDK scripts) present to `cmd/mcpd`.
+        Tokens are HMAC-SHA256-signed envelopes carrying iss/aud/sub/
+        tenant_id/scopes/iat/exp/jti. Signing keys live in
+        `MCP_SIGNING_KEYS` env (shared by cmd/server and mcpd); the
+        first key is the active signer, others are verifier-only for
+        rotation grace. Source: `cmd/server/admin_mcp_tokens.go`.
+
+        Gated by the same APP_API_TOKEN as the rest of /internal/*.
+        Unknown scope strings, missing subject, or absent
+        `MCP_SIGNING_KEYS` env all fail loud (400 / 503 respectively).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, scopes]
+              properties:
+                subject:
+                  type: string
+                  description: Caller identity (e.g. `agent:claude-code`).
+                tenant_id:
+                  type: string
+                  description: Tenant the token is bound to. Defaults to `default`.
+                scopes:
+                  type: array
+                  items: { type: string, enum: [board:read, card:write, runs:start] }
+                  description: Must be a non-empty subset of the known tool scopes.
+                ttl_seconds:
+                  type: integer
+                  description: Token lifetime in seconds. Defaults to 900 (15 min); max 86400 (24h).
+      responses:
+        "200":
+          description: Token issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expires_at, jti, subject, tenant_id, scopes]
+                properties:
+                  token:
+                    type: string
+                    description: Signed bearer to present as `Authorization: Bearer <token>`.
+                  expires_at:
+                    type: string
+                    format: date-time
+                  jti:
+                    type: string
+                    description: ULID, unique per issuance. Recorded by the verifier's replay tracker.
+                  subject:
+                    type: string
+                  tenant_id:
+                    type: string
+                  scopes:
+                    type: array
+                    items: { type: string }
+        "400":
+          description: Missing subject, unknown scope, or invalid TTL.
+        "401":
+          description: Bearer token required.
+        "405":
+          description: Only POST is accepted.
+        "503":
+          description: MCP_SIGNING_KEYS env not configured on this server.
   /internal/board/cards:
     get:
       summary: Read-side board snapshot for MCP HTTPBoardClient.

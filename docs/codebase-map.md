@@ -107,7 +107,7 @@ The mcpd binary wires:
 - `agent.RunStore` — `mocks.NewRunStore()`. cmd/mcpd does not persist runs durably; production deployments wire MCP runs back through cmd/server's SQLite store via the HTTP board client.
 - `agent.RunCoordinator` — `agent.NewSimpleRunCoordinator(runStore, nil)` (`cmd/mcpd/main.go:68`). See `internal/agent/simple_coordinator.go:24-54`.
 
-`MCPD_TOKEN` is the bearer the HTTP transport checks. `BOARD_TOKEN` is the bearer the HTTP board client sends to cmd/server. The mcpd binary refuses anonymous HTTP transport with a warning (`cmd/mcpd/main.go:46-48`) but does not hard-fail — Sprint 2.1 will replace this single-token gate with scoped per-agent tokens (`internal/mcp/auth.go:13-16`).
+`MCP_SIGNING_KEYS` is the symmetric secret (shared by cmd/server and mcpd) used to sign and verify MCP bearer tokens. cmd/server's `POST /admin/mcp-tokens` issues tokens with HMAC-SHA256 + ULID jti + scopes; cmd/mcpd's HTTP transport verifies them (alg pinned, jti replay-tracked). `BOARD_TOKEN` is the bearer the HTTP board client sends to cmd/server's `/internal/tools/dispatch` (equals `APP_API_TOKEN` in the standard deployment). The mcpd binary fails closed when `MCP_SIGNING_KEYS` is missing on the http transport (`cmd/mcpd/main.go`). The single-token gate was removed in #58.
 
 ---
 

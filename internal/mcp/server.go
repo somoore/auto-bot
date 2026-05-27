@@ -79,11 +79,27 @@ type ToolHandler func(ctx context.Context, params json.RawMessage) (any, error)
 
 // Server is the protocol layer. It owns a registry of tools and dispatches
 // JSON-RPC requests over both stdio and HTTP transports.
+//
+// Authentication model (S2.2 / #58):
+//
+//   - HTTP transport: every request must carry a Bearer token issued by
+//     cmd/server's POST /admin/mcp-tokens endpoint. Verifier resolves the
+//     token to Claims (subject, tenant, scopes, jti) and the dispatcher
+//     enforces per-tool scope requirements declared in ToolScopes.
+//   - Stdio transport: the client process is local; the OS process
+//     boundary is the trust boundary. StdioClaims provides the (subject,
+//     tenant, scopes) the server treats every stdio call as carrying.
+//     Operators configure it via the cmd/mcpd flag set; tests can mint
+//     an in-process Claims directly.
+//
+// Setting Verifier to nil disables HTTP auth — only appropriate for
+// tests; production cmd/mcpd refuses to serve HTTP without a Verifier.
 type Server struct {
-	mu        sync.RWMutex
-	tools     map[string]Tool
-	order     []string
-	AuthToken string
+	mu          sync.RWMutex
+	tools       map[string]Tool
+	order       []string
+	Verifier    *Verifier
+	StdioClaims Claims
 }
 
 // NewServer returns a Server with the supplied tools registered in order.
@@ -111,6 +127,26 @@ func (s *Server) Tools() []Tool {
 		out = append(out, s.tools[name])
 	}
 	return out
+}
+
+// claimsContextKey carries the verified Claims through context so tool
+// handlers (and any future middleware) can read the caller's identity
+// + scopes without an out-of-band channel.
+type claimsContextKey struct{}
+
+// WithClaims attaches claims to ctx. Used by HTTPHandler after a
+// successful Verify and by ServeStdio when StdioClaims is configured.
+func WithClaims(ctx context.Context, c Claims) context.Context {
+	return context.WithValue(ctx, claimsContextKey{}, c)
+}
+
+// ClaimsFromContext returns the claims attached by WithClaims, if any.
+// Tool handlers use this to read the caller's tenant + subject when
+// they need to scope their work; absent claims means an unauthenticated
+// path (test fixtures only).
+func ClaimsFromContext(ctx context.Context) (Claims, bool) {
+	c, ok := ctx.Value(claimsContextKey{}).(Claims)
+	return c, ok
 }
 
 // HandleRequest dispatches a single decoded request and returns the response.
@@ -182,6 +218,13 @@ type ToolCallContent struct {
 	Text string `json:"text"`
 }
 
+// ErrCodeForbidden is the JSON-RPC error code returned when a caller is
+// authenticated but lacks the scope a tool requires. -32001 sits in the
+// JSON-RPC 2.0 implementation-defined range (-32000 to -32099) per the
+// spec; we name it so clients can distinguish "you don't have permission"
+// from "tool not found" or "bad parameters".
+const ErrCodeForbidden = -32001
+
 func (s *Server) handleToolsCall(ctx context.Context, req Request) *Response {
 	if len(req.Params) == 0 {
 		return s.errorResponse(req.ID, ErrCodeInvalidParams, "tools/call requires params", nil)
@@ -201,6 +244,19 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) *Response {
 	}
 	if tool.Handler == nil {
 		return s.errorResponse(req.ID, ErrCodeInternal, fmt.Sprintf("tool %s has no handler", p.Name), nil)
+	}
+	// Centralized scope check. Tool authors declare requirements in
+	// ToolScopes (internal/mcp/scopes.go); the dispatcher enforces them
+	// here so individual handlers cannot forget. A tool absent from
+	// ToolScopes has no scope requirement.
+	if required, gated := ToolScopes[p.Name]; gated {
+		claims, present := ClaimsFromContext(ctx)
+		if !present {
+			return s.errorResponse(req.ID, ErrCodeForbidden, fmt.Sprintf("tool %s requires authentication", p.Name), nil)
+		}
+		if !claims.HasScope(required) {
+			return s.errorResponse(req.ID, ErrCodeForbidden, fmt.Sprintf("tool %s requires scope %q", p.Name, required), nil)
+		}
 	}
 	out, err := tool.Handler(ctx, p.Arguments)
 	if err != nil {
@@ -240,7 +296,14 @@ func (s *Server) errorResponse(id json.RawMessage, code int, message string, dat
 
 // ServeStdio reads newline-delimited JSON-RPC requests from r and writes
 // responses to w. Each request is its own line; ordering is preserved.
+// The trust boundary on stdio is the OS process boundary — operators
+// pre-configure StdioClaims on the Server to declare what scopes the
+// local caller holds. Without StdioClaims set, tool calls that require
+// any scope return -32001 Forbidden.
 func (s *Server) ServeStdio(ctx context.Context, r io.Reader, w io.Writer) error {
+	if s.StdioClaims.Subject != "" {
+		ctx = WithClaims(ctx, s.StdioClaims)
+	}
 	dec := json.NewDecoder(bufio.NewReader(r))
 	enc := json.NewEncoder(w)
 	for {
@@ -269,20 +332,34 @@ func (s *Server) ServeStdio(ctx context.Context, r io.Reader, w io.Writer) error
 }
 
 // HTTPHandler returns an http.Handler that serves JSON-RPC requests.
-// Bearer-token auth is enforced when s.AuthToken is non-empty.
+// A non-nil Verifier is required for the handler to admit requests —
+// the handler returns 503 on every call when Verifier is nil so a
+// missing-keys boot bug surfaces as service unavailable, not silent
+// anonymous access.
 func (s *Server) HTTPHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if s.AuthToken != "" {
-			if !checkBearer(r.Header.Get("Authorization"), s.AuthToken) {
-				w.Header().Set("WWW-Authenticate", "Bearer")
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
+		if s.Verifier == nil {
+			http.Error(w, "mcp http transport requires a Verifier", http.StatusServiceUnavailable)
+			return
 		}
+		token, ok := extractBearerToken(r.Header.Get("Authorization"))
+		if !ok {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="mcp"`)
+			http.Error(w, "unauthorized: bearer token required", http.StatusUnauthorized)
+			return
+		}
+		claims, err := s.Verifier.Verify(token)
+		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="mcp", error="invalid_token"`)
+			http.Error(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+		ctx := WithClaims(r.Context(), claims)
+		r = r.WithContext(ctx)
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil {
 			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)

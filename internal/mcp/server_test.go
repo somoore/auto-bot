@@ -183,9 +183,23 @@ func decodeResp(t *testing.T, raw []byte) Response {
 	return resp
 }
 
+// fullScopeClaims grants every tool scope. Used by tests that exercise
+// tools/call without focusing on scope enforcement — keeps them tight
+// while still exercising the dispatcher's scope check (no claims would
+// fail with -32001 Forbidden, which is correct production behavior).
+var fullScopeClaims = Claims{
+	Issuer:   tokenIssuer,
+	Audience: tokenAudMCP,
+	Subject:  "agent:test",
+	TenantID: "default",
+	Scopes:   AllToolScopes(),
+	JTI:      "test-jti",
+}
+
 func roundtrip(t *testing.T, s *Server, req Request) Response {
 	t.Helper()
-	r := s.HandleRequest(context.Background(), req)
+	ctx := WithClaims(context.Background(), fullScopeClaims)
+	r := s.HandleRequest(ctx, req)
 	if r == nil {
 		t.Fatalf("nil response for method %s", req.Method)
 	}
@@ -475,9 +489,28 @@ func TestCommentAppendsToCard(t *testing.T) {
 	}
 }
 
-func TestHTTPMissingBearerReturns401(t *testing.T) {
+// httpTestServerWithVerifier wires a Server with a Verifier minted from
+// the package test keys so the HTTP transport tests exercise the real
+// signing + scope-check path. A scopes slice of nil grants the full set.
+func httpTestServerWithVerifier(t *testing.T, scopes []string) (*Server, *Issuer, string) {
+	t.Helper()
 	s, _ := newTestServer(t)
-	s.AuthToken = "secret-token"
+	iss := newTestIssuer(t)
+	v := newTestVerifier(t)
+	s.Verifier = v
+	effective := scopes
+	if effective == nil {
+		effective = AllToolScopes()
+	}
+	token, _, err := iss.Issue("agent:test", "default", effective, time.Minute)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	return s, iss, token
+}
+
+func TestHTTPMissingBearerReturns401(t *testing.T) {
+	s, _, _ := httpTestServerWithVerifier(t, nil)
 	ts := httptest.NewServer(s.HTTPHandler())
 	defer ts.Close()
 
@@ -497,16 +530,15 @@ func TestHTTPMissingBearerReturns401(t *testing.T) {
 	}
 }
 
-func TestHTTPWithBearerSucceeds(t *testing.T) {
-	s, _ := newTestServer(t)
-	s.AuthToken = "secret-token"
+func TestHTTPWithSignedTokenSucceeds(t *testing.T) {
+	s, _, token := httpTestServerWithVerifier(t, nil)
 	ts := httptest.NewServer(s.HTTPHandler())
 	defer ts.Close()
 
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("http: %v", err)
@@ -521,6 +553,81 @@ func TestHTTPWithBearerSucceeds(t *testing.T) {
 	}
 	if decoded.Error != nil {
 		t.Errorf("unexpected jsonrpc error: %+v", decoded.Error)
+	}
+}
+
+func TestHTTPWithoutVerifierReturns503(t *testing.T) {
+	s, _ := newTestServer(t)
+	// Verifier intentionally left nil.
+	ts := httptest.NewServer(s.HTTPHandler())
+	defer ts.Close()
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer anything")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("http: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (verifier missing)", resp.StatusCode)
+	}
+}
+
+func TestHTTPInsufficientScopeReturnsForbidden(t *testing.T) {
+	// Issue a token that ONLY has board:read but call a card.create
+	// tool that requires card:write. The dispatcher should reject
+	// with -32001 Forbidden, not invoke the handler.
+	s, _, token := httpTestServerWithVerifier(t, []string{ScopeBoardRead})
+	ts := httptest.NewServer(s.HTTPHandler())
+	defer ts.Close()
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"card.create","arguments":{"title":"x"}}}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("http: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (JSON-RPC error envelope, not HTTP error)", resp.StatusCode)
+	}
+	var decoded Response
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if decoded.Error == nil {
+		t.Fatalf("expected jsonrpc error, got result: %+v", decoded.Result)
+	}
+	if decoded.Error.Code != ErrCodeForbidden {
+		t.Errorf("error code = %d, want %d (Forbidden)", decoded.Error.Code, ErrCodeForbidden)
+	}
+}
+
+func TestHTTPRejectsReplayedToken(t *testing.T) {
+	s, _, token := httpTestServerWithVerifier(t, nil)
+	ts := httptest.NewServer(s.HTTPHandler())
+	defer ts.Close()
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("http: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if i == 0 && resp.StatusCode != http.StatusOK {
+			t.Fatalf("first call status = %d, want 200", resp.StatusCode)
+		}
+		if i == 1 && resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("replay status = %d, want 401", resp.StatusCode)
+		}
 	}
 }
 
