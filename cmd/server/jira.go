@@ -1083,6 +1083,11 @@ func (syncer *jiraSyncer) RefreshFromJira(ctx context.Context, source string) er
 }
 
 func syncJiraToolCall(toolName string, rawArgs string, result map[string]any) (bool, error) {
+	if toolName == "confirm_action" {
+		if actions := confirmedActionResults(result); len(actions) > 0 {
+			return syncConfirmedJiraToolCalls(actions, result)
+		}
+	}
 	jiraRequired := jiraToolRequiresSync(toolName, rawArgs, result)
 	if jiraSync == nil {
 		return jiraRequired, nil
@@ -1115,6 +1120,128 @@ func syncJiraToolCall(toolName string, rawArgs string, result map[string]any) (b
 		return jiraRequired, err
 	}
 	return jiraRequired, nil
+}
+
+func syncConfirmedJiraToolCalls(actions []map[string]any, aggregate map[string]any) (bool, error) {
+	if len(actions) == 0 {
+		return false, nil
+	}
+
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if jiraSync != nil {
+		ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+	}
+
+	jiraRequired := false
+	var firstErr error
+	for _, action := range actions {
+		originalTool := asString(action["original_tool_name"])
+		originalArgs := asString(action["original_arguments_json"])
+		if originalTool == "" {
+			continue
+		}
+		actionRequiresJira := jiraToolRequiresSync(originalTool, originalArgs, action)
+		if !actionRequiresJira {
+			continue
+		}
+		jiraRequired = true
+
+		var syncErr error
+		if jiraSync != nil {
+			syncErr = jiraSync.ApplyToolCall(ctx, originalTool, originalArgs, action)
+			if syncErr != nil {
+				log.Errorf("Jira sync failed for %s: %v", originalTool, syncErr)
+				if jiraSync.board != nil {
+					if conflict := jiraSync.board.RecordJiraSyncFailure(originalTool, originalArgs, action, syncErr); conflict.ConflictID != "" {
+						broadcastKanbanEvent("conflict", conflict)
+						broadcastKanbanEvent("board", jiraSync.board.SnapshotState())
+					}
+				}
+			}
+		}
+		annotateJiraSyncResult(action, actionRequiresJira, syncErr)
+		if syncErr != nil && firstErr == nil {
+			firstErr = syncErr
+		}
+	}
+	annotateConfirmedJiraSyncResult(aggregate, actions, jiraRequired, firstErr)
+
+	// The aggregate result is already annotated per confirmed action, so the
+	// caller should not apply the single-action Jira annotation again.
+	return false, nil
+}
+
+func annotateConfirmedJiraSyncResult(aggregate map[string]any, actions []map[string]any, jiraRequired bool, syncErr error) {
+	if !jiraRequired || aggregate == nil {
+		return
+	}
+
+	confirmations := make([]externalActionConfirmation, 0, len(actions))
+	for _, action := range actions {
+		confirmations = append(confirmations, externalConfirmationsFromResult(action)...)
+	}
+	if len(confirmations) == 0 {
+		return
+	}
+
+	configured := true
+	ok := true
+	for _, confirmation := range confirmations {
+		if !confirmation.Required {
+			continue
+		}
+		if !confirmation.Configured {
+			configured = false
+		}
+		if !confirmation.OK {
+			ok = false
+		}
+	}
+
+	count := len(confirmations)
+	status := map[string]any{
+		"required":   true,
+		"configured": configured,
+		"ok":         ok,
+	}
+	aggregateConfirmation := externalActionConfirmation{
+		System:      "jira",
+		Operation:   "write-through",
+		Required:    true,
+		Configured:  configured,
+		OK:          ok,
+		ConfirmedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	switch {
+	case !configured:
+		status["message"] = fmt.Sprintf("Jira sync is not configured; only the local board changed for %d confirmed actions.", count)
+		aggregateConfirmation.Message = asString(status["message"])
+		aggregateConfirmation.Evidence = "No Jira client is configured for this process."
+		aggregate["assistant_instruction"] = "Do not say Jira was updated. Say the local meeting board changed, but Jira sync is not configured."
+	case syncErr != nil || !ok:
+		message := "The local board changed, but Jira write-through failed for one or more confirmed actions."
+		status["message"] = message
+		if syncErr != nil {
+			status["error"] = syncErr.Error()
+			aggregateConfirmation.Error = syncErr.Error()
+			aggregateConfirmation.Evidence = truncateString(syncErr.Error(), 500)
+		}
+		aggregateConfirmation.Message = message
+		aggregate["assistant_instruction"] = "Do not say Jira was fully updated. Say the local board changed, but at least one Jira write-through failed, and give the short error reason if present."
+	default:
+		status["message"] = fmt.Sprintf("Jira write-through confirmed for %d actions.", count)
+		aggregateConfirmation.Message = asString(status["message"])
+		aggregateConfirmation.Evidence = "Jira API returned success for each confirmed write."
+		aggregate["assistant_instruction"] = "You may say Jira accepted these updates."
+	}
+
+	aggregate["jira_sync"] = status
+	aggregate["external_confirmations"] = confirmations
+	aggregate["external_action_confirmed"] = aggregateConfirmation.OK
+	aggregate["external_action_status"] = externalActionStatus(aggregateConfirmation)
+	aggregate["api_confirmation_summary"] = aggregateConfirmation.Message
 }
 
 func annotateJiraSyncResult(result map[string]any, jiraRequired bool, syncErr error) {
@@ -1177,6 +1304,14 @@ func externalActionStatus(confirmation externalActionConfirmation) string {
 
 func jiraToolRequiresSync(toolName string, rawArgs string, result map[string]any) bool {
 	if toolName == "confirm_action" {
+		if actions := confirmedActionResults(result); len(actions) > 0 {
+			for _, action := range actions {
+				if jiraToolRequiresSync(asString(action["original_tool_name"]), asString(action["original_arguments_json"]), action) {
+					return true
+				}
+			}
+			return false
+		}
 		if originalTool := asString(result["original_tool_name"]); originalTool != "" {
 			return jiraToolRequiresSync(originalTool, asString(result["original_arguments_json"]), result)
 		}

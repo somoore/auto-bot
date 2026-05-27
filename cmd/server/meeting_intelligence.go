@@ -296,22 +296,64 @@ func confirmationPrompt(toolName string, args map[string]any) string {
 func (board *kanbanBoard) confirmPendingAction(args map[string]any, meta toolCallMeta) (map[string]any, bool, error) {
 	confirmationID := asString(args["confirmation_id"])
 	board.mu.Lock()
-	if confirmationID == "" {
-		confirmationID = board.latestPendingConfirmationIDLocked()
-	}
-	confirmation, ok := board.pendingConfirmations[confirmationID]
-	if ok {
-		delete(board.pendingConfirmations, confirmationID)
-	}
+	confirmations := board.takePendingConfirmationsLocked(confirmationID)
 	board.mu.Unlock()
-	if !ok {
+	if len(confirmations) == 0 {
 		return map[string]any{"ok": false, "error": "pending confirmation not found"}, false, nil
-	}
-	if expiresAt, err := time.Parse(time.RFC3339Nano, confirmation.ExpiresAt); err == nil && time.Now().UTC().After(expiresAt) {
-		return map[string]any{"ok": false, "error": "pending confirmation expired", "confirmation_id": confirmationID}, false, nil
 	}
 
 	meta = normalizeToolCallMeta(meta)
+	if confirmationID != "" || len(confirmations) == 1 {
+		return board.executePendingConfirmation(confirmations[0], meta)
+	}
+
+	actions := make([]any, 0, len(confirmations))
+	confirmedIDs := make([]string, 0, len(confirmations))
+	expiredIDs := make([]string, 0)
+	changedAny := false
+	var firstErr error
+	for _, confirmation := range confirmations {
+		result, changed, err := board.executePendingConfirmation(confirmation, meta)
+		if result == nil {
+			result = map[string]any{}
+		}
+		result["changed"] = changed
+		actions = append(actions, result)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if asBool(result["confirmed"]) {
+			confirmedIDs = append(confirmedIDs, confirmation.ConfirmationID)
+		}
+		if asString(result["error"]) == "pending confirmation expired" {
+			expiredIDs = append(expiredIDs, confirmation.ConfirmationID)
+		}
+		changedAny = changedAny || changed
+	}
+
+	result := map[string]any{
+		"ok":                firstErr == nil && len(confirmedIDs) > 0,
+		"confirmed":         len(confirmedIDs) > 0,
+		"confirmed_count":   len(confirmedIDs),
+		"confirmation_ids":  confirmedIDs,
+		"confirmed_actions": actions,
+		"summary":           fmt.Sprintf("Confirmed %d pending actions.", len(confirmedIDs)),
+	}
+	if len(expiredIDs) > 0 {
+		result["expired_confirmation_ids"] = expiredIDs
+	}
+	if firstErr != nil {
+		result["ok"] = false
+		result["error"] = "one or more pending confirmations failed: " + firstErr.Error()
+	}
+	return result, changedAny, nil
+}
+
+func (board *kanbanBoard) executePendingConfirmation(confirmation pendingConfirmation, meta toolCallMeta) (map[string]any, bool, error) {
+	if expiresAt, err := time.Parse(time.RFC3339Nano, confirmation.ExpiresAt); err == nil && time.Now().UTC().After(expiresAt) {
+		return map[string]any{"ok": false, "error": "pending confirmation expired", "confirmation_id": confirmation.ConfirmationID}, false, nil
+	}
+
 	result, changed, err := board.applyToolCallWithConfirmationBypass(confirmation.ToolName, confirmation.Arguments, meta, confirmation.ConfirmationID)
 	if result == nil {
 		result = map[string]any{}
@@ -327,19 +369,32 @@ func (board *kanbanBoard) confirmPendingAction(args map[string]any, meta toolCal
 func (board *kanbanBoard) cancelPendingConfirmation(args map[string]any) (map[string]any, bool, error) {
 	confirmationID := asString(args["confirmation_id"])
 	board.mu.Lock()
-	if confirmationID == "" {
-		confirmationID = board.latestPendingConfirmationIDLocked()
-	}
-	confirmation, ok := board.pendingConfirmations[confirmationID]
-	if ok {
-		delete(board.pendingConfirmations, confirmationID)
-	}
+	confirmations := board.takePendingConfirmationsLocked(confirmationID)
 	board.mu.Unlock()
-	if !ok {
+	if len(confirmations) == 0 {
 		return map[string]any{"ok": false, "error": "pending confirmation not found"}, false, nil
 	}
-	broadcastKanbanEventForBoard(board.boardID, "confirmation_cancelled", pendingConfirmationToView(confirmation))
-	return map[string]any{"ok": true, "cancelled": true, "confirmation_id": confirmationID}, false, nil
+	cancelledIDs := make([]string, 0, len(confirmations))
+	cancelled := make([]any, 0, len(confirmations))
+	for _, confirmation := range confirmations {
+		broadcastKanbanEventForBoard(board.boardID, "confirmation_cancelled", pendingConfirmationToView(confirmation))
+		cancelledIDs = append(cancelledIDs, confirmation.ConfirmationID)
+		cancelled = append(cancelled, map[string]any{
+			"confirmation_id": confirmation.ConfirmationID,
+			"tool_name":       confirmation.ToolName,
+			"risk_level":      confirmation.RiskLevel,
+		})
+	}
+	if confirmationID != "" || len(confirmations) == 1 {
+		return map[string]any{"ok": true, "cancelled": true, "confirmation_id": confirmations[0].ConfirmationID}, false, nil
+	}
+	return map[string]any{
+		"ok":                      true,
+		"cancelled":               true,
+		"cancelled_count":         len(cancelledIDs),
+		"confirmation_ids":        cancelledIDs,
+		"cancelled_confirmations": cancelled,
+	}, false, nil
 }
 
 func (board *kanbanBoard) listPendingConfirmations() (map[string]any, bool, error) {
@@ -351,14 +406,49 @@ func (board *kanbanBoard) listPendingConfirmations() (map[string]any, bool, erro
 	}, false, nil
 }
 
-func (board *kanbanBoard) latestPendingConfirmationIDLocked() string {
-	var latest pendingConfirmation
-	for _, confirmation := range board.pendingConfirmations {
-		if latest.ConfirmationID == "" || confirmation.CreatedAt > latest.CreatedAt {
-			latest = confirmation
+func (board *kanbanBoard) takePendingConfirmationsLocked(confirmationID string) []pendingConfirmation {
+	if confirmationID != "" {
+		confirmation, ok := board.pendingConfirmations[confirmationID]
+		if !ok {
+			return nil
 		}
+		delete(board.pendingConfirmations, confirmationID)
+		return []pendingConfirmation{confirmation}
 	}
-	return latest.ConfirmationID
+
+	confirmations := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
+	for id, confirmation := range board.pendingConfirmations {
+		delete(board.pendingConfirmations, id)
+		confirmations = append(confirmations, confirmation)
+	}
+	sort.Slice(confirmations, func(i, j int) bool {
+		return confirmations[i].CreatedAt < confirmations[j].CreatedAt
+	})
+	return confirmations
+}
+
+func confirmedActionResults(result map[string]any) []map[string]any {
+	if result == nil {
+		return nil
+	}
+	raw, ok := result["confirmed_actions"]
+	if !ok {
+		return nil
+	}
+	switch typed := raw.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		actions := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if action, ok := item.(map[string]any); ok {
+				actions = append(actions, action)
+			}
+		}
+		return actions
+	default:
+		return nil
+	}
 }
 
 func (board *kanbanBoard) applyToolCallWithConfirmationBypass(toolName string, args map[string]any, meta toolCallMeta, confirmationID string) (map[string]any, bool, error) {
@@ -412,6 +502,9 @@ func (board *kanbanBoard) recordMutation(toolName string, args map[string]any, r
 func (board *kanbanBoard) attachExternalConfirmationsToMutation(result map[string]any) {
 	if board == nil || result == nil {
 		return
+	}
+	for _, action := range confirmedActionResults(result) {
+		board.attachExternalConfirmationsToMutation(action)
 	}
 	confirmations := externalConfirmationsFromResult(result)
 	if len(confirmations) == 0 {

@@ -203,6 +203,148 @@ func TestRiskyVoiceToolsRequireConfirmationAndCanBeConfirmed(t *testing.T) {
 	}
 }
 
+func TestRiskyVoiceToolsConfirmMultiplePendingActionsWithSingleYes(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS pentest","notes":"Contact dev team","tags":["security"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	if _, changed, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`","account_id":"account-123","display_name":"Scott Moore"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("assign_ticket returned error: %v", err)
+	} else if changed {
+		t.Fatal("assign_ticket should wait for confirmation")
+	}
+	if _, changed, err := board.ApplyToolCallWithMeta("set_eta", `{"card_id":"`+card.ID+`","eta":"2026-05-28"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("set_eta returned error: %v", err)
+	} else if changed {
+		t.Fatal("set_eta should wait for confirmation")
+	}
+	if pending := board.SnapshotState().PendingConfirmations; len(pending) != 2 {
+		t.Fatalf("pending confirmations = %d, want 2", len(pending))
+	}
+
+	result, changed, err := board.ApplyToolCallWithMeta("confirm_action", `{}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("confirm_action should execute the pending mutations")
+	}
+	if got, _ := result["confirmed_count"].(int); got != 2 {
+		t.Fatalf("confirmed_count = %d, want 2; result = %#v", got, result)
+	}
+	if actions := confirmedActionResults(result); len(actions) != 2 {
+		t.Fatalf("confirmed actions = %d, want 2", len(actions))
+	}
+
+	state := board.SnapshotState()
+	if len(state.PendingConfirmations) != 0 {
+		t.Fatalf("pending confirmations = %d, want 0", len(state.PendingConfirmations))
+	}
+	updated := findBoardTestCard(t, state.Cards, card.ID)
+	if updated.Assignee == nil || updated.Assignee.DisplayName != "Scott Moore" {
+		t.Fatalf("Assignee = %+v, want Scott Moore", updated.Assignee)
+	}
+	if updated.DueDate != "2026-05-28" {
+		t.Fatalf("DueDate = %q, want 2026-05-28", updated.DueDate)
+	}
+}
+
+func TestRiskyVoiceToolsCancelMultiplePendingActionsWithSingleNo(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS pentest","notes":"Contact dev team","tags":["security"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	if _, _, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`","account_id":"account-123","display_name":"Scott Moore"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("assign_ticket returned error: %v", err)
+	}
+	if _, _, err := board.ApplyToolCallWithMeta("set_eta", `{"card_id":"`+card.ID+`","eta":"2026-05-28"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("set_eta returned error: %v", err)
+	}
+	if pending := board.SnapshotState().PendingConfirmations; len(pending) != 2 {
+		t.Fatalf("pending confirmations = %d, want 2", len(pending))
+	}
+
+	result, changed, err := board.ApplyToolCallWithMeta("cancel_confirmation", `{}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("cancel_confirmation returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("cancel_confirmation should not mutate cards")
+	}
+	if got, _ := result["cancelled_count"].(int); got != 2 {
+		t.Fatalf("cancelled_count = %d, want 2; result = %#v", got, result)
+	}
+
+	state := board.SnapshotState()
+	if len(state.PendingConfirmations) != 0 {
+		t.Fatalf("pending confirmations = %d, want 0", len(state.PendingConfirmations))
+	}
+	updated := findBoardTestCard(t, state.Cards, card.ID)
+	if updated.Assignee != nil {
+		t.Fatalf("Assignee = %+v, want nil", updated.Assignee)
+	}
+	if updated.DueDate != "" {
+		t.Fatalf("DueDate = %q, want empty", updated.DueDate)
+	}
+}
+
+func TestMultiConfirmationJiraSyncAnnotatesEachConfirmedMutation(t *testing.T) {
+	previous := jiraSync
+	t.Cleanup(func() { jiraSync = previous })
+	jiraSync = nil
+
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS pentest","notes":"Contact dev team","tags":["security"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+	if _, _, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`","account_id":"account-123","display_name":"Scott Moore"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("assign_ticket returned error: %v", err)
+	}
+	if _, _, err := board.ApplyToolCallWithMeta("set_eta", `{"card_id":"`+card.ID+`","eta":"2026-05-28"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("set_eta returned error: %v", err)
+	}
+
+	result, changed, err := board.ApplyToolCallWithMeta("confirm_action", `{}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("confirm_action should execute pending mutations")
+	}
+	jiraRequired, syncErr := syncJiraToolCall("confirm_action", `{}`, result)
+	annotateJiraSyncResult(result, jiraRequired, syncErr)
+	board.attachExternalConfirmationsToMutation(result)
+
+	if status := asString(result["external_action_status"]); status != "api_not_configured" {
+		t.Fatalf("external_action_status = %q, want api_not_configured", status)
+	}
+	actions := confirmedActionResults(result)
+	if len(actions) != 2 {
+		t.Fatalf("confirmed actions = %d, want 2", len(actions))
+	}
+	for _, action := range actions {
+		if status := asString(action["external_action_status"]); status != "api_not_configured" {
+			t.Fatalf("child external_action_status = %q, want api_not_configured", status)
+		}
+		eventID := asString(action["audit_event_id"])
+		replay, _, err := board.ApplyToolCall("replay_audit_event", `{"event_id":"`+eventID+`"}`)
+		if err != nil {
+			t.Fatalf("replay_audit_event returned error: %v", err)
+		}
+		if replay["api_status"] != "api_not_configured" {
+			t.Fatalf("replay api_status = %v, want api_not_configured", replay["api_status"])
+		}
+	}
+}
+
 func TestAssignTicketToAgentCreatesPersistentRunState(t *testing.T) {
 	previousOrchestrator := agentOrchestrator
 	agentOrchestrator = nil
