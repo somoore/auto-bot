@@ -303,7 +303,7 @@ func (board *kanbanBoard) confirmPendingAction(args map[string]any, meta toolCal
 	}
 
 	meta = normalizeToolCallMeta(meta)
-	if confirmationID != "" || len(confirmations) == 1 {
+	if len(confirmations) == 1 {
 		return board.executePendingConfirmation(confirmations[0], meta)
 	}
 
@@ -385,7 +385,7 @@ func (board *kanbanBoard) cancelPendingConfirmation(args map[string]any) (map[st
 			"risk_level":      confirmation.RiskLevel,
 		})
 	}
-	if confirmationID != "" || len(confirmations) == 1 {
+	if len(confirmations) == 1 {
 		return map[string]any{"ok": true, "cancelled": true, "confirmation_id": confirmations[0].ConfirmationID}, false, nil
 	}
 	return map[string]any{
@@ -407,15 +407,46 @@ func (board *kanbanBoard) listPendingConfirmations() (map[string]any, bool, erro
 }
 
 func (board *kanbanBoard) takePendingConfirmationsLocked(confirmationID string) []pendingConfirmation {
+	confirmationID = strings.TrimSpace(confirmationID)
 	if confirmationID != "" {
 		confirmation, ok := board.pendingConfirmations[confirmationID]
-		if !ok {
-			return nil
+		if ok {
+			delete(board.pendingConfirmations, confirmationID)
+			return []pendingConfirmation{confirmation}
 		}
-		delete(board.pendingConfirmations, confirmationID)
-		return []pendingConfirmation{confirmation}
+		if confirmations := board.takePendingConfirmationsByReferenceLocked(confirmationID); len(confirmations) > 0 {
+			return confirmations
+		}
+		if confirmationReferenceMeansAll(confirmationID) {
+			return board.takeAllPendingConfirmationsLocked()
+		}
+		return nil
 	}
 
+	return board.takeAllPendingConfirmationsLocked()
+}
+
+func (board *kanbanBoard) takePendingConfirmationsByReferenceLocked(reference string) []pendingConfirmation {
+	normalizedReference := strings.ToLower(strings.TrimSpace(reference))
+	confirmations := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
+	for id, confirmation := range board.pendingConfirmations {
+		if strings.Contains(normalizedReference, strings.ToLower(id)) {
+			confirmations = append(confirmations, confirmation)
+		}
+	}
+	if len(confirmations) == 0 {
+		return nil
+	}
+	for _, confirmation := range confirmations {
+		delete(board.pendingConfirmations, confirmation.ConfirmationID)
+	}
+	sort.Slice(confirmations, func(i, j int) bool {
+		return confirmations[i].CreatedAt < confirmations[j].CreatedAt
+	})
+	return confirmations
+}
+
+func (board *kanbanBoard) takeAllPendingConfirmationsLocked() []pendingConfirmation {
 	confirmations := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
 	for id, confirmation := range board.pendingConfirmations {
 		delete(board.pendingConfirmations, id)
@@ -425,6 +456,61 @@ func (board *kanbanBoard) takePendingConfirmationsLocked(confirmationID string) 
 		return confirmations[i].CreatedAt < confirmations[j].CreatedAt
 	})
 	return confirmations
+}
+
+func confirmationReferenceMeansAll(reference string) bool {
+	raw := strings.ToLower(strings.TrimSpace(reference))
+	normalized := normalizeConfirmationReference(reference)
+	if normalized == "" {
+		return false
+	}
+	for _, blocker := range []string{"no", "not", "dont", "do not", "cancel", "except", "only"} {
+		if normalized == blocker || strings.Contains(normalized, " "+blocker+" ") || strings.HasPrefix(normalized, blocker+" ") || strings.HasSuffix(normalized, " "+blocker) {
+			return false
+		}
+	}
+	switch normalized {
+	case "all", "all actions", "all pending", "all pending actions",
+		"both", "both actions", "both of them", "the two", "two", "2",
+		"yes", "yes both", "yes to both", "yeah", "yep", "y", "ok", "okay",
+		"confirm", "confirmed", "confirm both", "i confirm", "i confirm both",
+		"them", "these", "those", "everything":
+		return true
+	default:
+		words := confirmationReferenceWords(normalized)
+		hasAggregateWord := words["both"] || words["all"] || words["everything"]
+		hasConfirmationWord := words["yes"] || words["yeah"] || words["yep"] || words["ok"] || words["okay"] || words["confirm"] || words["confirmed"]
+		if strings.Contains(raw, "confirm-") {
+			return hasAggregateWord
+		}
+		return hasAggregateWord || hasConfirmationWord
+	}
+}
+
+func normalizeConfirmationReference(reference string) string {
+	replacer := strings.NewReplacer(
+		"_", " ",
+		"-", " ",
+		",", " ",
+		".", " ",
+		"!", " ",
+		"?", " ",
+		":", " ",
+		";", " ",
+		"/", " ",
+		"\\", " ",
+		"\"", "",
+		"'", "",
+	)
+	return strings.Join(strings.Fields(strings.ToLower(replacer.Replace(strings.TrimSpace(reference)))), " ")
+}
+
+func confirmationReferenceWords(normalized string) map[string]bool {
+	words := map[string]bool{}
+	for _, word := range strings.Fields(normalized) {
+		words[word] = true
+	}
+	return words
 }
 
 func confirmedActionResults(result map[string]any) []map[string]any {

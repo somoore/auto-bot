@@ -252,6 +252,44 @@ func TestRiskyVoiceToolsConfirmMultiplePendingActionsWithSingleYes(t *testing.T)
 	}
 }
 
+func TestRiskyVoiceToolsConfirmMultiplePendingActionsWithGenericBothID(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS rollout","notes":"Contact dev team","tags":["aws"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	if _, _, err := board.ApplyToolCallWithMeta("set_eta", `{"card_id":"`+card.ID+`","eta":"2026-05-28"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("set_eta returned error: %v", err)
+	}
+	if _, _, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`","account_id":"account-123","display_name":"Scott Moore"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("assign_ticket returned error: %v", err)
+	}
+	if pending := board.SnapshotState().PendingConfirmations; len(pending) != 2 {
+		t.Fatalf("pending confirmations = %d, want 2", len(pending))
+	}
+
+	result, changed, err := board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"yes to both"}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("confirm_action should execute the pending mutations")
+	}
+	if got, _ := result["confirmed_count"].(int); got != 2 {
+		t.Fatalf("confirmed_count = %d, want 2; result = %#v", got, result)
+	}
+
+	updated := findBoardTestCard(t, board.SnapshotState().Cards, card.ID)
+	if updated.Assignee == nil || updated.Assignee.DisplayName != "Scott Moore" {
+		t.Fatalf("Assignee = %+v, want Scott Moore", updated.Assignee)
+	}
+	if updated.DueDate != "2026-05-28" {
+		t.Fatalf("DueDate = %q, want 2026-05-28", updated.DueDate)
+	}
+}
+
 func TestRiskyVoiceToolsCancelMultiplePendingActionsWithSingleNo(t *testing.T) {
 	board := newKanbanBoard()
 	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS pentest","notes":"Contact dev team","tags":["security"],"status":"Backlog"}`)
