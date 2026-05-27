@@ -13,6 +13,11 @@ import {
   type MeetingReport,
 } from "./components/PostMeetingSummary"
 import {
+  MeetingOverlay,
+  SAMPLE_MEETING,
+  type MeetingState,
+} from "./components/MeetingOverlay"
+import {
   CARD_STATUSES,
   type AgentRunView,
   type Card,
@@ -22,6 +27,9 @@ import {
 const URL_PARAM_CARD = "card"
 const URL_PARAM_AGENDA = "agenda"
 const URL_PARAM_MEETING = "meeting"
+// ?meeting=active mounts the live meeting overlay (D2.1). Any other
+// non-empty value is treated as a post-meeting summary id (D2.6).
+const MEETING_PARAM_ACTIVE = "active"
 
 // TODO(standup): once GET /internal/standup/agenda lands (internal/standup
 // Sprint 4) this should fetch live data — yesterday's runs, open blockers,
@@ -117,9 +125,12 @@ function App(): JSX.Element {
     readCardParam(),
   )
   const [agendaOpen, setAgendaOpen] = useState<boolean>(() => readAgendaParam())
-  const [meetingId, setMeetingId] = useState<string | null>(() =>
-    readMeetingParam(),
-  )
+  const [meetingId, setMeetingId] = useState<string | null>(() => {
+    const v = readMeetingParam()
+    // Live-meeting marker is handled by activeMeeting below; only treat
+    // other non-empty values as a post-meeting summary id.
+    return v && v !== MEETING_PARAM_ACTIVE ? v : null
+  })
 
   const openAgenda = useCallback((): void => {
     setAgendaOpen(true)
@@ -140,6 +151,15 @@ function App(): JSX.Element {
     clearMeetingParam()
   }, [])
 
+  // activeMeeting drives the MeetingOverlay mount when ?meeting=active.
+  // Any other ?meeting=<id> value mounts the PostMeetingSummary (handled
+  // by meetingId state above). Once useBoardSocket carries a real
+  // MeetingState, this derivation should swap to state.board.meeting.
+  // TODO(meeting): plumb real meeting payload from useBoardSocket.
+  const [activeMeeting, setActiveMeeting] = useState<MeetingState | null>(() =>
+    readMeetingParam() === MEETING_PARAM_ACTIVE ? SAMPLE_MEETING : null,
+  )
+
   const openCard = useCallback((cardId: string): void => {
     setSelectedCardId(cardId)
     pushCardParam(cardId)
@@ -154,7 +174,9 @@ function App(): JSX.Element {
     const onPop = (): void => {
       setSelectedCardId(readCardParam())
       setAgendaOpen(readAgendaParam())
-      setMeetingId(readMeetingParam())
+      const m = readMeetingParam()
+      setActiveMeeting(m === MEETING_PARAM_ACTIVE ? SAMPLE_MEETING : null)
+      setMeetingId(m && m !== MEETING_PARAM_ACTIVE ? m : null)
     }
     window.addEventListener("popstate", onPop)
     return (): void => window.removeEventListener("popstate", onPop)
@@ -254,6 +276,20 @@ function App(): JSX.Element {
           onStart={startAgenda}
           onSkip={closeAgenda}
           onClose={closeAgenda}
+        />
+      ) : null}
+      {activeMeeting ? (
+        <MeetingOverlay
+          meeting={activeMeeting}
+          onLeave={(): void => {
+            setActiveMeeting(null)
+            clearMeetingParam()
+          }}
+          onMicToggle={(): void => undefined}
+          onVideoToggle={(): void => undefined}
+          onConfirmBoard={(): void => undefined}
+          onSendMessage={(): void => undefined}
+          onUndoLastMove={(): void => undefined}
         />
       ) : null}
     </div>
