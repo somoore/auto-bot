@@ -16,7 +16,7 @@ Category: **agent-native work surface.** Not a kanban (the Run object and projec
 
 - **Voice standup writes the board.** Speak in the LiveKit room; cards move, comments append, follow-up cards get created. The Nova Sonic scrum-master agent receives a pre-meeting agenda assembled from the live board state (`internal/standup/agenda.go`) and the closer (`internal/standup/closer.go`) drops follow-ups when the meeting ends.
 - **Agents pick up cards and pause for input.** A Run is a durable, checkpointed unit of agent work bound to a card (`internal/agent/run.go`, `agent_runs` + `run_checkpoints` SQLite tables). When the agent needs a decision it writes a `RunQuestion` (`run_questions` table); the React card drawer surfaces it with suggested-answer chips; answering resumes the run on the same checkpoint.
-- **MCP-driven coding agents update their own cards.** Claude Code / Cursor / `claude-agent-sdk` connect to `cmd/mcpd` and call `board.list_cards`, `card.create`, `card.comment`, etc. Every call HTTP-dispatches through `cmd/server`'s `/internal/tools/dispatch` route so the ActionLedger, risk gate, and trust ceremony apply identically to voice, UI, and MCP callers.
+- **MCP-driven coding agents update their own cards.** Claude Code / Cursor / `claude-agent-sdk` connect to `cmd/mcpd` and call `board.list_cards`, `card.create`, `card.comment`, etc. Every call HTTP-dispatches through `cmd/server`'s `/internal/tools/dispatch` route so the audit log (`action_replay_events`), risk gate, and trust ceremony apply identically to voice, UI, and MCP callers.
 
 ## Architecture at a glance
 
@@ -49,7 +49,7 @@ Category: **agent-native work surface.** Not a kanban (the Run object and projec
 | `internal/intake`                      | Async intake parser + Slack adapter; folds into the next standup.             |
 | `internal/mcp`                         | MCP server core, `BoardClient` interface, `HTTPBoardClient` dispatcher.       |
 | `internal/meetings`                    | Voice meeting domain types.                                                   |
-| `internal/core`                        | Stable extension contracts: `Connector`, `VoiceProvider`, `ModelProvider`, `ActionLedger`. |
+| `internal/core`                        | Stable extension contracts: `Connector`, `VoiceProvider`, `ModelProvider`. |
 | `internal/core/contracttest`           | Shared contract-test helpers.                                                 |
 | `internal/projection/contracttest`     | Projection contract harness.                                                  |
 | `internal/mocks`                       | Credential-free fakes for tests and the MCP smoke binary.                     |
@@ -63,7 +63,7 @@ Full system tour: [docs/architecture.md](docs/architecture.md).
 ```bash
 git clone https://github.com/somoore/auto-bot
 cd auto-bot
-APP_API_TOKEN=dev MCPD_TOKEN=dev docker compose up -d
+APP_API_TOKEN=dev MCP_SIGNING_KEYS="k1:$(openssl rand -base64 32)" docker compose up -d
 # wait ~15 seconds for the Go server to come up
 open http://localhost:3001/app/
 ```
@@ -82,7 +82,17 @@ curl -s -H "Authorization: Bearer dev" http://localhost:3001/observability/statu
 
 ## MCP integration
 
-Point any MCP client at the running mcpd. The HTTP transport requires a bearer token; the stdio transport is unauthenticated and assumes the parent process tree is the perimeter (see [docs/api/mcp-tools.md](docs/api/mcp-tools.md#authentication)).
+Point any MCP client at the running mcpd. The HTTP transport requires a **signed bearer token** issued by `cmd/server`'s `POST /admin/mcp-tokens` endpoint (HMAC-SHA256, scopes, ~15-minute default expiry, jti replay defense). The stdio transport is unauthenticated and assumes the parent process tree is the perimeter; the scopes the local caller gets are configured via `MCPD_STDIO_SCOPES`. See [docs/api/mcp-tools.md](docs/api/mcp-tools.md#authentication) for the full token model.
+
+Mint a token for Claude Code:
+
+```bash
+curl -s -X POST http://localhost:3001/admin/mcp-tokens \
+  -H "Authorization: Bearer dev" \
+  -H "Content-Type: application/json" \
+  -d '{"subject":"agent:claude-code","scopes":["board:read","card:write","runs:start"],"ttl_seconds":3600}' \
+  | jq -r '.token'
+```
 
 Claude Code (`~/.claude/mcp.json`):
 
@@ -92,7 +102,7 @@ Claude Code (`~/.claude/mcp.json`):
     "auto-bot": {
       "transport": "http",
       "url": "http://localhost:4000",
-      "headers": { "Authorization": "Bearer dev" }
+      "headers": { "Authorization": "Bearer <signed-token-from-curl-above>" }
     }
   }
 }
@@ -105,7 +115,7 @@ Cursor (`.cursor/mcp.json` or settings UI):
   "mcpServers": {
     "auto-bot": {
       "url": "http://localhost:4000",
-      "headers": { "Authorization": "Bearer dev" }
+      "headers": { "Authorization": "Bearer <signed-token-from-curl-above>" }
     }
   }
 }
@@ -153,7 +163,7 @@ The product is opinionated about not lying to humans about what was done to thei
 - **Dry-run staging.** Medium- and high-risk mutations land in `pending_actions` first; the UI shows a diff preview before they commit (`cmd/server/pending_actions.go`, `cmd/server/diff_preview.go`, `web/app/src/components/DryRunQueue.tsx`).
 - **Undo.** Every mutation routes through `core.Connector.Undo`; the Card drawer's history tab surfaces an undo button on the most recent change.
 - **Pause-all kill switch.** A per-tenant `tenant_settings.agents_paused` flag rejects new Run starts with `agent.ErrAgentsPaused` (`internal/agent/store.go:34`); the pill is a visible UI control (`web/app/src/components/PauseAllPill.tsx`).
-- **ActionLedger audit.** Voice / UI / MCP mutations all record `ActionIntent` to `ToolCallRecord` to `ExternalConfirmation` in the same ledger (`internal/core/ledger.go`); `action_replay_events` persists this in SQLite for restart-survivable replay.
+- **Audit log.** Voice / UI / MCP mutations all flow through `ApplyToolCallWithMeta`, which writes a `boardEventRecord` to the `action_replay_events` SQLite table for restart-survivable replay (`cmd/server/board_store.go`).
 
 Architectural rationale: [docs/adrs/0001-core-extension-boundaries.md](docs/adrs/0001-core-extension-boundaries.md), [0002](docs/adrs/0002-canonical-board-with-external-projections.md), [0003](docs/adrs/0003-mcp-server-as-universal-external-surface.md), [0004](docs/adrs/0004-multi-tenant-model.md).
 

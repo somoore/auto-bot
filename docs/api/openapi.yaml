@@ -365,7 +365,7 @@ paths:
   # ─── S2.1 internal RPC surface ──────────────────────────────────────
   # cmd/mcpd (and any future tenant-side dispatcher) posts here so MCP
   # tool calls route through the canonical ApplyToolCall path —
-  # ActionLedger, risk classification, and confirmation gates fire
+  # the audit log, risk classification, and confirmation gates fire
   # uniformly with voice and UI callers.
   # Routes: `cmd/server/main.go:238` (`/internal/tools/dispatch`) and
   # `:239`–`:240` (`/internal/board/cards` + trailing-slash variant).
@@ -376,12 +376,13 @@ paths:
         Accepts an MCP tool name + arguments and translates them to the
         cmd/server internal tool names before invoking
         `ApplyToolCallWithMeta`. Supported `tool` values today are
-        `card.create`, `card.update`, and `card.comment`; read-side tools
-        (`board.list_cards`, `board.get_card`) go through
-        `GET /internal/board/cards` instead, not through this dispatch
-        endpoint. Source: `cmd/server/internal_dispatch.go:36`
-        (`internalToolsDispatchHandler`); the dispatcher tool-name switch
-        is at `cmd/server/internal_dispatch.go:70`-`:79`. Unknown tool
+        `card.create`, `card.update`, `card.comment`, and `runs.start`;
+        read-side tools (`board.list_cards`, `board.get_card`) go
+        through `GET /internal/board/cards` instead, not through this
+        dispatch endpoint. Source:
+        `cmd/server/internal_dispatch.go:36`
+        (`internalToolsDispatchHandler`); the dispatcher tool-name
+        switch is in `cmd/server/internal_dispatch.go`. Unknown tool
         names return 400 with `{"error":"unknown tool \"<name>\""}`.
 
 
@@ -399,7 +400,7 @@ paths:
               properties:
                 tool:
                   type: string
-                  description: MCP tool name (`card.create` / `card.update` / `card.comment`).
+                  description: MCP tool name (`card.create` / `card.update` / `card.comment` / `runs.start`).
                 args:
                   description: MCP-shaped arguments for the tool. Schema varies by tool.
                   type: object
@@ -420,8 +421,10 @@ paths:
           description: >
             Tool dispatched. Body shape varies by tool: `card.create` and
             `card.update` return `{card_id?, card}`; `card.comment`
-            returns `{card_id, comment}`. When dry-run staging engages,
-            the body matches `RequiresApprovalEnvelope` (see schema).
+            returns `{card_id, comment}`; `runs.start` returns
+            `{run_id, status, agent_profile, card_id}` on immediate
+            start. When dry-run staging engages, the body matches
+            `RequiresApprovalEnvelope` (see schema).
           content:
             application/json:
               schema:
@@ -429,6 +432,17 @@ paths:
                   - $ref: "#/components/schemas/DispatchCardResult"
                   - $ref: "#/components/schemas/DispatchCommentResult"
                   - $ref: "#/components/schemas/RequiresApprovalEnvelope"
+        "202":
+          description: >
+            Medium-risk tool (e.g. `runs.start` → `assign_ticket_to_agent`)
+            queued a pending confirmation in the Trust Ceremony rather
+            than applying immediately. Body carries the confirmation
+            envelope; the operator approves it from the Dry-Run Queue
+            UI or `/admin/pending-actions`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequiresApprovalEnvelope"
         "400":
           description: Body could not be decoded, required field missing, or `tool` is unknown.
         "401":
@@ -437,6 +451,75 @@ paths:
           description: Referenced `card_id` does not exist on the active board.
         "405":
           description: Only POST is accepted.
+  /admin/mcp-tokens:
+    post:
+      summary: Issue an MCP bearer token (HMAC-signed, scoped, time-limited).
+      description: >
+        Operators POST here to mint signed bearer tokens that MCP clients
+        (Claude Code, Cursor, agent SDK scripts) present to `cmd/mcpd`.
+        Tokens are HMAC-SHA256-signed envelopes carrying iss/aud/sub/
+        tenant_id/scopes/iat/exp/jti. Signing keys live in
+        `MCP_SIGNING_KEYS` env (shared by cmd/server and mcpd); the
+        first key is the active signer, others are verifier-only for
+        rotation grace. Source: `cmd/server/admin_mcp_tokens.go`.
+
+        Gated by the same APP_API_TOKEN as the rest of /internal/*.
+        Unknown scope strings, missing subject, or absent
+        `MCP_SIGNING_KEYS` env all fail loud (400 / 503 respectively).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, scopes]
+              properties:
+                subject:
+                  type: string
+                  description: Caller identity (e.g. `agent:claude-code`).
+                tenant_id:
+                  type: string
+                  description: Tenant the token is bound to. Defaults to `default`.
+                scopes:
+                  type: array
+                  items: { type: string, enum: [board:read, card:write, runs:start] }
+                  description: Must be a non-empty subset of the known tool scopes.
+                ttl_seconds:
+                  type: integer
+                  description: Token lifetime in seconds. Defaults to 900 (15 min); max 86400 (24h).
+      responses:
+        "200":
+          description: Token issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expires_at, jti, subject, tenant_id, scopes]
+                properties:
+                  token:
+                    type: string
+                    description: Signed bearer to present as `Authorization: Bearer <token>`.
+                  expires_at:
+                    type: string
+                    format: date-time
+                  jti:
+                    type: string
+                    description: ULID, unique per issuance. Recorded by the verifier's replay tracker.
+                  subject:
+                    type: string
+                  tenant_id:
+                    type: string
+                  scopes:
+                    type: array
+                    items: { type: string }
+        "400":
+          description: Missing subject, unknown scope, or invalid TTL.
+        "401":
+          description: Bearer token required.
+        "405":
+          description: Only POST is accepted.
+        "503":
+          description: MCP_SIGNING_KEYS env not configured on this server.
   /internal/board/cards:
     get:
       summary: Read-side board snapshot for MCP HTTPBoardClient.

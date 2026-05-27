@@ -9,7 +9,14 @@
     @apply h-full;
   }
   body {
-    @apply bg-void text-star antialiased;
+    @apply bg-void text-star font-sans antialiased;
+    font-feature-settings: "ss01", "ss02", "cv11";
+  }
+  code,
+  kbd,
+  pre,
+  samp {
+    @apply font-mono;
   }
   *::selection {
     @apply bg-comet/30 text-star;

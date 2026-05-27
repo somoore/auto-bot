@@ -29,11 +29,13 @@ If any check fails, fix the underlying configuration before continuing.
 ## 1. Setup
 
 ```bash
-APP_API_TOKEN=dev MCPD_TOKEN=dev docker compose build
-APP_API_TOKEN=dev MCPD_TOKEN=dev docker compose up -d
+export APP_API_TOKEN=dev
+export MCP_SIGNING_KEYS="k1:$(openssl rand -base64 32)"
+docker compose build
+docker compose up -d
 ```
 
-The compose file (`docker-compose.yml`) starts LiveKit and the `app` service. `APP_API_TOKEN` is the shared bearer for HTTP + WebSocket auth (`docker-compose.yml:20`). `MCPD_TOKEN` is the bearer the MCP HTTP transport requires (`docker-compose.yml:76`); the same value is propagated as `BOARD_TOKEN` (`:84`) so `cmd/mcpd` can call back into `/internal/tools/dispatch`.
+The compose file (`docker-compose.yml`) starts LiveKit and the `app` service. `APP_API_TOKEN` is the shared bearer for HTTP + WebSocket auth and for `cmd/mcpd`'s callbacks into `/internal/tools/dispatch` (propagated as `BOARD_TOKEN`). `MCP_SIGNING_KEYS` is the symmetric secret cmd/server uses to sign MCP bearer tokens and cmd/mcpd uses to verify them (#58 hard cut removed the static `MCPD_TOKEN`). See [docs/api/mcp-tools.md#authentication](api/mcp-tools.md#authentication) for the token model.
 
 Expected:
 
@@ -218,7 +220,7 @@ In a separate terminal, run a Claude Code session and point it at `cmd/mcpd`:
       "args": ["compose", "exec", "-T", "mcpd", "/mcpd",
                "--transport=stdio", "--board-url=http://app:3000",
                "--tenant-id=default", "--board-id=default"],
-      "env": {"MCPD_TOKEN": "dev", "BOARD_TOKEN": "dev"}
+      "env": {"BOARD_TOKEN": "dev"}
     }
   }
 }

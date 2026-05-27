@@ -59,12 +59,14 @@ scripts/local-up.sh
 
 ### Linux / no-Keychain
 
-Use the bare docker-compose path. `APP_API_TOKEN` and `MCPD_TOKEN` are the
-two required env vars; see `docker-compose.yml:20` and `docker-compose.yml:76`:
+Use the bare docker-compose path. Two env vars are required: `APP_API_TOKEN`
+(browser/internal-API bearer; see `docker-compose.yml:20`) and `MCP_SIGNING_KEYS`
+(symmetric secret for MCP bearer-token sign/verify; #58 hard cut removed the
+static `MCPD_TOKEN`):
 
 ```bash
 export APP_API_TOKEN=$(openssl rand -hex 32)
-export MCPD_TOKEN=$(openssl rand -hex 32)
+export MCP_SIGNING_KEYS="k1:$(openssl rand -base64 32)"
 docker compose build
 docker compose up -d
 curl -fsS http://localhost:3001/healthz   # → {"ok":true}
@@ -73,7 +75,7 @@ curl -fsS http://localhost:3001/healthz   # → {"ok":true}
 Compose brings up three services: `livekit` (the SFU on 7880), `app`
 (`cmd/server`, exposed on 3001), and `mcpd` (`cmd/mcpd`, exposed on 4000).
 `mcpd` proxies MCP tool calls through `app`'s `/internal/tools/dispatch` so
-that the `ActionLedger`, risk gates, and trust-ceremony confirmations apply
+that the audit log, risk gates, and trust-ceremony confirmations apply
 uniformly to voice, UI, and MCP callers.
 
 Open <http://localhost:3001/app/> to confirm the React SPA loads.
@@ -105,8 +107,10 @@ Read in this order. Skim, don't memorize. Each file under 400 LoC; this is
    *why* behind every package boundary you'll see.
 3. **`internal/core/types.go`** — universal vocabulary (`Action`, `RiskLevel`,
    `Decision`, `Actor`). If a type isn't here, it's provider-specific.
-4. **`internal/core/ledger.go`** — the append-only audit ledger. Every
-   mutation that matters lands here. Read this before you write any handler.
+4. **`cmd/server/board.go`** (`ApplyToolCallWithMeta`) — the single mutation
+   funnel. Every change routes through here and lands an `audit_event_id`
+   in the `action_replay_events` SQLite table. Read this before you write
+   any handler.
 5. **`internal/board/types.go`** — the canonical Board / Issue / Sprint shape
    that all external systems project into.
 6. **`internal/agent/types.go`** — `Run`, `Plan`, `Cost`, `WaitingOn`,
@@ -290,8 +294,10 @@ curl -fsS http://localhost:3001/app/ | head -5
 # WebSocket: open the SPA at /app/ and check the browser devtools network
 # tab for a successful upgrade to /websocket.
 
-# MCP daemon health: hit the mcpd container directly.
-curl -fsS -H "Authorization: Bearer $MCPD_TOKEN" http://localhost:4000/healthz
+# MCP daemon health: hit the mcpd container directly. /healthz is unauth'd;
+# /mcp requires a signed bearer token (mint one via POST /admin/mcp-tokens
+# on the app service — see docs/api/mcp-tools.md#authentication).
+curl -fsS http://localhost:4000/healthz
 
 # Voice path (needs AWS credentials).
 scripts/run-openai-keychain.sh    # OpenAI Realtime via Keychain-stored key
@@ -336,8 +342,8 @@ You've internalized the project when you can do all six:
 
 1. **Trace a tool call end-to-end** — from a WebSocket message arriving at
    `cmd/server/main.go:215` (the `/websocket` handler), through
-   `scrum_tools.go`, through `ApplyToolCallWithMeta`, into the
-   `ActionLedger`, and back out as a response.
+   `scrum_tools.go`, through `ApplyToolCallWithMeta`, into the audit
+   log (`action_replay_events`), and back out as a response.
 2. **Trace an MCP tool call end-to-end** — from `claude-code` calling
    `board.list_cards` against `cmd/mcpd`, through `internal/mcp/tools.go`,
    over HTTP to `cmd/server`'s `/internal/tools/dispatch`, into the same

@@ -90,9 +90,9 @@ recipe is sufficient.
 - The `/internal/*` endpoints and any other operator-only surfaces.
 - The persistence layer in `cmd/server/board_store.go` and the tenant
   isolation invariants enforced by `cmd/server/tenant_isolation_test.go`.
-- The audit substrate: `boardEventRecord`, `boardMutationRecord`, the
-  `agent_runs` and `run_questions` SQLite tables, and the
-  `internal/core` ActionLedger interface.
+- The audit substrate: `boardEventRecord` (writes `action_replay_events`),
+  `boardMutationRecord`, and the `agent_runs` / `run_questions` SQLite
+  tables.
 - The browser session boundary at `/auth/session` and the local-only
   `/auth/local-login`.
 - The AWS deployment scaffolds (`terraform/`, `terragrunt/`) —

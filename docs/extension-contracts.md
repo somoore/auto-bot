@@ -6,7 +6,7 @@ The public surface lives in three packages:
 
 | Package | Contracts owned |
 | --- | --- |
-| `internal/core` | `Connector`, `VoiceProvider`, `ModelProvider`, `ActionLedger` |
+| `internal/core` | `Connector`, `VoiceProvider`, `ModelProvider` |
 | `internal/agent` | `RunCoordinator`, `RunStore` |
 | `internal/projection` | `Projection` (outbound writes + reconciliation) |
 | `internal/mcp` | `BoardClient` (for connecting `cmd/mcpd` to a non-cmd-server board) |
@@ -553,17 +553,13 @@ func (c *Client) CreateCard(ctx context.Context, tenant, b string, in mcp.CardCr
 
 ---
 
-## ActionLedger (cross-cutting)
+## Audit log (cross-cutting)
 
-**`core.ActionLedger`** (`internal/core/ledger.go`) is consumed by every contract above — it is the audit-replay surface. Every externally-visible action should round-trip as:
+Every board mutation routes through `ApplyToolCallWithMeta` in `cmd/server/board.go`, which writes a `boardEventRecord` to the `action_replay_events` SQLite table (`cmd/server/board_store.go`) and returns an `audit_event_id`. A later `replay_audit_event` tool call reconstructs the full event JSON + post-state JSON from that ID — the replay survives `docker compose restart`.
 
-1. The sentence or evidence that created intent (`RecordIntent`).
-2. The policy / confidence / risk decision (logged on the intent).
-3. The tool call and arguments (`RecordToolCall`).
-4. The external API result (`RecordExternalConfirmation`).
-5. The user-visible statement the agent was allowed to make (logged on the confirmation).
+A new connector, coordinator, or projection MUST funnel every externally-visible mutation through `ApplyToolCallWithMeta` rather than touching `sharedBoard` directly. That single funnel guarantees one timeline per `(tenant_id, board_id)` for the operator UI's replay view.
 
-The cmd/server implementation lives in `cmd/server/audit.go`. A new connector or coordinator should not write its own audit log — it should call into the ActionLedger so the operator UI's replay view sees one timeline.
+> Historical note: an earlier `core.ActionLedger` interface (`RecordIntent` / `RecordToolCall` / `RecordExternalConfirmation` / `Replay`) was defined as the planned audit substrate but never wired to any production caller. It was removed in #57; the SQLite table above is the source of truth.
 
 ---
 

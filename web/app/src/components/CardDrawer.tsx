@@ -168,7 +168,7 @@ function Tabs({
             onClick={(): void => setTab(t.id)}
             className={
               active
-                ? "border-b-2 border-solar px-3 py-2 text-xs font-semibold uppercase tracking-wider text-star"
+                ? "border-b-2 border-aurora px-3 py-2 text-xs font-semibold uppercase tracking-wider text-star"
                 : t.disabled
                   ? "px-3 py-2 text-xs font-semibold uppercase tracking-wider text-farstar/40"
                   : "px-3 py-2 text-xs font-semibold uppercase tracking-wider text-twilight hover:text-star"

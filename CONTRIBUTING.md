@@ -21,11 +21,23 @@ scripts/install-hooks.sh
 
 # 3. Build and start the stack. APP_API_TOKEN authenticates browser sessions
 #    and is also the bearer cmd/mcpd uses to call /internal/tools/dispatch.
-#    MCPD_TOKEN authenticates MCP clients (Claude Code, Cursor) against mcpd.
+#    MCP_SIGNING_KEYS is the symmetric secret cmd/server uses to sign MCP
+#    bearer tokens and cmd/mcpd uses to verify them (#58 hard cut: the
+#    static MCPD_TOKEN was removed). Format: "kid:base64-32-byte-key".
 export APP_API_TOKEN=$(openssl rand -hex 32)
-export MCPD_TOKEN=$(openssl rand -hex 32)
+export MCP_SIGNING_KEYS="k1:$(openssl rand -base64 32)"
 docker compose build
 docker compose up -d
+
+# 3b. Mint an MCP bearer token for your client (Claude Code / Cursor).
+#     Scopes: board:read, card:write, runs:start. TTL default is 15 min;
+#     max is 24h. The endpoint is gated by APP_API_TOKEN.
+MCP_BEARER=$(curl -s -X POST http://localhost:3001/admin/mcp-tokens \
+  -H "Authorization: Bearer $APP_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"subject":"agent:me","scopes":["board:read","card:write","runs:start"],"ttl_seconds":3600}' \
+  | jq -r '.token')
+echo "MCP_BEARER=$MCP_BEARER"
 
 # 4. Build the React SPA served at /app/.
 cd web/app && npm install && npm run build && cd ../..
@@ -42,7 +54,7 @@ Two binaries; eighteen Go packages under `internal/`. The boundaries are enforce
 
 - `cmd/server/` — the main HTTP/WebSocket binary. Process startup, route table, voice provider selection, LiveKit signaling, OpenAI WebRTC, security headers. Nothing imports this.
 - `cmd/mcpd/` — the MCP daemon. Connects to `cmd/server` over HTTP and re-exposes the board, cards, and runs as MCP tools for Claude Code, Cursor, and `claude-agent-sdk`.
-- `internal/core/` — universal vocabulary (`Action`, `RiskLevel`, `Decision`, `Actor`, `ActionLedger`). Stdlib only. The most-isolated tier.
+- `internal/core/` — universal vocabulary (`Action`, `RiskLevel`, `Decision`, `Actor`). Stdlib only. The most-isolated tier.
 - `internal/board/` — canonical Board / Issue / Sprint types that every external system projects into.
 - `internal/agent/` — `Run`, `Plan`, `Cost`, `WaitingOn`, `RunCoordinator`. The runtime state machine for agent work.
 - `internal/meetings/` — scrum + transcript types shared between voice providers and the meeting intelligence layer.
@@ -50,7 +62,7 @@ Two binaries; eighteen Go packages under `internal/`. The boundaries are enforce
 - `internal/intake/` — async standup intake: typed payload, Slack adapter (HMAC verification), and shared validation. Slack and the React `IntakeForm` both land here.
 - `internal/standup/` — agenda builder (pre-meeting) and post-meeting closer (creates cards + kicks Runs).
 - `internal/mcp/` — MCP protocol surface: tool registry, JSON-RPC handlers, board client. `cmd/mcpd` wires it.
-- `internal/auth/`, `internal/tenant/`, `internal/cost/`, `internal/http/`, `internal/httpapi/`, `internal/jira/`, `internal/voice/` — focused single-responsibility packages extracted from the original monolith. See `docs/codebase-map.md` for the full file-by-file map.
+- `internal/auth/`, `internal/tenant/`, `internal/cost/`, `internal/http/`, `internal/httpapi/`, `internal/voice/` — focused single-responsibility packages extracted from the original monolith. See `docs/codebase-map.md` for the full file-by-file map.
 - `internal/extensions/` — registration shims for voice providers, connectors, and model providers.
 - `internal/mocks/` — test-only fakes. The in-memory `mocks.BoardClient` doubles as `cmd/mcpd`'s offline fallback for the S2.0 foundation.
 
@@ -188,7 +200,7 @@ The script assumes the `local-aws-refresh-broker` (started by `scripts/local-up.
 
 ## The MCP path
 
-`cmd/mcpd` runs as a separate container (see `docker-compose.yml:65-89`). It listens on `127.0.0.1:4000` and dispatches every MCP tool call through `cmd/server`'s `/internal/tools/dispatch` endpoint — so the `ActionLedger`, risk gates, and trust-ceremony confirmations apply uniformly to voice, UI, and MCP callers. The `MCPD_TOKEN` env var authenticates MCP clients; `BOARD_TOKEN` (which equals `APP_API_TOKEN`) authenticates `mcpd` against the app.
+`cmd/mcpd` runs as a separate container (see `docker-compose.yml:65-89`). It listens on `127.0.0.1:4000` and dispatches every MCP tool call through `cmd/server`'s `/internal/tools/dispatch` endpoint — so the audit log (`action_replay_events`), risk gates, and trust-ceremony confirmations apply uniformly to voice, UI, and MCP callers. MCP clients authenticate with signed bearer tokens issued by `POST /admin/mcp-tokens` (verified against `MCP_SIGNING_KEYS`, shared by app and mcpd); `BOARD_TOKEN` (which equals `APP_API_TOKEN`) authenticates `mcpd` against the app's internal dispatch endpoint. See [docs/api/mcp-tools.md#authentication](docs/api/mcp-tools.md#authentication) for the full token model.
 
 To connect Claude Code, add this to `~/.claude/mcp.json` (full snippet in [`docs/marketing/dev-adoption.md`](./docs/marketing/dev-adoption.md) line 27-43):
 

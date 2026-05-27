@@ -107,7 +107,7 @@ The mcpd binary wires:
 - `agent.RunStore` — `mocks.NewRunStore()`. cmd/mcpd does not persist runs durably; production deployments wire MCP runs back through cmd/server's SQLite store via the HTTP board client.
 - `agent.RunCoordinator` — `agent.NewSimpleRunCoordinator(runStore, nil)` (`cmd/mcpd/main.go:68`). See `internal/agent/simple_coordinator.go:24-54`.
 
-`MCPD_TOKEN` is the bearer the HTTP transport checks. `BOARD_TOKEN` is the bearer the HTTP board client sends to cmd/server. The mcpd binary refuses anonymous HTTP transport with a warning (`cmd/mcpd/main.go:46-48`) but does not hard-fail — Sprint 2.1 will replace this single-token gate with scoped per-agent tokens (`internal/mcp/auth.go:13-16`).
+`MCP_SIGNING_KEYS` is the symmetric secret (shared by cmd/server and mcpd) used to sign and verify MCP bearer tokens. cmd/server's `POST /admin/mcp-tokens` issues tokens with HMAC-SHA256 + ULID jti + scopes; cmd/mcpd's HTTP transport verifies them (alg pinned, jti replay-tracked). `BOARD_TOKEN` is the bearer the HTTP board client sends to cmd/server's `/internal/tools/dispatch` (equals `APP_API_TOKEN` in the standard deployment). The mcpd binary fails closed when `MCP_SIGNING_KEYS` is missing on the http transport (`cmd/mcpd/main.go`). The single-token gate was removed in #58.
 
 ---
 
@@ -123,7 +123,7 @@ This is the public extension surface. The package defines:
 - `Connector`, `ConnectorCapability`, `ConnectorAction`, `ActionReceipt`, `ConnectorResult` (`internal/core/types.go:51-131`). `ConnectorRegistry` (`:134`) stores implementations by normalized lowercase name.
 - `VoiceProvider`, `VoiceCapabilities`, `VoiceSession`, `VoiceSessionEvent` (`internal/core/types.go:196-262`) and `VoiceRegistry` (`:265`).
 - `ModelProvider`, `ModelRequest`, `ModelResponse`, `ModelCapabilities` (`internal/core/types.go:317-357`) and `ModelRegistry` (`:360`).
-- `ActionLedger` (`internal/core/ledger.go`) — `RecordIntent`, `RecordToolCall`, `RecordExternalConfirmation`, `Replay`. Every externally-visible action should round-trip through this surface.
+- Audit substrate (NOT a `core` interface): every `ApplyToolCallWithMeta` writes a `boardEventRecord` to the SQLite `action_replay_events` table via `cmd/server/board_store.go`. `replay_audit_event` reconstructs the mutation from `audit_event_id`. The former `core.ActionLedger` interface was removed in #57 — it had zero non-test call sites; the SQLite table is the source of truth.
 
 `internal/core/contracttest/contracts.go` provides `contracttest.Connector(t, connector, cases)` and `contracttest.VoiceProvider(t, provider, cases)` — shared test helpers any extension implementation can run to assert metadata, health, and execution behavior (`internal/core/contracttest/contracts.go:26-114`).
 
@@ -220,11 +220,10 @@ These directories contain only a `doc.go` documenting where the code *will* live
 | `internal/extensions` | "Owns runtime registries. Sprint 0 status: skeleton. cmd/server/extensions.go moves here once the underlying types stabilize." (`internal/extensions/doc.go`) | `cmd/server/extensions.go` |
 | `internal/http` | "Will host HTTP handlers extracted from cmd/server. Sprint 0 status: skeleton." (`internal/http/doc.go`) | `cmd/server/main.go` + per-feature `*_handler.go` files |
 | `internal/httpapi` | "Hosts shared HTTP middleware (tenant resolution, authentication, audit). Sprint 0 status: skeleton." (`internal/httpapi/doc.go`) | `cmd/server/auth.go` |
-| `internal/jira` | "Hosts the Jira projection. In Sprint 3 will implement internal/projection.Projection. Sprint 0 status: skeleton." (`internal/jira/doc.go`) | the projection itself already moved to `internal/projection/jira`; this directory is now a stale reservation |
 | `internal/tenant` | "Owns tenant identity, per-tenant secret storage. Sprint 0 status: skeleton. Default tenant ID 'default' is used everywhere until the hosted control plane lands." (`internal/tenant/doc.go`) | the `default` literal threaded through `cmd/server/board.go`, `cmd/server/tenant_settings.go`, `cmd/server/agent_runs.go` |
 | `internal/voice` | "Owns the voice-meeting runtime. Sprint 0 status: skeleton. cmd/server/nova_sonic*.go and scrum_tools.go migrate in a later sprint." (`internal/voice/doc.go`) | `cmd/server/nova_sonic*.go`, `cmd/server/kanban.go`, `cmd/server/scrum_tools.go` |
 
-Drift to know about: `internal/jira/doc.go` still says "this package will implement the projection" but the projection has *already* landed at `internal/projection/jira/projection.go`. The `internal/jira` namespace is currently unused.
+Note: the Jira projection lives at `internal/projection/jira/projection.go`. An earlier `internal/jira/` placeholder package was removed once the projection landed in its final home — there is no `internal/jira` namespace.
 
 ---
 

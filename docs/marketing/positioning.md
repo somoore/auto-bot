@@ -48,7 +48,7 @@ You spend the morning in standup and the rest of the day chasing status. auto-bo
 
 ### Platform engineers — MCP surface, agents-as-API
 
-The board is a Model Context Protocol server. Claude Code, Cursor, Claude Agent SDK, and anything else that speaks MCP can list cards, create them, post comments, start Runs, write checkpoints, and ask humans questions — through one audited surface with scoped per-tenant tokens. Every call goes through the same ActionLedger as voice and HTTP. No webhook spaghetti.
+The board is a Model Context Protocol server. Claude Code, Cursor, Claude Agent SDK, and anything else that speaks MCP can list cards, create them, post comments, start Runs, write checkpoints, and ask humans questions — through one audited surface with scoped per-tenant tokens. Every call goes through the same audit log as voice and HTTP. No webhook spaghetti.
 
 ### Founders — cost per meeting + automation ratio
 

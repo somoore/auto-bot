@@ -119,6 +119,27 @@ func (f *fakeBoardClient) UpdateCard(_ context.Context, _ string, _ string, card
 	return board.Card{}, ErrCardNotFound
 }
 
+func (f *fakeBoardClient) StartRun(_ context.Context, _ string, _ string, req RunStartRequest) (RunStartResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.cards {
+		if c.ID != req.CardID {
+			continue
+		}
+		profile := req.AgentProfile
+		if profile == "" {
+			profile = "project_manager"
+		}
+		return RunStartResult{
+			RunID:        fmt.Sprintf("test-run-%d", time.Now().UnixNano()),
+			Status:       "queued",
+			AgentProfile: profile,
+			CardID:       req.CardID,
+		}, nil
+	}
+	return RunStartResult{}, ErrCardNotFound
+}
+
 func (f *fakeBoardClient) AddComment(_ context.Context, _ string, _ string, cardID, body, author string) (board.Comment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -162,9 +183,23 @@ func decodeResp(t *testing.T, raw []byte) Response {
 	return resp
 }
 
+// fullScopeClaims grants every tool scope. Used by tests that exercise
+// tools/call without focusing on scope enforcement — keeps them tight
+// while still exercising the dispatcher's scope check (no claims would
+// fail with -32001 Forbidden, which is correct production behavior).
+var fullScopeClaims = Claims{
+	Issuer:   tokenIssuer,
+	Audience: tokenAudMCP,
+	Subject:  "agent:test",
+	TenantID: "default",
+	Scopes:   AllToolScopes(),
+	JTI:      "test-jti",
+}
+
 func roundtrip(t *testing.T, s *Server, req Request) Response {
 	t.Helper()
-	r := s.HandleRequest(context.Background(), req)
+	ctx := WithClaims(context.Background(), fullScopeClaims)
+	r := s.HandleRequest(ctx, req)
 	if r == nil {
 		t.Fatalf("nil response for method %s", req.Method)
 	}
@@ -193,12 +228,12 @@ func TestInitializeReturnsHandshake(t *testing.T) {
 	if result.ProtocolVersion != ProtocolVersion {
 		t.Errorf("protocol version = %q, want %q", result.ProtocolVersion, ProtocolVersion)
 	}
-	if len(result.Tools) != 5 {
-		t.Fatalf("initialize advertised %d tools, want 5", len(result.Tools))
+	if len(result.Tools) != 6 {
+		t.Fatalf("initialize advertised %d tools, want 6", len(result.Tools))
 	}
 }
 
-func TestToolsListEnumeratesFive(t *testing.T) {
+func TestToolsListEnumeratesTools(t *testing.T) {
 	s, _ := newTestServer(t)
 	resp := roundtrip(t, s, Request{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: "tools/list"})
 	if resp.Error != nil {
@@ -206,7 +241,7 @@ func TestToolsListEnumeratesFive(t *testing.T) {
 	}
 	var result ToolsListResult
 	mustRemarshal(t, resp.Result, &result)
-	want := []string{"board.list_cards", "board.get_card", "card.create", "card.update", "card.comment"}
+	want := []string{"board.list_cards", "board.get_card", "card.create", "card.update", "card.comment", "runs.start"}
 	if len(result.Tools) != len(want) {
 		t.Fatalf("tools/list returned %d tools, want %d", len(result.Tools), len(want))
 	}
@@ -321,6 +356,55 @@ func TestToolsCallCreateCard(t *testing.T) {
 	}
 }
 
+func TestToolsCallStartRun(t *testing.T) {
+	s, _ := newTestServer(t)
+	resp := roundtrip(t, s, Request{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`40`),
+		Method:  "tools/call",
+		Params:  json.RawMessage(`{"name":"runs.start","arguments":{"card_id":"card-100","objective":"ship the demo","agent_profile":"swe-1"}}`),
+	})
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %+v", resp.Error)
+	}
+	var result ToolCallResult
+	mustRemarshal(t, resp.Result, &result)
+	if result.IsError {
+		t.Fatalf("isError=true: %s", result.Content[0].Text)
+	}
+	var payload RunStartResult
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode: %v\nraw: %s", err, result.Content[0].Text)
+	}
+	if payload.RunID == "" {
+		t.Fatalf("runs.start returned empty run_id")
+	}
+	if payload.AgentProfile != "swe-1" {
+		t.Errorf("agent_profile = %q, want %q", payload.AgentProfile, "swe-1")
+	}
+	if payload.CardID != "card-100" {
+		t.Errorf("card_id = %q, want %q", payload.CardID, "card-100")
+	}
+}
+
+func TestToolsCallStartRunRejectsMissingObjective(t *testing.T) {
+	s, _ := newTestServer(t)
+	resp := roundtrip(t, s, Request{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`41`),
+		Method:  "tools/call",
+		Params:  json.RawMessage(`{"name":"runs.start","arguments":{"card_id":"card-100"}}`),
+	})
+	if resp.Error != nil {
+		t.Fatalf("unexpected transport error: %+v", resp.Error)
+	}
+	var result ToolCallResult
+	mustRemarshal(t, resp.Result, &result)
+	if !result.IsError {
+		t.Fatalf("expected isError=true for missing objective")
+	}
+}
+
 func TestToolsCallUnknownToolReturnsMethodNotFound(t *testing.T) {
 	s, _ := newTestServer(t)
 	resp := roundtrip(t, s, Request{
@@ -405,9 +489,28 @@ func TestCommentAppendsToCard(t *testing.T) {
 	}
 }
 
-func TestHTTPMissingBearerReturns401(t *testing.T) {
+// httpTestServerWithVerifier wires a Server with a Verifier minted from
+// the package test keys so the HTTP transport tests exercise the real
+// signing + scope-check path. A scopes slice of nil grants the full set.
+func httpTestServerWithVerifier(t *testing.T, scopes []string) (*Server, *Issuer, string) {
+	t.Helper()
 	s, _ := newTestServer(t)
-	s.AuthToken = "secret-token"
+	iss := newTestIssuer(t)
+	v := newTestVerifier(t)
+	s.Verifier = v
+	effective := scopes
+	if effective == nil {
+		effective = AllToolScopes()
+	}
+	token, _, err := iss.Issue("agent:test", "default", effective, time.Minute)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	return s, iss, token
+}
+
+func TestHTTPMissingBearerReturns401(t *testing.T) {
+	s, _, _ := httpTestServerWithVerifier(t, nil)
 	ts := httptest.NewServer(s.HTTPHandler())
 	defer ts.Close()
 
@@ -427,16 +530,15 @@ func TestHTTPMissingBearerReturns401(t *testing.T) {
 	}
 }
 
-func TestHTTPWithBearerSucceeds(t *testing.T) {
-	s, _ := newTestServer(t)
-	s.AuthToken = "secret-token"
+func TestHTTPWithSignedTokenSucceeds(t *testing.T) {
+	s, _, token := httpTestServerWithVerifier(t, nil)
 	ts := httptest.NewServer(s.HTTPHandler())
 	defer ts.Close()
 
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer secret-token")
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("http: %v", err)
@@ -451,6 +553,81 @@ func TestHTTPWithBearerSucceeds(t *testing.T) {
 	}
 	if decoded.Error != nil {
 		t.Errorf("unexpected jsonrpc error: %+v", decoded.Error)
+	}
+}
+
+func TestHTTPWithoutVerifierReturns503(t *testing.T) {
+	s, _ := newTestServer(t)
+	// Verifier intentionally left nil.
+	ts := httptest.NewServer(s.HTTPHandler())
+	defer ts.Close()
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer anything")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("http: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (verifier missing)", resp.StatusCode)
+	}
+}
+
+func TestHTTPInsufficientScopeReturnsForbidden(t *testing.T) {
+	// Issue a token that ONLY has board:read but call a card.create
+	// tool that requires card:write. The dispatcher should reject
+	// with -32001 Forbidden, not invoke the handler.
+	s, _, token := httpTestServerWithVerifier(t, []string{ScopeBoardRead})
+	ts := httptest.NewServer(s.HTTPHandler())
+	defer ts.Close()
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"card.create","arguments":{"title":"x"}}}`)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("http: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (JSON-RPC error envelope, not HTTP error)", resp.StatusCode)
+	}
+	var decoded Response
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if decoded.Error == nil {
+		t.Fatalf("expected jsonrpc error, got result: %+v", decoded.Result)
+	}
+	if decoded.Error.Code != ErrCodeForbidden {
+		t.Errorf("error code = %d, want %d (Forbidden)", decoded.Error.Code, ErrCodeForbidden)
+	}
+}
+
+func TestHTTPRejectsReplayedToken(t *testing.T) {
+	s, _, token := httpTestServerWithVerifier(t, nil)
+	ts := httptest.NewServer(s.HTTPHandler())
+	defer ts.Close()
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("http: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if i == 0 && resp.StatusCode != http.StatusOK {
+			t.Fatalf("first call status = %d, want 200", resp.StatusCode)
+		}
+		if i == 1 && resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("replay status = %d, want 401", resp.StatusCode)
+		}
 	}
 }
 

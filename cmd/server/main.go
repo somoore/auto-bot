@@ -239,6 +239,11 @@ func main() {
 	mux.HandleFunc("/internal/board/cards", internalBoardCardsHandler)
 	mux.HandleFunc("/internal/board/cards/", internalBoardCardsHandler)
 
+	// MCP token issuance (#58). Operators POST signed bearer tokens that
+	// MCP clients use against cmd/mcpd. Same APP_API_TOKEN gate as the
+	// rest of /internal/*; signing keys live in MCP_SIGNING_KEYS env.
+	mux.HandleFunc("/admin/mcp-tokens", adminMCPTokensHandler)
+
 	// Async-standup intake (Daria persona, docs/persona-feedback/
 	// daria-first-week.md). /intake/standup carries the form + API
 	// surface; /intake/slack carries the Slack webhook adapter behind

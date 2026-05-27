@@ -79,8 +79,8 @@ register as `R-AGENT-PROFILE-ALLOWLIST`.
 emits a tool call that the server then dispatches against the board.
 Without dispatcher tracking, a malicious or model-injected tool call could
 be indistinguishable from a UI action initiated by a logged-in browser
-session. An audit reader watching the ActionLedger or `boardEventRecord`
-stream would see no provenance for the call.
+session. An audit reader watching the `boardEventRecord` stream
+(`action_replay_events`) would see no provenance for the call.
 
 **Assets at risk.** Audit provenance; the "live speech only" invariant
 that the v1 threat model relied on to bound mutation authority; the human
@@ -103,39 +103,48 @@ log injection through dispatcher values, addressed under
 
 ### MCP bearer token replay across tenants
 
-**Attack.** The MCP HTTP transport authenticates with a single static
-bearer token (`internal/mcp/auth.go`); stdio is intentionally
-unauthenticated. SA-1 §3 enumerates the consequences in detail. Today's
-deployment is single-tenant so the practical impact is bounded, but a
-stolen bearer is universally usable across whatever tenants a future
-multi-tenant MCP deployment serves; the token carries no audience claim,
-no scope set, no expiry, and no `jti` to revoke.
+**Attack.** A leaked bearer token gives an attacker the same authority as
+the MCP client it was issued to. Without scope, audience, expiry, or jti
+the token is universally reusable across every MCP tool until the
+operator rotates manually.
 
 **Assets at risk.** Every board-level mutation surface that MCP tools can
-reach (`board.read`, `board.write`, `run.start`, `run.answer`); the audit
-log itself, which trusts the dispatcher label the MCP server stamps onto
-the call.
+reach (`board.list_cards`, `card.create`, `card.update`, `card.comment`,
+`runs.start`); the audit log itself, which trusts the dispatcher label
+the MCP server stamps onto the call.
 
-**Mitigation in code.** Tenant binding is enforced at the store layer
-since `1dc77810` — every SQLite query in `cmd/server/board_store.go`
-filters by `WHERE tenant_id = ? AND board_id = ?` (lines 446, 533, 556,
-632, 655, 724, 743, 807, 893, 913, 964 spot-verified). MCP request
-handlers accept `tenantID` as an argument and pass it through to the
-store. A leaked token still cannot cross tenants at the data plane; the
-token is only the authentication factor, and the request-scoped tenant
-ID is the authorization factor. SE-1 F6 (commit `874f160b`,
-"Fix(mcp): map RunStore sentinels to JSON-RPC -32602") additionally
-ensured that MCP error responses do not collapse `ErrRunNotFound` into
-a generic transport error, so cross-tenant probing yields the same
-error class no matter which arm the lookup fails on.
+**Mitigation in code (S2.2 — #58 hard cut).** The single static
+`MCPD_TOKEN` env var was removed in favor of HMAC-SHA256 signed bearer
+tokens minted by cmd/server's admin endpoint
+(`cmd/server/admin_mcp_tokens.go`). Each token carries `iss=auto-bot`,
+`aud=mcp`, `sub`, `tenant_id`, `scopes`, `iat`, `exp`, and a ULID `jti`;
+the verifier (`internal/mcp/token.go`) pins `alg=HS256` (no algorithm
+confusion), enforces `iss/aud/exp`, and rejects re-used jti via an
+in-memory `MemoryReplayTracker`. The dispatcher (`internal/mcp/server.go`
+`handleToolsCall`) consults `ToolScopes` (`internal/mcp/scopes.go`)
+before invoking any handler so a token without the right scope fails
+with JSON-RPC `-32001 Forbidden` regardless of what the handler does.
+Signing keys live in `MCP_SIGNING_KEYS` (kid:base64-key, first kid is
+active signer, additional kids accepted verifier-only for rotation
+grace). Tenant binding at the store layer is unchanged: every SQLite
+query in `cmd/server/board_store.go` still filters by
+`WHERE tenant_id = ? AND board_id = ?` — a token's `tenant_id` claim is
+the authorization factor.
 
-**Residual risk.** The token is still a single static bearer with manual
-rotation. SA-1 §3 recommends short-lived JWTs (`aud=mcpd`, `scope[]`,
-`exp ≤ 30m`, `jti`, `ten`); none of this has landed. Listed as
-`R-MCP-TOKEN-MODEL`. The stdio carve-out at `internal/mcp/server.go`
-remains; any user-installed npm package on a developer laptop can drive
-the same authority as the trusted MCP client — confused deputy. Listed
-as `R-MCP-STDIO-TRUST`.
+**Residual risk.**
+1. `MemoryReplayTracker` does NOT survive process restart. With the
+   default 15-minute TTL the replay window after a restart is small but
+   non-zero. Promoting to a SQLite-backed tracker is documented future
+   hardening — see `cmd/mcpd/main.go` for the tracker wire-in.
+2. Symmetric HMAC keys must be shared by every cmd/server (issuer) and
+   every mcpd (verifier) in a deployment. The hosted-control-plane
+   evolution will swap to a JWKS endpoint serving asymmetric public
+   keys; until then, treat `MCP_SIGNING_KEYS` as a top-tier secret.
+3. The stdio carve-out at `internal/mcp/server.go` remains — stdio
+   callers carry whatever scopes `MCPD_STDIO_SCOPES` declares
+   (default: full set). The OS process boundary is the trust boundary;
+   a malicious npm package in the same process tree can still drive
+   the stdio API. Listed as `R-MCP-STDIO-TRUST`.
 
 ---
 
@@ -271,18 +280,13 @@ captures the source string and sanitized tool result for every
 `ApplyToolCallWithMeta` call site (`main.go:874` for UI;
 `nova_sonic.go:890` for Nova Sonic).
 
-`internal/core/ledger.go` additionally defines `ActionIntent`,
-`ToolCallRecord`, and `ExternalConfirmation` records with a `RunID`
-field for full Run lineage. This is the intended substrate for the
-intent → tool-call → external-confirmation triple that agent-first v2
-ultimately needs. The interface and an in-memory implementation exist;
-production callers do not yet invoke `RecordIntent` /
-`RecordToolCall` / `RecordExternalConfirmation`. Comments in
-`cmd/server/internal_dispatch.go:13` and `cmd/server/intake_followups.go:23,76`
-reference the ledger aspirationally; the dispatch path itself routes
-through `ApplyToolCallWithMeta`, which writes through the
-`boardEventRecord` / `boardMutationRecord` substrate above, not the
-ActionLedger.
+Historical note: an earlier `internal/core/ledger.go` defined a
+parallel `ActionLedger` interface (`ActionIntent` / `ToolCallRecord` /
+`ExternalConfirmation`). It was removed in #57 — it had zero non-test
+call sites and the SQLite `action_replay_events` table written by
+`boardEventRecord` is the actual audit substrate. The threat model
+below is written against that real substrate, not the deleted
+interface.
 
 **Residual risk.** SecArch-001 §5 documented two persistent bypasses of
 the mutation-record substrate: (a) inbound Jira via
@@ -630,7 +634,7 @@ document.
 | `R-ANSWER-RACE` | Med | `MarkRunQuestionAnswered` is a read-modify-write; concurrent answers race and the first answer's `answered_by` is overwritten. | One-statement conditional UPDATE with `RowsAffected` check; new `ErrRunQuestionAlreadyAnswered` sentinel. SE-1 F9. |
 | `R-PRECOMMIT-CI-PARITY` | Low | `scripts/pre-commit` can be bypassed with `--no-verify`; only CI replay catches it. One documented `--no-verify` incident in this branch's history. | Server-side branch protection + mandatory CI status check. `docs/erratum-commit-title-swaps.md`. |
 | `R-AUDIT-COVERAGE-GAP` | High | Inbound Jira (`ReplaceCards` → `jira.go:82`) and async `executeRun` status updates bypass `boardMutationRecord`. ~60% mutation coverage. | Wire mutation record on Jira-driven snapshots and on every `executeRun` status transition. SA-1 §5. |
-| `R-ACTIONLEDGER-NOT-WIRED` | High | `internal/core/ActionLedger` is the intended intent → tool-call → confirmation substrate; no production caller invokes `RecordIntent` / `RecordToolCall` / `RecordExternalConfirmation`. | Either wire the ledger into `ApplyToolCallWithMeta` and the Jira hydrator, or delete the abstraction and rename the threat-model substrate. SA-1 §5. |
+| `R-ACTIONLEDGER-NOT-WIRED` | **Resolved (#57)** | `internal/core/ActionLedger` had zero non-test call sites. Resolved by deletion: the interface and `InMemoryActionLedger` were removed; the real audit substrate is the `action_replay_events` SQLite table written by `boardEventRecord` inside `ApplyToolCallWithMeta`. The remaining audit-coverage gap (inbound Jira + async run updates) is tracked under `R-AUDIT-COVERAGE-GAP`. |
 | `R-RUNQ-TENANT-RECHECK` | Med | `MarkRunQuestionAnswered` overwrites `q.TenantID` from caller scope without re-asserting against the loaded row. | Add `if q.TenantID != tenantID { return ErrInvalidActor-equivalent }` after `LoadRunQuestion`. SA-1 §1. |
 | `R-CARDID-GLOBAL` | Low | Card IDs collide across tenants by design (`nextOperationIDLocked` is per-board). | Document the invariant in `docs/codebase-map.md`; ensure any future debug tool keys on `(tenant, board, card)`. SA-1 §1. |
 | `R-LOG-SANITIZE-DRIFT` | Med | Log sanitization in `cmd/server` is by convention, not enforced. New log sites can reintroduce log injection. | gosec G706 in CI for `cmd/server` (currently only `cmd/mcpd` is fully annotated). |

@@ -67,10 +67,10 @@ export function PauseAllPill({ settings }: Props): JSX.Element {
           className={
             paused
               ? "inline-flex items-center gap-2 rounded-full border border-magnetar/60 bg-magnetar/20 px-3 py-1 text-xs font-semibold text-magnetar shadow-[0_0_12px_rgba(255,61,127,0.45)] hover:bg-magnetar/30 disabled:opacity-50"
-              : "inline-flex items-center gap-2 rounded-full border border-magnetar/30 bg-atmos px-3 py-1 text-xs font-medium text-magnetar hover:bg-magnetar/10 disabled:opacity-50"
+              : "inline-flex items-center gap-2 rounded-full border border-edge bg-atmos px-3 py-1 text-xs font-medium text-twilight hover:border-magnetar/40 hover:text-star disabled:opacity-50"
           }
         >
-          <span aria-hidden className={"h-1.5 w-1.5 rounded-full " + (paused ? "bg-magnetar animate-pulse" : "bg-magnetar/60")} />
+          <span aria-hidden className={"h-1.5 w-1.5 rounded-full " + (paused ? "bg-magnetar animate-pulse" : "bg-farstar")} />
           {paused ? "Agents paused" : "Pause all agents"}
         </button>
       </div>

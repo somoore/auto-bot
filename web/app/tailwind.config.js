@@ -16,6 +16,23 @@ export default {
         magnetar: "#FF3D7F",
         comet: "#6BB4FF",
       },
+      fontFamily: {
+        sans: [
+          '"Inter Tight"',
+          "system-ui",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI",
+          "sans-serif",
+        ],
+        mono: [
+          '"JetBrains Mono"',
+          "ui-monospace",
+          "SFMono-Regular",
+          "Menlo",
+          "monospace",
+        ],
+      },
     },
   },
   plugins: [],

@@ -16,7 +16,7 @@ Expose the kanban board as an MCP server through a new binary `cmd/mcpd` support
 - `card.create`, `card.update`, `card.comment`
 - `run.start`, `run.checkpoint`, `run.ask_human`, `run.complete`
 
-All MCP tools route through the same `RunCoordinator` and `ActionLedger` used by voice tools — no parallel audit path. Per-tenant MCP tokens with scoped capabilities are issued and rotated through `/admin/mcp-tokens`.
+All MCP tools route through the same `RunCoordinator` and the audit log used by voice tools — no parallel audit path. Per-tenant MCP tokens with scoped capabilities are issued and rotated through `/admin/mcp-tokens`.
 
 ## Consequences
 

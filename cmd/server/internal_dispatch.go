@@ -10,8 +10,9 @@ import (
 )
 
 // internalToolsDispatchHandler accepts MCP-shaped tool calls and routes them
-// through the canonical ApplyToolCallWithMeta path so ActionLedger, risk
-// classification, and confirmation gates apply uniformly. The MCP tool name
+// through the canonical ApplyToolCallWithMeta path so the audit log
+// (action_replay_events), risk classification, and confirmation gates apply
+// uniformly. The MCP tool name
 // space (card.create, card.update, card.comment) is translated to cmd/server's
 // internal tool names (create_ticket, update_ticket/move_ticket/etc.,
 // add_comment) before dispatch.
@@ -74,9 +75,122 @@ func internalToolsDispatchHandler(w http.ResponseWriter, r *http.Request) {
 		dispatchCardUpdate(w, envelope.Args, meta)
 	case "card.comment":
 		dispatchCardComment(w, envelope.Args, meta)
+	case "runs.start":
+		dispatchRunsStart(w, envelope.Args, meta)
 	default:
 		writeDispatchError(w, http.StatusBadRequest, fmt.Sprintf("unknown tool %q", tool))
 	}
+}
+
+// dispatchRunsStart translates the MCP runs.start args into cmd/server's
+// assign_ticket_to_agent tool. The Run is minted by the standard path so
+// the audit log, the agent orchestrator hand-off, and persistence all apply.
+// The response is the slim { run_id, status, agent_profile } shape the MCP
+// caller expects.
+func dispatchRunsStart(w http.ResponseWriter, args json.RawMessage, meta toolCallMeta) {
+	var input struct {
+		CardID            string `json:"card_id"`
+		Objective         string `json:"objective"`
+		AgentProfile      string `json:"agent_profile"`
+		RequestType       string `json:"request_type"`
+		RequestedBy       string `json:"requested_by"`
+		Repo              string `json:"repo"`
+		Branch            string `json:"branch"`
+		PullRequestNumber int    `json:"pull_request_number"`
+	}
+	if err := json.Unmarshal(args, &input); err != nil {
+		writeDispatchError(w, http.StatusBadRequest, fmt.Sprintf("decode runs.start args: %v", err))
+		return
+	}
+	if strings.TrimSpace(input.CardID) == "" {
+		writeDispatchError(w, http.StatusBadRequest, "card_id is required")
+		return
+	}
+	if strings.TrimSpace(input.Objective) == "" {
+		writeDispatchError(w, http.StatusBadRequest, "objective is required")
+		return
+	}
+	serverArgs := map[string]any{
+		"card_id":   input.CardID,
+		"objective": input.Objective,
+	}
+	if input.AgentProfile != "" {
+		serverArgs["agent_profile"] = input.AgentProfile
+	}
+	if input.RequestType != "" {
+		serverArgs["request_type"] = input.RequestType
+	}
+	if input.RequestedBy != "" {
+		serverArgs["requested_by"] = input.RequestedBy
+	}
+	if input.Repo != "" {
+		serverArgs["repo"] = input.Repo
+	}
+	if input.Branch != "" {
+		serverArgs["branch"] = input.Branch
+	}
+	if input.PullRequestNumber > 0 {
+		serverArgs["pull_request_number"] = input.PullRequestNumber
+	}
+	raw, err := json.Marshal(serverArgs)
+	if err != nil {
+		writeDispatchError(w, http.StatusInternalServerError, fmt.Sprintf("marshal assign_ticket_to_agent args: %v", err))
+		return
+	}
+	result, _, err := sharedBoard.ApplyToolCallWithMeta("assign_ticket_to_agent", string(raw), meta)
+	if err != nil {
+		writeDispatchError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Medium-risk tools (assign_ticket_to_agent included) may queue a
+	// pending confirmation instead of applying the call. In that case the
+	// dispatcher surfaces the confirmation envelope so the MCP client can
+	// either prompt the operator or wait for the Trust Ceremony queue.
+	if requires, _ := result["requires_confirmation"].(bool); requires {
+		writeDispatchJSON(w, http.StatusAccepted, map[string]any{
+			"requires_confirmation": true,
+			"confirmation_id":       result["confirmation_id"],
+			"risk_level":            stringFromAny(result["risk_level"]),
+			"tool_name":             result["tool_name"],
+			"prompt":                result["prompt"],
+			"card_id":               input.CardID,
+		})
+		return
+	}
+	runID, _ := result["run_id"].(string)
+	if runID == "" {
+		writeDispatchError(w, http.StatusInternalServerError, "assign_ticket_to_agent did not return a run_id")
+		return
+	}
+	status := stringFromAny(result["status"])
+	var profile string
+	if view, ok := result["agent_run"].(agentRunView); ok {
+		profile = view.AgentProfile
+	}
+	if profile == "" {
+		profile = input.AgentProfile
+	}
+	writeDispatchJSON(w, http.StatusOK, map[string]any{
+		"run_id":        runID,
+		"status":        status,
+		"agent_profile": profile,
+		"card_id":       input.CardID,
+	})
+}
+
+// stringFromAny coerces a value that may be a `string` or a defined string
+// type (e.g. agent.RunStatus) into its underlying string. Returns "" for
+// nil or any type that fmt cannot stringify usefully.
+func stringFromAny(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	// Typed string aliases (e.g. agent.RunStatus) format as their string
+	// value under %v.
+	return fmt.Sprintf("%v", v)
 }
 
 // dispatchCardCreate translates the MCP card.create args to cmd/server's

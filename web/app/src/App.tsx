@@ -5,8 +5,18 @@ import { BoardSubBar } from "./components/BoardSubBar"
 import { BoardColumn } from "./components/BoardColumn"
 import { CardDrawer } from "./components/CardDrawer"
 import { DryRunQueue } from "./components/DryRunQueue"
+import { AgendaOverlay, type Agenda } from "./components/AgendaOverlay"
 import { EmptyState } from "./components/EmptyState"
 import { SignInGate } from "./components/SignInGate"
+import {
+  PostMeetingSummary,
+  type MeetingReport,
+} from "./components/PostMeetingSummary"
+import {
+  MeetingOverlay,
+  SAMPLE_MEETING,
+  type MeetingState,
+} from "./components/MeetingOverlay"
 import {
   CARD_STATUSES,
   type AgentRunView,
@@ -15,6 +25,88 @@ import {
 } from "./types/board"
 
 const URL_PARAM_CARD = "card"
+const URL_PARAM_AGENDA = "agenda"
+const URL_PARAM_MEETING = "meeting"
+// ?meeting=active mounts the live meeting overlay (D2.1). Any other
+// non-empty value is treated as a post-meeting summary id (D2.6).
+const MEETING_PARAM_ACTIVE = "active"
+
+// TODO(standup): once GET /internal/standup/agenda lands (internal/standup
+// Sprint 4) this should fetch live data — yesterday's runs, open blockers,
+// reviews awaiting host, and a suggested speaker order. The shape mirrors
+// internal/standup.Agenda so the swap is mechanical.
+const SAMPLE_AGENDA: Agenda = {
+  preparedAt: "2m ago",
+  scheduledFor: "Tuesday, May 26 · 9:00 AM",
+  estimate: "est. 8 minutes",
+  participantSummary: "3 participants joining",
+  highlights: [
+    { kind: "shipped", title: "Tenant threading through auth + board + store", attribution: "SM · 14h" },
+    { kind: "shipped", title: "Actor discriminated type — agents as first-class assignees", attribution: "swe-3 · 11h" },
+    { kind: "run_done", title: "JiraSyncer projection refactor · 7/7 steps · evidence attached", attribution: "swe-1 · 2h" },
+  ],
+  blockers: [
+    {
+      cardId: "ABV2-088",
+      question: "Per-tenant DB file vs shared with tenant_id partitioning?",
+      ownerLabel: "swe-1 needs an answer · 3h left",
+    },
+  ],
+  reviews: [
+    {
+      cardId: "ABV2-093",
+      title: "JiraSyncer Projection refactor — replay test green",
+      prNumber: "PR #142",
+      reviewLabel: "ready for your review",
+    },
+  ],
+  speakerOrder: [
+    { participant: { id: "scott", name: "Scott", initials: "SM" }, action: "— answer ABV2-088, review ABV2-093", estimate: "~3 min" },
+    { participant: { id: "aki", name: "Aki", initials: "AK" }, action: "— Linear webhook handoff, LiveKit retry kickoff", estimate: "~2 min" },
+    { participant: { id: "jordan", name: "Jordan", initials: "JR" }, action: "— /readyz migration plan", estimate: "~2 min" },
+  ],
+}
+
+// TODO(meeting): replace with fetch of /meetings?meeting_id=<id>
+// (cmd/server/meeting_report_handlers.go) and map meetingIntelligenceReport
+// into MeetingReport. Sample exists so the route is exercisable until the
+// post-meeting WS event lands.
+function sampleMeetingReport(meetingId: string): MeetingReport {
+  return {
+    meetingId,
+    title: "Tuesday standup",
+    endedAtLabel: "Standup ended · 9:08 AM",
+    metadataLabel: "May 26 · 8m 14s · 3 participants + nova",
+    breadcrumb: "agent-first v2 / Tuesday standup · summary",
+    cardsMoved: 7,
+    cardsMovedByNova: 3,
+    cardsMovedByTeam: 4,
+    runsKickedOff: 2,
+    runsEtaMinutes: 24,
+    questionsResolved: 1,
+    questionAnswer: "per-tenant DB · answered by Scott",
+    cost: "$0.43",
+    timeSaved: "est. 1h 50m saved",
+    decisions: [
+      { id: "d1", title: "Ship per-tenant DB behind a feature flag", rationale: "Scott confirmed the migration path; nova will draft the flag plan.", timestamp: "9:04 AM" },
+      { id: "d2", title: "Defer the SSO refactor to next sprint", rationale: "Scope risk too high to land alongside the DB cutover.", timestamp: "9:06 AM" },
+    ],
+    followUps: [
+      { id: "f1", title: "Draft DB migration runbook", jiraId: "ABV2-218", assignee: "Daria" },
+      { id: "f2", title: "Schedule SSO scoping session", jiraId: "ABV2-219", assignee: "Scott Moore" },
+      { id: "f3", title: "Capture rollback criteria", jiraId: "ABV2-220", assignee: "Priya" },
+    ],
+    agentsWorking: [
+      { id: "swe-1", name: "swe-1", cardId: "ABV2-218", stepsDone: 2, stepsTotal: 6, etaMinutes: 12, cost: "$0.12" },
+      { id: "swe-3", name: "swe-3", cardId: "ABV2-221", stepsDone: 1, stepsTotal: 4, etaMinutes: 18, cost: "$0.08" },
+    ],
+    agentsFootnote: "You'll be notified when either needs your input or completes.",
+    syncTargets: [
+      { id: "s1", label: "Jira", detail: "7 cards updated", timestamp: "2s ago" },
+      { id: "s2", label: "Slack recap", detail: "#standup-daily posted", timestamp: "just now" },
+    ],
+  }
+}
 
 function App(): JSX.Element {
   const { state, dispatch } = useBoardSocket()
@@ -32,6 +124,41 @@ function App(): JSX.Element {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(() =>
     readCardParam(),
   )
+  const [agendaOpen, setAgendaOpen] = useState<boolean>(() => readAgendaParam())
+  const [meetingId, setMeetingId] = useState<string | null>(() => {
+    const v = readMeetingParam()
+    // Live-meeting marker is handled by activeMeeting below; only treat
+    // other non-empty values as a post-meeting summary id.
+    return v && v !== MEETING_PARAM_ACTIVE ? v : null
+  })
+
+  const openAgenda = useCallback((): void => {
+    setAgendaOpen(true)
+    pushAgendaParam()
+  }, [])
+  const closeAgenda = useCallback((): void => {
+    setAgendaOpen(false)
+    clearAgendaParam()
+  }, [])
+  const startAgenda = useCallback((): void => {
+    // TODO(standup): wire to the standup meeting kickoff (LiveKit room +
+    // scrum-master agent). For F-D2.5 the CTA just dismisses the overlay.
+    setAgendaOpen(false)
+    clearAgendaParam()
+  }, [])
+  const closeMeeting = useCallback((): void => {
+    setMeetingId(null)
+    clearMeetingParam()
+  }, [])
+
+  // activeMeeting drives the MeetingOverlay mount when ?meeting=active.
+  // Any other ?meeting=<id> value mounts the PostMeetingSummary (handled
+  // by meetingId state above). Once useBoardSocket carries a real
+  // MeetingState, this derivation should swap to state.board.meeting.
+  // TODO(meeting): plumb real meeting payload from useBoardSocket.
+  const [activeMeeting, setActiveMeeting] = useState<MeetingState | null>(() =>
+    readMeetingParam() === MEETING_PARAM_ACTIVE ? SAMPLE_MEETING : null,
+  )
 
   const openCard = useCallback((cardId: string): void => {
     setSelectedCardId(cardId)
@@ -44,7 +171,13 @@ function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    const onPop = (): void => setSelectedCardId(readCardParam())
+    const onPop = (): void => {
+      setSelectedCardId(readCardParam())
+      setAgendaOpen(readAgendaParam())
+      const m = readMeetingParam()
+      setActiveMeeting(m === MEETING_PARAM_ACTIVE ? SAMPLE_MEETING : null)
+      setMeetingId(m && m !== MEETING_PARAM_ACTIVE ? m : null)
+    }
     window.addEventListener("popstate", onPop)
     return (): void => window.removeEventListener("popstate", onPop)
   }, [])
@@ -60,6 +193,18 @@ function App(): JSX.Element {
       closeCard()
     }
   }, [cards.length, closeCard, selectedCard, selectedCardId])
+
+  // ?meeting=<id> mounts the post-meeting summary as a full-page view ahead
+  // of the loading/auth gates so a deep-linked summary is rendered without
+  // waiting on the board WebSocket handshake.
+  if (meetingId) {
+    return (
+      <PostMeetingSummary
+        report={sampleMeetingReport(meetingId)}
+        onBackToBoard={closeMeeting}
+      />
+    )
+  }
 
   if (state.session.loading) {
     return (
@@ -82,6 +227,7 @@ function App(): JSX.Element {
         status={state.status}
         session={state.session}
         reconnectAttempt={state.reconnectAttempt}
+        onStartStandup={openAgenda}
       />
       <BoardSubBar
         agentActive={isAgentActive(activeRun?.status)}
@@ -122,6 +268,28 @@ function App(): JSX.Element {
           dispatch={dispatch}
           currentUserId={state.session.participantIdentity}
           onClose={closeCard}
+        />
+      ) : null}
+      {agendaOpen ? (
+        <AgendaOverlay
+          agenda={SAMPLE_AGENDA}
+          onStart={startAgenda}
+          onSkip={closeAgenda}
+          onClose={closeAgenda}
+        />
+      ) : null}
+      {activeMeeting ? (
+        <MeetingOverlay
+          meeting={activeMeeting}
+          onLeave={(): void => {
+            setActiveMeeting(null)
+            clearMeetingParam()
+          }}
+          onMicToggle={(): void => undefined}
+          onVideoToggle={(): void => undefined}
+          onConfirmBoard={(): void => undefined}
+          onSendMessage={(): void => undefined}
+          onUndoLastMove={(): void => undefined}
         />
       ) : null}
     </div>
@@ -200,11 +368,53 @@ function pushCardParam(cardId: string): void {
   window.history.pushState({ cardId }, "", next)
 }
 
+function readMeetingParam(): string | null {
+  if (typeof window === "undefined") return null
+  const params = new URLSearchParams(window.location.search)
+  const v = params.get(URL_PARAM_MEETING)
+  return v && v.length > 0 ? v : null
+}
+
+function clearMeetingParam(): void {
+  if (typeof window === "undefined") return
+  const params = new URLSearchParams(window.location.search)
+  if (!params.has(URL_PARAM_MEETING)) return
+  params.delete(URL_PARAM_MEETING)
+  const query = params.toString()
+  const next = query ? `${window.location.pathname}?${query}` : window.location.pathname
+  window.history.pushState({}, "", next)
+}
+
 function clearCardParam(): void {
   if (typeof window === "undefined") return
   const params = new URLSearchParams(window.location.search)
   if (!params.has(URL_PARAM_CARD)) return
   params.delete(URL_PARAM_CARD)
+  const query = params.toString()
+  const next = query ? `${window.location.pathname}?${query}` : window.location.pathname
+  window.history.pushState({}, "", next)
+}
+
+function readAgendaParam(): boolean {
+  if (typeof window === "undefined") return false
+  const params = new URLSearchParams(window.location.search)
+  return params.get(URL_PARAM_AGENDA) === "open"
+}
+
+function pushAgendaParam(): void {
+  if (typeof window === "undefined") return
+  const params = new URLSearchParams(window.location.search)
+  if (params.get(URL_PARAM_AGENDA) === "open") return
+  params.set(URL_PARAM_AGENDA, "open")
+  const next = `${window.location.pathname}?${params.toString()}`
+  window.history.pushState({ agenda: "open" }, "", next)
+}
+
+function clearAgendaParam(): void {
+  if (typeof window === "undefined") return
+  const params = new URLSearchParams(window.location.search)
+  if (!params.has(URL_PARAM_AGENDA)) return
+  params.delete(URL_PARAM_AGENDA)
   const query = params.toString()
   const next = query ? `${window.location.pathname}?${query}` : window.location.pathname
   window.history.pushState({}, "", next)

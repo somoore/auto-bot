@@ -24,8 +24,9 @@ var ErrCardNotFound = errors.New("mcp: card not found")
 // The MCP package owns this interface so the protocol layer stays
 // provider-neutral. In production, cmd/mcpd injects an HTTPBoardClient that
 // fans out to cmd/server's /internal endpoints — every MCP-driven mutation
-// then flows through cmd/server's ApplyToolCall, so ActionLedger, risk
-// classification, and confirmation gates apply uniformly.
+// then flows through cmd/server's ApplyToolCall, so the audit log
+// (action_replay_events), risk classification, and confirmation gates apply
+// uniformly.
 //
 // All methods are scoped by (tenantID, boardID). Empty values mean
 // "default" — the implementation normalizes them.
@@ -35,6 +36,43 @@ type BoardClient interface {
 	CreateCard(ctx context.Context, tenantID, boardID string, input CardCreate) (board.Card, error)
 	UpdateCard(ctx context.Context, tenantID, boardID, cardID string, patch CardPatch) (board.Card, error)
 	AddComment(ctx context.Context, tenantID, boardID, cardID string, body, author string) (board.Comment, error)
+	StartRun(ctx context.Context, tenantID, boardID string, req RunStartRequest) (RunStartResult, error)
+}
+
+// RunStartRequest is the input shape for runs.start. CardID and Objective are
+// required. AgentProfile defaults to "project_manager" on the server side;
+// the rest are optional fields the existing assign_ticket_to_agent tool
+// accepts (repo, branch, pull_request_number are surfaced by GitHub PR-review
+// runs).
+type RunStartRequest struct {
+	CardID            string `json:"card_id"`
+	Objective         string `json:"objective"`
+	AgentProfile      string `json:"agent_profile,omitempty"`
+	RequestType       string `json:"request_type,omitempty"`
+	RequestedBy       string `json:"requested_by,omitempty"`
+	Repo              string `json:"repo,omitempty"`
+	Branch            string `json:"branch,omitempty"`
+	PullRequestNumber int    `json:"pull_request_number,omitempty"`
+}
+
+// RunStartResult is the response from runs.start. Two shapes are possible:
+//
+//  1. Immediate start: RunID is populated and the Run is now queued/running.
+//     RequiresConfirmation is false.
+//  2. Pending confirmation: medium-risk tools (assign_ticket_to_agent is
+//     medium-risk) queue a pending action in the Trust Ceremony rather
+//     than applying immediately. RunID is empty; RequiresConfirmation is
+//     true and ConfirmationID/Prompt are populated. The MCP caller can
+//     surface this to the operator (or block on the Trust queue).
+type RunStartResult struct {
+	RunID                string `json:"run_id,omitempty"`
+	Status               string `json:"status,omitempty"`
+	AgentProfile         string `json:"agent_profile,omitempty"`
+	CardID               string `json:"card_id"`
+	RequiresConfirmation bool   `json:"requires_confirmation,omitempty"`
+	ConfirmationID       string `json:"confirmation_id,omitempty"`
+	RiskLevel            string `json:"risk_level,omitempty"`
+	Prompt               string `json:"prompt,omitempty"`
 }
 
 // CardFilter is the input shape for board.list_cards. Empty fields mean "no
@@ -127,8 +165,10 @@ type ToolDeps struct {
 	DefaultActor string
 }
 
-// BuildTools returns the five MCP tools wired against deps. The order
-// matches the canonical list in the Sprint 2.0 spec.
+// BuildTools returns the MCP tools wired against deps. The order matches
+// the canonical list in the Sprint 2.0 spec (5 board tools), followed by
+// the runs.start tool added in #59 to close the "MCP can't kick a Run"
+// gap surfaced by the Operations Scribe.
 func BuildTools(deps ToolDeps) []Tool {
 	return []Tool{
 		buildListCardsTool(deps),
@@ -136,6 +176,7 @@ func BuildTools(deps ToolDeps) []Tool {
 		buildCreateCardTool(deps),
 		buildUpdateCardTool(deps),
 		buildCommentTool(deps),
+		buildStartRunTool(deps),
 	}
 }
 
@@ -278,7 +319,7 @@ func findActiveRunForCard(ctx context.Context, store agent.RunStore, tenantID, b
 func buildCreateCardTool(deps ToolDeps) Tool {
 	return Tool{
 		Name:        "card.create",
-		Description: "Create a new card on the active board. Routes through cmd/server's ApplyToolCall path, so ActionLedger + risk gates apply (same as voice / UI callers).",
+		Description: "Create a new card on the active board. Routes through cmd/server's ApplyToolCall path, so the audit log + risk gates apply (same as voice / UI callers).",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"title"},
@@ -412,6 +453,49 @@ func buildCommentTool(deps ToolDeps) Tool {
 	}
 }
 
+// ---- runs.start -----------------------------------------------------------
+
+func buildStartRunTool(deps ToolDeps) Tool {
+	return Tool{
+		Name:        "runs.start",
+		Description: "Start an agent run against an existing card. Routes through cmd/server's assign_ticket_to_agent so the audit log, risk gates, and the Run lifecycle apply uniformly with voice and UI callers.",
+		InputSchema: map[string]any{
+			"type":     "object",
+			"required": []string{"card_id", "objective"},
+			"properties": map[string]any{
+				"card_id":             map[string]any{"type": "string", "description": "Existing card to attach the Run to."},
+				"objective":           map[string]any{"type": "string", "description": "Human-readable goal for the agent."},
+				"agent_profile":       map[string]any{"type": "string", "description": "Specialist profile (e.g. project_manager, swe-1). Defaults to project_manager on the server."},
+				"request_type":        map[string]any{"type": "string", "description": "Optional classification hint (e.g. code_review, refactor, auto)."},
+				"requested_by":        map[string]any{"type": "string", "description": "Identity of the human (or proxy) initiating the Run."},
+				"repo":                map[string]any{"type": "string", "description": "Optional repo for GitHub PR-review runs (e.g. owner/name)."},
+				"branch":              map[string]any{"type": "string", "description": "Optional branch name for repo-scoped runs."},
+				"pull_request_number": map[string]any{"type": "integer", "description": "Optional PR number for code-review runs."},
+			},
+		},
+		Handler: func(ctx context.Context, params json.RawMessage) (any, error) {
+			var input RunStartRequest
+			if err := json.Unmarshal(params, &input); err != nil {
+				return nil, fmt.Errorf("invalid params: %w", err)
+			}
+			if strings.TrimSpace(input.CardID) == "" {
+				return nil, fmt.Errorf("card_id is required")
+			}
+			if strings.TrimSpace(input.Objective) == "" {
+				return nil, fmt.Errorf("objective is required")
+			}
+			if strings.TrimSpace(input.RequestedBy) == "" {
+				input.RequestedBy = deps.DefaultActor
+			}
+			result, err := deps.Board.StartRun(ctx, deps.TenantID, deps.BoardID, input)
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		},
+	}
+}
+
 // ---------------------------------------------------------------------------
 // HTTPBoardClient
 // ---------------------------------------------------------------------------
@@ -470,14 +554,21 @@ type dispatchEnvelope struct {
 
 // dispatchResult is the JSON shape /internal/tools/dispatch returns. The
 // payload is intentionally permissive — different MCP tools surface
-// different fields (card, comment, card_id) — and the caller picks out
-// what it needs.
+// different fields (card, comment, card_id, run_id, confirmation_id) —
+// and the caller picks out what it needs.
 type dispatchResult struct {
-	Card    *board.Card    `json:"card,omitempty"`
-	CardID  string         `json:"card_id,omitempty"`
-	Comment *board.Comment `json:"comment,omitempty"`
-	Cards   []board.Card   `json:"cards,omitempty"`
-	Error   string         `json:"error,omitempty"`
+	Card                 *board.Card    `json:"card,omitempty"`
+	CardID               string         `json:"card_id,omitempty"`
+	Comment              *board.Comment `json:"comment,omitempty"`
+	Cards                []board.Card   `json:"cards,omitempty"`
+	RunID                string         `json:"run_id,omitempty"`
+	RunStatus            string         `json:"status,omitempty"`
+	AgentProfile         string         `json:"agent_profile,omitempty"`
+	RequiresConfirmation bool           `json:"requires_confirmation,omitempty"`
+	ConfirmationID       string         `json:"confirmation_id,omitempty"`
+	RiskLevel            string         `json:"risk_level,omitempty"`
+	Prompt               string         `json:"prompt,omitempty"`
+	Error                string         `json:"error,omitempty"`
 }
 
 func (c *HTTPBoardClient) post(ctx context.Context, tool string, tenantID, boardID string, args any) (dispatchResult, error) {
@@ -687,6 +778,37 @@ type commentPayload struct {
 	CardID  string `json:"card_id"`
 	Body    string `json:"body"`
 	AsActor string `json:"as_actor,omitempty"`
+}
+
+// StartRun dispatches runs.start through /internal/tools/dispatch. The
+// server side translates this into assign_ticket_to_agent so the Run is
+// minted by cmd/server's RunCoordinator and recorded against the canonical
+// board state. When the Trust Ceremony queues a pending confirmation
+// instead of applying immediately, the returned RunStartResult has
+// RequiresConfirmation=true and an empty RunID.
+func (c *HTTPBoardClient) StartRun(ctx context.Context, tenantID, boardID string, req RunStartRequest) (RunStartResult, error) {
+	out, err := c.post(ctx, "runs.start", tenantID, boardID, req)
+	if err != nil {
+		return RunStartResult{}, err
+	}
+	if out.RequiresConfirmation {
+		return RunStartResult{
+			CardID:               req.CardID,
+			RequiresConfirmation: true,
+			ConfirmationID:       out.ConfirmationID,
+			RiskLevel:            out.RiskLevel,
+			Prompt:               out.Prompt,
+		}, nil
+	}
+	if out.RunID == "" {
+		return RunStartResult{}, fmt.Errorf("runs.start: response missing run_id")
+	}
+	return RunStartResult{
+		RunID:        out.RunID,
+		Status:       out.RunStatus,
+		AgentProfile: out.AgentProfile,
+		CardID:       req.CardID,
+	}, nil
 }
 
 // AddComment dispatches card.comment through /internal/tools/dispatch.
