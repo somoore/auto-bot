@@ -9,6 +9,10 @@ import { AgendaOverlay, type Agenda } from "./components/AgendaOverlay"
 import { EmptyState } from "./components/EmptyState"
 import { SignInGate } from "./components/SignInGate"
 import {
+  PostMeetingSummary,
+  type MeetingReport,
+} from "./components/PostMeetingSummary"
+import {
   CARD_STATUSES,
   type AgentRunView,
   type Card,
@@ -17,6 +21,7 @@ import {
 
 const URL_PARAM_CARD = "card"
 const URL_PARAM_AGENDA = "agenda"
+const URL_PARAM_MEETING = "meeting"
 
 // TODO(standup): once GET /internal/standup/agenda lands (internal/standup
 // Sprint 4) this should fetch live data — yesterday's runs, open blockers,
@@ -28,21 +33,9 @@ const SAMPLE_AGENDA: Agenda = {
   estimate: "est. 8 minutes",
   participantSummary: "3 participants joining",
   highlights: [
-    {
-      kind: "shipped",
-      title: "Tenant threading through auth + board + store",
-      attribution: "SM · 14h",
-    },
-    {
-      kind: "shipped",
-      title: "Actor discriminated type — agents as first-class assignees",
-      attribution: "swe-3 · 11h",
-    },
-    {
-      kind: "run_done",
-      title: "JiraSyncer projection refactor · 7/7 steps · evidence attached",
-      attribution: "swe-1 · 2h",
-    },
+    { kind: "shipped", title: "Tenant threading through auth + board + store", attribution: "SM · 14h" },
+    { kind: "shipped", title: "Actor discriminated type — agents as first-class assignees", attribution: "swe-3 · 11h" },
+    { kind: "run_done", title: "JiraSyncer projection refactor · 7/7 steps · evidence attached", attribution: "swe-1 · 2h" },
   ],
   blockers: [
     {
@@ -60,22 +53,51 @@ const SAMPLE_AGENDA: Agenda = {
     },
   ],
   speakerOrder: [
-    {
-      participant: { id: "scott", name: "Scott", initials: "SM" },
-      action: "— answer ABV2-088, review ABV2-093",
-      estimate: "~3 min",
-    },
-    {
-      participant: { id: "aki", name: "Aki", initials: "AK" },
-      action: "— Linear webhook handoff, LiveKit retry kickoff",
-      estimate: "~2 min",
-    },
-    {
-      participant: { id: "jordan", name: "Jordan", initials: "JR" },
-      action: "— /readyz migration plan",
-      estimate: "~2 min",
-    },
+    { participant: { id: "scott", name: "Scott", initials: "SM" }, action: "— answer ABV2-088, review ABV2-093", estimate: "~3 min" },
+    { participant: { id: "aki", name: "Aki", initials: "AK" }, action: "— Linear webhook handoff, LiveKit retry kickoff", estimate: "~2 min" },
+    { participant: { id: "jordan", name: "Jordan", initials: "JR" }, action: "— /readyz migration plan", estimate: "~2 min" },
   ],
+}
+
+// TODO(meeting): replace with fetch of /meetings?meeting_id=<id>
+// (cmd/server/meeting_report_handlers.go) and map meetingIntelligenceReport
+// into MeetingReport. Sample exists so the route is exercisable until the
+// post-meeting WS event lands.
+function sampleMeetingReport(meetingId: string): MeetingReport {
+  return {
+    meetingId,
+    title: "Tuesday standup",
+    endedAtLabel: "Standup ended · 9:08 AM",
+    metadataLabel: "May 26 · 8m 14s · 3 participants + nova",
+    breadcrumb: "agent-first v2 / Tuesday standup · summary",
+    cardsMoved: 7,
+    cardsMovedByNova: 3,
+    cardsMovedByTeam: 4,
+    runsKickedOff: 2,
+    runsEtaMinutes: 24,
+    questionsResolved: 1,
+    questionAnswer: "per-tenant DB · answered by Scott",
+    cost: "$0.43",
+    timeSaved: "est. 1h 50m saved",
+    decisions: [
+      { id: "d1", title: "Ship per-tenant DB behind a feature flag", rationale: "Scott confirmed the migration path; nova will draft the flag plan.", timestamp: "9:04 AM" },
+      { id: "d2", title: "Defer the SSO refactor to next sprint", rationale: "Scope risk too high to land alongside the DB cutover.", timestamp: "9:06 AM" },
+    ],
+    followUps: [
+      { id: "f1", title: "Draft DB migration runbook", jiraId: "ABV2-218", assignee: "Daria" },
+      { id: "f2", title: "Schedule SSO scoping session", jiraId: "ABV2-219", assignee: "Scott Moore" },
+      { id: "f3", title: "Capture rollback criteria", jiraId: "ABV2-220", assignee: "Priya" },
+    ],
+    agentsWorking: [
+      { id: "swe-1", name: "swe-1", cardId: "ABV2-218", stepsDone: 2, stepsTotal: 6, etaMinutes: 12, cost: "$0.12" },
+      { id: "swe-3", name: "swe-3", cardId: "ABV2-221", stepsDone: 1, stepsTotal: 4, etaMinutes: 18, cost: "$0.08" },
+    ],
+    agentsFootnote: "You'll be notified when either needs your input or completes.",
+    syncTargets: [
+      { id: "s1", label: "Jira", detail: "7 cards updated", timestamp: "2s ago" },
+      { id: "s2", label: "Slack recap", detail: "#standup-daily posted", timestamp: "just now" },
+    ],
+  }
 }
 
 function App(): JSX.Element {
@@ -95,6 +117,9 @@ function App(): JSX.Element {
     readCardParam(),
   )
   const [agendaOpen, setAgendaOpen] = useState<boolean>(() => readAgendaParam())
+  const [meetingId, setMeetingId] = useState<string | null>(() =>
+    readMeetingParam(),
+  )
 
   const openAgenda = useCallback((): void => {
     setAgendaOpen(true)
@@ -109,6 +134,10 @@ function App(): JSX.Element {
     // scrum-master agent). For F-D2.5 the CTA just dismisses the overlay.
     setAgendaOpen(false)
     clearAgendaParam()
+  }, [])
+  const closeMeeting = useCallback((): void => {
+    setMeetingId(null)
+    clearMeetingParam()
   }, [])
 
   const openCard = useCallback((cardId: string): void => {
@@ -125,6 +154,7 @@ function App(): JSX.Element {
     const onPop = (): void => {
       setSelectedCardId(readCardParam())
       setAgendaOpen(readAgendaParam())
+      setMeetingId(readMeetingParam())
     }
     window.addEventListener("popstate", onPop)
     return (): void => window.removeEventListener("popstate", onPop)
@@ -141,6 +171,18 @@ function App(): JSX.Element {
       closeCard()
     }
   }, [cards.length, closeCard, selectedCard, selectedCardId])
+
+  // ?meeting=<id> mounts the post-meeting summary as a full-page view ahead
+  // of the loading/auth gates so a deep-linked summary is rendered without
+  // waiting on the board WebSocket handshake.
+  if (meetingId) {
+    return (
+      <PostMeetingSummary
+        report={sampleMeetingReport(meetingId)}
+        onBackToBoard={closeMeeting}
+      />
+    )
+  }
 
   if (state.session.loading) {
     return (
@@ -288,6 +330,23 @@ function pushCardParam(cardId: string): void {
   params.set(URL_PARAM_CARD, cardId)
   const next = `${window.location.pathname}?${params.toString()}`
   window.history.pushState({ cardId }, "", next)
+}
+
+function readMeetingParam(): string | null {
+  if (typeof window === "undefined") return null
+  const params = new URLSearchParams(window.location.search)
+  const v = params.get(URL_PARAM_MEETING)
+  return v && v.length > 0 ? v : null
+}
+
+function clearMeetingParam(): void {
+  if (typeof window === "undefined") return
+  const params = new URLSearchParams(window.location.search)
+  if (!params.has(URL_PARAM_MEETING)) return
+  params.delete(URL_PARAM_MEETING)
+  const query = params.toString()
+  const next = query ? `${window.location.pathname}?${query}` : window.location.pathname
+  window.history.pushState({}, "", next)
 }
 
 function clearCardParam(): void {
