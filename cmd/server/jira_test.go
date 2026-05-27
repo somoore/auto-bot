@@ -420,6 +420,68 @@ func TestJiraRenamedCardAliasAllowsConfirmedAssignment(t *testing.T) {
 	}
 }
 
+func TestJiraApplyToolCallUsesResultCardIDForVoiceFollowUps(t *testing.T) {
+	type requestRecord struct {
+		Method string
+		Path   string
+		Body   map[string]any
+	}
+	var requests []requestRecord
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		record := requestRecord{
+			Method: r.Method,
+			Path:   r.URL.Path,
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&record.Body)
+		}
+		requests = append(requests, record)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	syncer := &jiraSyncer{
+		client: newJiraClient(&jiraConfig{
+			BaseURL:    server.URL,
+			Email:      "bot@example.com",
+			APIToken:   "token",
+			ProjectKey: "KAN",
+			IssueType:  "Task",
+		}),
+	}
+
+	if err := syncer.ApplyToolCall(context.Background(), "set_eta", `{"eta":"2026-05-28"}`, map[string]any{
+		"card_id":  "KAN-7",
+		"due_date": "2026-05-28",
+	}); err != nil {
+		t.Fatalf("set_eta ApplyToolCall returned error: %v", err)
+	}
+	if err := syncer.ApplyToolCall(context.Background(), "add_comment", `{"comment":"I need to contact the dev team."}`, map[string]any{
+		"card_id": "KAN-7",
+	}); err != nil {
+		t.Fatalf("add_comment ApplyToolCall returned error: %v", err)
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want 2: %+v", len(requests), requests)
+	}
+	if requests[0].Method != http.MethodPut || requests[0].Path != "/rest/api/3/issue/KAN-7" {
+		t.Fatalf("set_eta request = %+v, want PUT /rest/api/3/issue/KAN-7", requests[0])
+	}
+	dueFields := requests[0].Body["fields"].(map[string]any)
+	if got := dueFields["duedate"]; got != "2026-05-28" {
+		t.Fatalf("duedate = %v, want 2026-05-28", got)
+	}
+	if requests[1].Method != http.MethodPost || requests[1].Path != "/rest/api/3/issue/KAN-7/comment" {
+		t.Fatalf("add_comment request = %+v, want POST /rest/api/3/issue/KAN-7/comment", requests[1])
+	}
+	commentBody := requests[1].Body["body"].(map[string]any)
+	if got := jiraADFPlainText(commentBody); got != "I need to contact the dev team." {
+		t.Fatalf("comment ADF text = %q, want contact-dev-team comment", got)
+	}
+}
+
 func TestJiraClientRejectsCreatedIssueOutsideConfiguredProject(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/rest/api/3/issue" {

@@ -345,6 +345,131 @@ func TestMultiConfirmationJiraSyncAnnotatesEachConfirmedMutation(t *testing.T) {
 	}
 }
 
+func TestVoiceFollowUpToolsAcceptTitleReferenceAndRelativeDueDate(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS pentesting","notes":"Contact dev team","tags":["security"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	if _, changed, err := board.ApplyToolCall("set_eta", `{"card_id":"aws pentesting","eta":"tomorrow"}`); err != nil {
+		t.Fatalf("set_eta by title returned error: %v", err)
+	} else if !changed {
+		t.Fatal("set_eta by title should mutate")
+	}
+	if _, changed, err := board.ApplyToolCall("add_comment", `{"card_id":"AWS Pentesting","comment":"I need to contact the dev team."}`); err != nil {
+		t.Fatalf("add_comment by title returned error: %v", err)
+	} else if !changed {
+		t.Fatal("add_comment by title should mutate")
+	}
+
+	state := board.SnapshotState()
+	updated := findBoardTestCard(t, state.Cards, card.ID)
+	if updated.DueDate != currentLocalDay().AddDate(0, 0, 1).Format("2006-01-02") {
+		t.Fatalf("DueDate = %q, want tomorrow", updated.DueDate)
+	}
+	if len(updated.Comments) != 1 || updated.Comments[0].Body != "I need to contact the dev team." {
+		t.Fatalf("Comments = %#v, want contact-dev-team comment", updated.Comments)
+	}
+}
+
+func TestVoicePendingETAAcceptsTitleReferenceAndRelativeDueDate(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS pentesting","notes":"Contact dev team","tags":["security"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	result, changed, err := board.ApplyToolCallWithMeta("set_eta", `{"card_id":"aws pentesting","eta":"tomorrow"}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("set_eta returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("set_eta should wait for confirmation")
+	}
+	if requires, _ := result["requires_confirmation"].(bool); !requires {
+		t.Fatalf("set_eta result = %#v, want confirmation", result)
+	}
+
+	_, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("confirm_action should apply ETA")
+	}
+
+	updated := findBoardTestCard(t, board.SnapshotState().Cards, card.ID)
+	if updated.DueDate != currentLocalDay().AddDate(0, 0, 1).Format("2006-01-02") {
+		t.Fatalf("DueDate = %q, want tomorrow", updated.DueDate)
+	}
+}
+
+func TestVoiceCreateTaskFollowUpsUseCurrentCardFallback(t *testing.T) {
+	board := newKanbanBoard()
+	meta := toolCallMeta{Source: "nova-sonic"}
+
+	result, changed, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"AWS pentesting","notes":"Contact dev team","tags":["security"],"status":"Backlog"}`, meta)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("create_ticket should mutate")
+	}
+	card := result["card"].(kanbanCard)
+
+	if result, changed, err = board.ApplyToolCallWithMeta("assign_ticket", `{"account_id":"account-123","display_name":"Scott Moore"}`, meta); err != nil {
+		t.Fatalf("assign_ticket current-card fallback returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("assign_ticket should wait for confirmation")
+	}
+	if requires, _ := result["requires_confirmation"].(bool); !requires {
+		t.Fatalf("assign_ticket result = %#v, want confirmation", result)
+	}
+
+	if result, changed, err = board.ApplyToolCallWithMeta("set_eta", `{"eta":"tomorrow"}`, meta); err != nil {
+		t.Fatalf("set_eta current-card fallback returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("set_eta should wait for confirmation")
+	}
+	if requires, _ := result["requires_confirmation"].(bool); !requires {
+		t.Fatalf("set_eta result = %#v, want confirmation", result)
+	}
+
+	if _, changed, err = board.ApplyToolCallWithMeta("add_comment", `{"comment":"I need to contact the dev team."}`, meta); err != nil {
+		t.Fatalf("add_comment current-card fallback returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("add_comment should mutate")
+	}
+
+	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{}`, meta)
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("confirm_action should apply pending follow-ups")
+	}
+	if count, _ := result["confirmed_count"].(int); count != 2 {
+		t.Fatalf("confirmed_count = %v, want 2; result = %#v", result["confirmed_count"], result)
+	}
+
+	updated := findBoardTestCard(t, board.SnapshotState().Cards, card.ID)
+	if updated.Assignee == nil || updated.Assignee.DisplayName != "Scott Moore" {
+		t.Fatalf("Assignee = %+v, want Scott Moore", updated.Assignee)
+	}
+	if updated.DueDate != currentLocalDay().AddDate(0, 0, 1).Format("2006-01-02") {
+		t.Fatalf("DueDate = %q, want tomorrow", updated.DueDate)
+	}
+	if len(updated.Comments) != 1 || updated.Comments[0].Body != "I need to contact the dev team." {
+		t.Fatalf("Comments = %#v, want contact-dev-team comment", updated.Comments)
+	}
+}
+
 func TestAssignTicketToAgentCreatesPersistentRunState(t *testing.T) {
 	previousOrchestrator := agentOrchestrator
 	agentOrchestrator = nil

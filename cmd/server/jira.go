@@ -878,6 +878,7 @@ func (syncer *jiraSyncer) ApplyToolCall(ctx context.Context, toolName string, ra
 	if syncer.board != nil {
 		args = syncer.board.canonicalizeToolArgs(args)
 	}
+	args = jiraArgsWithResultCardID(toolName, args, result)
 
 	switch toolName {
 	case "create_ticket", "create_subtask":
@@ -1011,6 +1012,53 @@ func (syncer *jiraSyncer) ApplyToolCall(ctx context.Context, toolName string, ra
 	}
 
 	return nil
+}
+
+func jiraArgsWithResultCardID(toolName string, args map[string]any, result map[string]any) map[string]any {
+	if !jiraToolCanUseResultCardID(toolName) || asString(args["card_id"]) != "" {
+		return args
+	}
+	cardID := firstNonEmptyString(args, "source_card_id", "parent_id", "parent_card_id")
+	if cardID == "" {
+		cardID = asString(result["card_id"])
+	}
+	if cardID == "" {
+		if card, ok := result["card"].(kanbanCard); ok {
+			cardID = card.ID
+		}
+	}
+	if cardID == "" {
+		return args
+	}
+	updated := cloneToolArgs(args)
+	updated["card_id"] = cardID
+	return updated
+}
+
+func jiraToolCanUseResultCardID(toolName string) bool {
+	switch toolName {
+	case "append_notes",
+		"add_comment",
+		"assign_ticket",
+		"unassign_ticket",
+		"set_eta",
+		"set_priority",
+		"set_story_points",
+		"set_estimate",
+		"add_worklog",
+		"set_sprint",
+		"set_components",
+		"set_fix_versions",
+		"set_custom_field",
+		"add_remote_link",
+		"set_reporter",
+		"add_watcher",
+		"set_blocked",
+		"delete_ticket":
+		return true
+	default:
+		return false
+	}
 }
 
 func (syncer *jiraSyncer) moveIssue(ctx context.Context, cardID string, status kanbanStatus, reason string) error {
