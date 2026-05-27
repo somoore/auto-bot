@@ -131,6 +131,12 @@ func main() {
 	// The goroutine exits on appContext cancellation (deferred above) so
 	// shutdown is leak-free.
 	startRunQuestionSweeper(appContext, sharedBoard, defaultRunQuestionSweepInterval)
+	// Sprint 4.1: lightweight cron-style scheduler. Today it refreshes the
+	// pre-meeting agenda on a 15-minute cadence and sweeps expired
+	// pending_actions every minute. Future tasks (cost rollups, projection
+	// reconciliation) bolt onto the same ticker.
+	startCronScheduler(appContext, sharedBoard)
+	defer stopCronScheduler()
 	configuredJiraSync, err := setupJiraSync(appContext, sharedBoard)
 	if err != nil {
 		log.Errorf("Jira sync disabled: %v", err)
