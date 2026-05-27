@@ -78,6 +78,21 @@ export APP_API_TOKEN
 APP_API_TOKEN="$(keychain_get_required "${AUTO_BOT_APP_TOKEN_SERVICE:-auto-bot/app-api-token}" "$APP_TOKEN_ACCOUNT")"
 export APP_LOCAL_LOGIN_TOKEN
 APP_LOCAL_LOGIN_TOKEN="$(keychain_get_required "${AUTO_BOT_LOCAL_LOGIN_SERVICE:-auto-bot/local-login-token}" "$LOCAL_LOGIN_ACCOUNT")"
+
+# MCP signing keys (#58). Auto-mint on first run and stash in Keychain so
+# operators never paste secrets into shell history or .env files. Both
+# cmd/server (issuer) and cmd/mcpd (verifier) read the same env var.
+# Format matches internal/mcp.ParseSigningKeys: "kid1:base64-32-byte-key".
+MCP_SIGNING_KEYS_VALUE="$(keychain_get_optional "${AUTO_BOT_MCP_SIGNING_KEYS_SERVICE:-auto-bot/mcp-signing-keys}" "$APP_TOKEN_ACCOUNT")"
+if [ -z "$MCP_SIGNING_KEYS_VALUE" ]; then
+  MCP_SIGNING_KEYS_VALUE="k1:$(openssl rand -base64 32)"
+  /usr/bin/security add-generic-password -U \
+    -s "${AUTO_BOT_MCP_SIGNING_KEYS_SERVICE:-auto-bot/mcp-signing-keys}" \
+    -a "$APP_TOKEN_ACCOUNT" \
+    -w "$MCP_SIGNING_KEYS_VALUE" >/dev/null
+fi
+export MCP_SIGNING_KEYS="$MCP_SIGNING_KEYS_VALUE"
+
 export COMPOSE_DISABLE_ENV_FILE="${COMPOSE_DISABLE_ENV_FILE:-1}"
 
 OPENAI_KEY="$(keychain_get_optional "${AUTO_BOT_OPENAI_SERVICE:-auto-bot/openai-api-key}" "$OPENAI_ACCOUNT")"
