@@ -16,191 +16,68 @@ alongside `tools.go` (search for `ServeStdio`, `HTTPHandler`, and
 
 ## Authentication
 
-> **S2.2 / #58 hard cut:** `MCPD_TOKEN` (single static bearer) has been
-> removed. The HTTP transport now requires signed bearer tokens minted
-> by `cmd/server`'s admin endpoint; the stdio transport carries
-> explicit scopes via `MCPD_STDIO_SCOPES`.
+The MCP server runs two transports with **different trust models**:
 
-### Signed bearer tokens (HTTP transport)
+- **stdio** (default for editor clients such as Claude Code / Cursor)
+  — no authentication. The MCP client launches the MCP server as a
+  child process; the process tree itself is the perimeter.
 
-Tokens are HMAC-SHA256-signed envelopes in three base64url-encoded
-segments:
+- **HTTP** (used by automation, CI, remote agents) — Bearer-token
+  auth. When the server is started with a non-empty `AuthToken`, every
+  POST must carry an `Authorization: Bearer <token>` header. The check
+  is constant-time (`checkBearer`).
 
-```
-<base64url(header)>.<base64url(payload)>.<base64url(hmac)>
-```
+The bearer token in S2.0 is a single shared secret; S2.1 will replace
+this with scoped per-agent tokens minted at agent-profile registration
+time. The call site stays the same — only the verification widens.
 
-The header pins `alg=HS256` and carries a `kid` so signing keys can
-rotate without invalidating in-flight tokens. The payload carries:
-
-| Claim       | Value                                      |
-| ----------- | ------------------------------------------ |
-| `iss`       | `"auto-bot"` (constant)                    |
-| `aud`       | `"mcp"` (constant)                         |
-| `sub`       | Caller identity (e.g. `agent:claude-code`) |
-| `tenant_id` | Tenant the token is bound to               |
-| `scopes`    | Array of scope strings (see below)         |
-| `iat`       | Issued-at, unix seconds                    |
-| `exp`       | Expires-at, unix seconds                   |
-| `jti`       | ULID, unique per issue                     |
-
-Signature: HMAC-SHA256(key, base64url(header) + "." + base64url(payload)).
-
-The verifier pins `alg=HS256` (rejects `none` and every other
-algorithm), enforces `iss == "auto-bot"`, `aud == "mcp"`, and checks
-`exp` with a 60-second clock-skew window. The `jti` is recorded in an
-in-memory `MemoryReplayTracker` so a second presentation of the same
-token returns 401 with `WWW-Authenticate: Bearer error="invalid_token"`.
-
-#### Issuing a token
-
-```bash
-curl -s -X POST http://localhost:3001/admin/mcp-tokens \
-  -H "Authorization: Bearer $APP_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-        "subject":   "agent:claude-code",
-        "tenant_id": "default",
-        "scopes":    ["board:read", "card:write", "runs:start"],
-        "ttl_seconds": 900
-      }' \
-  | jq
-```
-
-Response:
-
-```json
-{
-  "token": "<base64url.b.c>",
-  "expires_at": "2026-05-26T22:30:00Z",
-  "jti": "01HM...",
-  "subject": "agent:claude-code",
-  "tenant_id": "default",
-  "scopes": ["board:read", "card:write", "runs:start"]
-}
-```
-
-Defaults: TTL is 15 minutes; max is 24 hours. Unknown scope strings
-fail loud with `400 unknown scope` so operators cannot accidentally
-grant phantom privileges.
-
-#### Scopes
-
-| Scope         | Tools                                                  |
-| ------------- | ------------------------------------------------------ |
-| `board:read`  | `board.list_cards`, `board.get_card`                   |
-| `card:write`  | `card.create`, `card.update`, `card.comment`           |
-| `runs:start`  | `runs.start`                                           |
-| `admin:issue` | Reserved for the issuer endpoint itself (future)       |
-
-The dispatcher (`internal/mcp/server.go` `handleToolsCall`) checks the
-scope BEFORE invoking the handler, so tool implementations cannot
-forget to enforce. Insufficient scope returns JSON-RPC error
-`-32001 Forbidden`.
-
-#### Signing keys + rotation
-
-Both `cmd/server` (issuer) and `cmd/mcpd` (verifier) read the same env
-var:
-
-```
-MCP_SIGNING_KEYS=k1:base64-32-byte-key[,k2:base64-key2,...]
-```
-
-The first key is the active signer (used by `Issue`); the rest are
-verifier-only — they exist so previously-active keys still accept
-tokens minted under them while clients rotate. To roll a key:
-
-1. Generate a new key: `openssl rand -base64 32`
-2. Update env to `k2:NEWKEY,k1:OLDKEY` (k2 active, k1 still verified)
-3. Restart cmd/server and mcpd; new tokens are now signed under k2
-4. After old tokens expire (≤ 24h), drop k1 from the env
-
-Symmetric keys must be shared by every cmd/server + mcpd in the
-deployment. The hosted control plane will swap to JWKS-served
-asymmetric public keys; until then `MCP_SIGNING_KEYS` is a top-tier
-secret.
-
-### Stdio transport
-
-The stdio transport assumes the parent process tree is the perimeter
-— the OS process boundary is the trust boundary. Scopes are still
-enforced, but the caller does not present a bearer; instead, the
-operator declares the scopes via:
-
-```
-MCPD_STDIO_SCOPES=board:read,card:write,runs:start
-```
-
-Empty (default) → full tool-scope set, which is the practical case
-when an operator runs mcpd locally for their own use. A single comma
-yields an empty scope slice, which forbids every gated tool.
-
-### Replay defense — known limit
-
-`MemoryReplayTracker` does NOT survive a process restart. A token
-issued and used before the restart can theoretically be replayed in
-the (≤15-minute default) window after the restart. With short TTLs
-the practical risk is small; documented as residual under
-`R-MCP-REPLAY-RESTART` and tracked for a SQLite-backed promotion.
-
----
-
-## Tenant scoping
-
-Each tool call is implicitly scoped by the `(tenant_id, board_id)`
-configured in `ToolDeps` (`internal/mcp/tools.go`). Tenant binding is
-also enforced at the store layer — every SQLite query filters by
-tenant — so a leaked token still cannot cross tenants at the data
-plane. ADR 0004 covers the multi-tenant model.
+Tenant scoping: each tool call is implicitly scoped by the
+`(tenant_id, board_id)` configured in `ToolDeps`
+(`internal/mcp/tools.go:116`). Cross-tenant access is not possible
+through this surface. ADR 0004 covers the multi-tenant model.
 
 ## How dispatch works (S2.1 wire-through)
 
 As of Sprint 2.1, the five active tools are no longer terminal: a
 mutation tool call on the MCP side now reaches cmd/server's canonical
 `ApplyToolCall` path over HTTP, so MCP-driven changes flow through the
-same audit log (`action_replay_events`), risk classification, and
-confirmation gates as voice and UI callers. Reads take a separate,
-lighter HTTP path.
+same `ActionLedger`, risk classification, and confirmation gates as
+voice and UI callers. Reads take a separate, lighter HTTP path.
 
 The chain for a mutating tool (`card.create` / `card.update` /
 `card.comment`):
 
+```mermaid
+flowchart TD
+  Client["MCP client<br/>(Claude, Cursor, automation)"]
+  Mcpd["cmd/mcpd<br/>internal/mcp/tools.go handler closure<br/>(buildCreateCardTool / buildUpdateCardTool / buildCommentTool)"]
+  Post["internal/mcp.HTTPBoardClient.post<br/>POST &lt;BoardURL&gt;/internal/tools/dispatch<br/>Authorization: Bearer &lt;APP_API_TOKEN&gt;"]
+  Dispatch["cmd/server.internalToolsDispatchHandler<br/>tool switch translates MCP names to cmd/server<br/>internal names; fans out across multiple legs<br/>(e.g. card.update -> update_ticket + move_ticket +<br/>assign_ticket + add_tags / remove_tags)"]
+  Apply["cmd/server.ApplyToolCallWithMeta<br/>ActionLedger + risk gates + tenant dry-run check"]
+  Outcome{{"Apply OR stage as PendingAction<br/>(when tenant has dry_run_enabled)"}}
+
+  Client -->|"JSON-RPC tools/call over stdio or HTTP"| Mcpd
+  Mcpd --> Post
+  Post -->|"{ tool, args, dispatcher, tenant_id, board_id }"| Dispatch
+  Dispatch -->|"each leg via sharedBoard.ApplyToolCallWithMeta"| Apply
+  Apply --> Outcome
 ```
-MCP client (Claude, Cursor, automation)
-    │   JSON-RPC tools/call over stdio or HTTP
-    ▼
-cmd/mcpd  →  internal/mcp/tools.go  (handler closure)
-    │            (`buildCreateCardTool` / `buildUpdateCardTool` /
-    │             `buildCommentTool` at :278 / :320 / :374)
-    ▼
-internal/mcp.HTTPBoardClient.post  (internal/mcp/tools.go:483)
-    │   POST <BoardURL>/internal/tools/dispatch
-    │   { tool, args, dispatcher, tenant_id, board_id }
-    │   Authorization: Bearer <APP_API_TOKEN>
-    ▼
-cmd/server.internalToolsDispatchHandler  (cmd/server/internal_dispatch.go:36)
-    │   tool switch at :70 — translates MCP names to cmd/server
-    │   internal names and fans out across multiple legs as needed
-    │   (e.g. card.update → update_ticket + move_ticket + assign_ticket +
-    │   add_tags / remove_tags). Each leg runs through
-    │   sharedBoard.ApplyToolCallWithMeta with the caller-supplied
-    │   dispatcher label.
-    ▼
-cmd/server.ApplyToolCallWithMeta
-    │   audit log + risk gates + tenant dry-run check
-    ▼
-  Apply OR stage as PendingAction (when tenant has dry_run_enabled)
-```
+
+*Mutating MCP tool call chain: client to mcpd to dispatch endpoint to ApplyToolCallWithMeta, then either applied or staged for dry-run approval.*
 
 Reads (`board.list_cards`, `board.get_card`) do **not** go through
 `/internal/tools/dispatch`. They use the read-side endpoint instead:
 
+```mermaid
+flowchart LR
+  Read["HTTPBoardClient.get<br/>(internal/mcp/tools.go:545)"]
+  List["GET /internal/board/cards<br/>=> { cards: [...] }"]
+  One["GET /internal/board/cards/{id}<br/>=> { card: ... }"]
+  Read --> List
+  Read --> One
 ```
-HTTPBoardClient.get (internal/mcp/tools.go:545)
-    GET <BoardURL>/internal/board/cards         → { cards: [...] }
-    GET <BoardURL>/internal/board/cards/{id}    → { card:  ... }
-```
+
+*Read-side path: list and single-card lookups bypass the dispatch endpoint and hit the read-only board endpoints directly.*
 
 The dispatch endpoint switch at `cmd/server/internal_dispatch.go:70`
 only recognizes `card.create`, `card.update`, and `card.comment`; any
@@ -302,8 +179,7 @@ result inside `data` / the decoded `text` block.
 | `card.create`          | 2.0    | Medium  | Wired    | Create a card. Routes via `/internal/tools/dispatch`.  |
 | `card.update`          | 2.0    | Medium  | Wired    | Patch a card. Routes via `/internal/tools/dispatch`.   |
 | `card.comment`         | 2.0    | Low     | Wired    | Append a comment. Routes via `/internal/tools/dispatch`. |
-| `runs.start`           | 2.1    | Medium  | Wired    | Start an agent Run on a card. Routes via `/internal/tools/dispatch` → `assign_ticket_to_agent`. May return a Trust Ceremony confirmation envelope. |
-| `run.start`            | 2.1    | High    | Stub     | Reserved for future per-run-coordinator dispatch. 400 today. |
+| `run.start`            | 2.1    | High    | Stub     | Kick off an agent Run on a card. 400 today.            |
 | `run.checkpoint`       | 2.1    | Low     | Stub     | Append a checkpoint to a Run timeline. 400 today.      |
 | `run.ask_human`        | 2.1    | Medium  | Stub     | Pause a Run on a `RunQuestion`. 400 today.             |
 | `run.answer_question`  | 2.1    | Medium  | Stub     | Answer an open `RunQuestion` and resume the Run.       |
@@ -540,7 +416,7 @@ tool routes through `HTTPBoardClient.CreateCard`
 `/internal/tools/dispatch`. `cmd/server.dispatchCardCreate`
 (`cmd/server/internal_dispatch.go:85`) translates the MCP-shaped args
 to `create_ticket` and runs them through `ApplyToolCallWithMeta`, so
-the audit log + risk gates + dry-run staging now apply uniformly with
+`ActionLedger` + risk gates + dry-run staging now apply uniformly with
 the voice / UI surface. When the optional `assignee` is supplied, the
 dispatcher fans out a follow-up `assign_ticket` call against the
 freshly-created card so the MCP call site stays single-step
@@ -824,101 +700,16 @@ Response `data`:
 
 ---
 
-## `runs.start`
-
-**Risk:** Medium — mints an autonomous agent Run. Routes through the
-Trust Ceremony confirmation gate by default.
-
-**Purpose.** Start a Run against an existing card so an agent (PM,
-SWE, code-reviewer, etc.) picks up the work and posts back to the
-card's thread. The same path that voice's `assign_ticket_to_agent`
-tool exercises — the audit log, risk classification, and the agent
-orchestrator all apply uniformly. Source: `buildStartRunTool` in
-`internal/mcp/tools.go`.
-
-**Wire path.** `HTTPBoardClient.StartRun` posts a `runs.start`
-envelope to `/internal/tools/dispatch`. `cmd/server.dispatchRunsStart`
-(`cmd/server/internal_dispatch.go`) translates the MCP-shaped args
-to `assign_ticket_to_agent` and runs them through
-`ApplyToolCallWithMeta`. Because `assign_ticket_to_agent` is rated
-**Medium** risk (see `riskForTool` in
-`cmd/server/meeting_intelligence.go`), the default response is a
-**202 Accepted** carrying a Trust Ceremony confirmation envelope —
-the operator approves it from the Dry-Run Queue (UI) or from the
-`/admin/pending-actions` API. Approval converts the queued action
-into the real Run.
-
-### Input schema
-
-```json
-{
-  "type": "object",
-  "required": ["card_id", "objective"],
-  "properties": {
-    "card_id":             { "type": "string" },
-    "objective":           { "type": "string" },
-    "agent_profile":       { "type": "string" },
-    "request_type":        { "type": "string" },
-    "requested_by":        { "type": "string" },
-    "repo":                { "type": "string" },
-    "branch":              { "type": "string" },
-    "pull_request_number": { "type": "integer" }
-  }
-}
-```
-
-### Output schema (immediate start)
-
-```json
-{
-  "type": "object",
-  "required": ["card_id"],
-  "properties": {
-    "run_id":        { "type": "string" },
-    "status":        { "type": "string" },
-    "agent_profile": { "type": "string" },
-    "card_id":       { "type": "string" }
-  }
-}
-```
-
-### Output schema (pending confirmation, default for production)
-
-```json
-{
-  "type": "object",
-  "required": ["card_id", "requires_confirmation"],
-  "properties": {
-    "requires_confirmation": { "type": "boolean", "const": true },
-    "confirmation_id":       { "type": "string" },
-    "risk_level":            { "type": "string", "enum": ["medium"] },
-    "prompt":                { "type": "string" },
-    "card_id":               { "type": "string" }
-  }
-}
-```
-
-### Errors
-
-| Condition          | Surface                       |
-| ------------------ | ----------------------------- |
-| Missing `card_id`  | `-32602 card_id is required`  |
-| Missing `objective`| `-32602 objective is required`|
-| Unknown card       | `-32603 mcp: card not found`  |
-
----
-
 ## Coming next (Sprint 2.1+)
 
-The remaining Run-lifecycle and agent-control tools below are planned
-but not yet wired through the dispatch endpoint. Their shapes are
-illustrative; the canonical schemas will land alongside the
-implementations and will live next to the S2.0 / runs.start tools in
-`internal/mcp/tools.go`.
+The Run-lifecycle and agent-control tools below are planned but not
+yet wired through the dispatch endpoint. Their shapes are illustrative;
+the canonical schemas will land alongside the implementations and will
+live next to the S2.0 tools in `internal/mcp/tools.go`.
 
-**Today's behavior:** the dispatch endpoint switch in
-`cmd/server/internal_dispatch.go` recognizes `card.create`,
-`card.update`, `card.comment`, and `runs.start`. Any of the names
+**Today's behavior:** the dispatch endpoint switch at
+`cmd/server/internal_dispatch.go:70`–`:79` only recognizes
+`card.create`, `card.update`, and `card.comment`. Any of the names
 below sent to `/internal/tools/dispatch` returns 400 with body
 `{"error":"unknown tool \"<name>\""}`. The MCP UI surfaces that error
 inline rather than swallowing it, so agents see the failure on their

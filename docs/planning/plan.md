@@ -264,88 +264,51 @@ Measure weekly. If a phase doesn't move the number, diagnose before proceeding.
 
 ## Architecture
 
-```
-                    VOICE_PROVIDER=openai              VOICE_PROVIDER=nova-sonic
-                    (existing codebase)                (new parallel path)
+```mermaid
+flowchart TD
+  subgraph OAI["VOICE_PROVIDER=openai (existing codebase)"]
+    Pion["Pion WebRTC SFU<br/>+ Audio Mixer + WS Signaling"]
+    OAIRT["OpenAI Realtime 2<br/>(WebRTC peer + data channel)"]
+    Pion --> OAIRT
+  end
 
-                ┌─────────────────────┐           ┌──────────────────────────┐
-                │   Pion WebRTC SFU   │           │   LiveKit Cloud (SFU)    │
-                │   + Audio Mixer     │           │   + Audio Routing        │
-                │   + WS Signaling    │           │   + LiveKit Agents SDK   │
-                └─────────┬───────────┘           └────────────┬─────────────┘
-                          │                                    │
-                          ▼                                    ▼
-                ┌─────────────────────┐           ┌──────────────────────────┐
-                │  OpenAI Realtime 2  │           │  AWS Nova Sonic 2        │
-                │  (WebRTC peer +     │           │  (LiveKit MCP plugin,    │
-                │   data channel)     │           │   8-min session renewal) │
-                └─────────┬───────────┘           └────────────┬─────────────┘
-                          │                                    │
-                          │         Tool Calls                 │
-                          └──────────────┬─────────────────────┘
-                                         │
-                                         ▼
-                              ┌─────────────────────┐
-                              │   KANBAN BOARD STATE │ ◄── shared
-                              │   + Jira Sync Layer  │ ◄── shared
-                              │   + get_board (seq#) │ ◄── shared
-                              └──────────┬──────────┘
-                                         │
-                                   Board Changes
-                                   (Jira webhooks)
-                                         │
-                                         ▼
-                              ┌─────────────────────┐
-                              │  PRE-CLASSIFIER      │
-                              │  (rule-based filter)  │
-                              │  enough metadata?     │
-                              └──────────┬──────────┘
-                                    yes  │  no → needs-human
-                                         │
-                                         ▼
-                              ┌─────────────────────┐
-                              │  CLASSIFIER (haiku)  │
-                              │  confidence threshold │
-                              │  (set from cold-start │
-                              │   labeled data)       │
-                              └──────────┬──────────┘
-                                         │
-                          ┌──────────────┼──────────────┐
-                          │     above    │    below      │
-                          │   threshold  │  threshold    │
-                          ▼              │               ▼
-               ┌─────────────────┐       │    ┌──────────────────┐
-               │   ORCHESTRATOR  │       │    │  needs-human     │
-               │  Route by type  │       │    │  (skip the guess)│
-               │  Cost cap/ticket│       │    └──────────────────┘
-               └──┬───┬───┬─────┘       │
-                  │   │   │              │
-         ┌────────┘   │   └────────┐     │
-         ▼            ▼            ▼     │
-     ┌───────┐  ┌────────┐  ┌───────┐   │
-     │ Code  │  │Research│  │  Sec  │   │
-     │ Agent │  │ Agent  │  │ Agent │   │
-     │       │  │        │  │       │   │
-     │propose│  └───┬────┘  └───┬───┘   │
-     │changes│      │           │       │
-     └───┬───┘      │           │       │
-         │   checkpoints        │       │
-         └──────────┴───────────┘       │
-                    │                    │
-         ┌──────────┴──────────┐         │
-         │  On failure, tag:   │         │
-         │  needs-tooling  ◄───┼─── automation backlog
-         │  needs-decision     │         │
-         │  needs-human        │◄────────┘
-         └─────────────────────┘
-                    │
-               Results + escalations
-                 back to Jira
+  subgraph NOVA["VOICE_PROVIDER=nova-sonic (new parallel path)"]
+    LK["LiveKit Cloud (SFU)<br/>+ Audio Routing + LiveKit Agents SDK"]
+    Nova["AWS Nova Sonic 2<br/>(LiveKit MCP plugin, 8-min session renewal)"]
+    LK --> Nova
+  end
 
-    Voice tools: take_over (at checkpoint), retry_with
-    Standup: 60-sec agent summary → human triage only
-    Metric: meeting hours/week vs baseline
+  Board[("KANBAN BOARD STATE<br/>+ Jira Sync Layer<br/>+ get_board (seq#)<br/><i>shared</i>")]
+  Pre["PRE-CLASSIFIER<br/>(rule-based filter)<br/>enough metadata?"]
+  Cls["CLASSIFIER (haiku)<br/>confidence threshold<br/>(set from cold-start labeled data)"]
+  Orch["ORCHESTRATOR<br/>Route by type<br/>Cost cap/ticket"]
+  NeedsHuman["needs-human<br/>(skip the guess)"]
+  Code["Code Agent<br/>propose changes"]
+  Research["Research Agent"]
+  Sec["Sec Agent"]
+  Fail["On failure, tag:<br/>needs-tooling<br/>needs-decision<br/>needs-human"]
+  Backlog>"automation backlog"]
+  Jira[("Results + escalations<br/>back to Jira")]
+
+  OAIRT -->|"Tool Calls"| Board
+  Nova -->|"Tool Calls"| Board
+  Board -->|"Board Changes (Jira webhooks)"| Pre
+  Pre -->|"yes"| Cls
+  Pre -->|"no"| NeedsHuman
+  Cls -->|"above threshold"| Orch
+  Cls -->|"below threshold"| NeedsHuman
+  Orch --> Code
+  Orch --> Research
+  Orch --> Sec
+  Code -.->|"checkpoints"| Fail
+  Research -.->|"checkpoints"| Fail
+  Sec -.->|"checkpoints"| Fail
+  Backlog -.-> Fail
+  NeedsHuman --> Fail
+  Fail --> Jira
 ```
+
+*End-to-end flow: voice provider (OpenAI or Nova Sonic) issues tool calls into the shared kanban + Jira sync layer; board changes feed a pre-classifier and confidence classifier, then route to an orchestrator that dispatches per-domain agents or escalates to a human. Voice tools include `take_over` (at checkpoint) and `retry_with`; standups become a 60-sec agent summary feeding human triage; the headline metric is meeting hours/week vs baseline.*
 
 ---
 
