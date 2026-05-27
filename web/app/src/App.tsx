@@ -23,6 +23,8 @@ import {
   type Card,
   type CardStatus,
 } from "./types/board"
+import { useStandupAgenda } from "./lib/standupAgenda"
+import { useMeetingReport } from "./lib/meetingReport"
 
 const URL_PARAM_CARD = "card"
 const URL_PARAM_AGENDA = "agenda"
@@ -132,6 +134,57 @@ function App(): JSX.Element {
     return v && v !== MEETING_PARAM_ACTIVE ? v : null
   })
 
+  // Live-data hooks. Both fall back to the sample below if the fetch
+  // 404s, errors, or returns an empty payload — the dev experience
+  // stays smooth even when the backend isn't fully populated yet.
+  const liveAgenda = useStandupAgenda(agendaOpen)
+  const liveReport = useMeetingReport(meetingId)
+
+  // D1.3 dev seed: ?seedQuestion=<card_id> POSTs to the local-only
+  // /internal/dev/seed-run-question endpoint, then opens the drawer to
+  // that card so the operator can visually verify the
+  // "Run waiting on human" state without AWS-driven Bedrock. No-op
+  // when the query param is absent or APP_ENV != "local" (the server
+  // returns 404 in non-local environments).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const seedCard = params.get("seedQuestion")
+    if (!seedCard) return
+    let cancelled = false
+    void (async (): Promise<void> => {
+      try {
+        const res = await fetch("/internal/dev/seed-run-question", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            card_id: seedCard,
+            prompt: "Per-tenant DB file vs shared with tenant_id partitioning?",
+            suggested_answers: [
+              "per-tenant DB file",
+              "shared db with tenant_id column",
+              "defer the decision",
+            ],
+          }),
+        })
+        if (cancelled) return
+        if (!res.ok) return
+        // Drop the seed param + open the drawer to the card so the
+        // human sees the Run-waiting-on-human state.
+        params.delete("seedQuestion")
+        params.set(URL_PARAM_CARD, seedCard)
+        const next = `${window.location.pathname}?${params.toString()}`
+        window.history.replaceState({}, "", next)
+        setSelectedCardId(seedCard)
+      } catch {
+        // Best-effort; silently ignore in dev.
+      }
+    })()
+    return (): void => {
+      cancelled = true
+    }
+  }, [])
+
   const openAgenda = useCallback((): void => {
     setAgendaOpen(true)
     pushAgendaParam()
@@ -198,9 +251,12 @@ function App(): JSX.Element {
   // of the loading/auth gates so a deep-linked summary is rendered without
   // waiting on the board WebSocket handshake.
   if (meetingId) {
+    // Prefer the live fetched report; fall back to the hardcoded sample
+    // until the server-side meeting_reports surface ships richer data.
+    const reportForView = liveReport.report ?? sampleMeetingReport(meetingId)
     return (
       <PostMeetingSummary
-        report={sampleMeetingReport(meetingId)}
+        report={reportForView}
         onBackToBoard={closeMeeting}
       />
     )
@@ -272,7 +328,7 @@ function App(): JSX.Element {
       ) : null}
       {agendaOpen ? (
         <AgendaOverlay
-          agenda={SAMPLE_AGENDA}
+          agenda={liveAgenda.agenda ?? SAMPLE_AGENDA}
           onStart={startAgenda}
           onSkip={closeAgenda}
           onClose={closeAgenda}

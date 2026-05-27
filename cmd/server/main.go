@@ -221,6 +221,10 @@ func main() {
 	mux.HandleFunc("/meeting/type", switchMeetingTypeHandler)
 	mux.HandleFunc("/meeting/intelligence", meetingIntelligenceHandler)
 	mux.HandleFunc("/meetings", meetingsListHandler)
+	// /meetings/{id} returns a single archived meetingIntelligenceReport
+	// (D2.6 PostMeetingSummary). The list-shape /meetings handler above
+	// returns the index; this trailing-slash route serves a single id.
+	mux.HandleFunc("/meetings/", meetingReportByIDHandler)
 	mux.HandleFunc("/post-meeting", postMeetingPageHandler)
 	mux.HandleFunc("/setup/status", setupStatusHandler)
 	mux.HandleFunc("/setup/aws/refresh", localAWSCredentialRefreshHandler)
@@ -238,6 +242,14 @@ func main() {
 	mux.HandleFunc("/internal/tools/dispatch", internalToolsDispatchHandler)
 	mux.HandleFunc("/internal/board/cards", internalBoardCardsHandler)
 	mux.HandleFunc("/internal/board/cards/", internalBoardCardsHandler)
+	// D2.5: live standup agenda for the React AgendaOverlay. Shares the
+	// internal/standup.AgendaBuilder the voice agent + cron use, so the
+	// drawer and meeting agent see the same shape.
+	mux.HandleFunc("/internal/standup/agenda", internalStandupAgendaHandler)
+	// D1.3 dev-only seed: refuses outside APP_ENV=local (404). Lets a
+	// human visually verify the "Run waiting on human" UI state without
+	// AWS-driven Bedrock.
+	mux.HandleFunc("/internal/dev/seed-run-question", devSeedRunQuestionHandler)
 
 	// MCP token issuance (#58). Operators POST signed bearer tokens that
 	// MCP clients use against cmd/mcpd. Same APP_API_TOKEN gate as the
