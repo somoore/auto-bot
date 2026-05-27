@@ -42,7 +42,7 @@ type modelSafeKanbanCard struct {
 	IssueType               string                 `json:"issueType,omitempty"`
 	ParentID                string                 `json:"parentId,omitempty"`
 	EpicKey                 string                 `json:"epicKey,omitempty"`
-	Assignee                *kanbanUser            `json:"assignee,omitempty"`
+	Assignee                *kanbanActor           `json:"assignee,omitempty"`
 	Reporter                *kanbanUser            `json:"reporter,omitempty"`
 	Watchers                []kanbanUser           `json:"watchers,omitempty"`
 	DueDate                 string                 `json:"dueDate,omitempty"`
@@ -152,7 +152,7 @@ func modelSafeCard(card kanbanCard) modelSafeKanbanCard {
 		CustomFields:      sanitizeUntrustedCustomFields(card.CustomFields, &warnings),
 	}
 	if card.Assignee != nil {
-		safe.Assignee = sanitizeUntrustedUser("assignee", *card.Assignee, &warnings)
+		safe.Assignee = sanitizeUntrustedActor("assignee", *card.Assignee, &warnings)
 	}
 	if card.Reporter != nil {
 		safe.Reporter = sanitizeUntrustedUser("reporter", *card.Reporter, &warnings)
@@ -251,6 +251,17 @@ func sanitizeModelValue(value any, field string, warnings *[]string) any {
 			return kanbanUser{}
 		}
 		return *user
+	case kanbanActor:
+		actor := sanitizeUntrustedActor(field, typed, warnings)
+		if actor == nil {
+			return kanbanActor{}
+		}
+		return *actor
+	case *kanbanActor:
+		if typed == nil {
+			return (*kanbanActor)(nil)
+		}
+		return sanitizeUntrustedActor(field, *typed, warnings)
 	case []kanbanComment:
 		return sanitizeUntrustedComments(typed, warnings)
 	case kanbanComment:
@@ -310,6 +321,16 @@ func sanitizeUntrustedUser(prefix string, user kanbanUser, warnings *[]string) *
 	user.DisplayName = sanitizeUntrustedField(prefix+".displayName", user.DisplayName, warnings)
 	user.EmailAddress = sanitizeUntrustedField(prefix+".emailAddress", user.EmailAddress, warnings)
 	return &user
+}
+
+func sanitizeUntrustedActor(prefix string, actor kanbanActor, warnings *[]string) *kanbanActor {
+	actor.ID = sanitizeUntrustedField(prefix+".id", actor.ID, warnings)
+	actor.DisplayName = sanitizeUntrustedField(prefix+".displayName", actor.DisplayName, warnings)
+	actor.Email = sanitizeUntrustedField(prefix+".email", actor.Email, warnings)
+	actor.AvatarRef = sanitizeUntrustedField(prefix+".avatarRef", actor.AvatarRef, warnings)
+	actor.AgentProfile = sanitizeUntrustedField(prefix+".agentProfile", actor.AgentProfile, warnings)
+	actor.OwnerHumanID = sanitizeUntrustedField(prefix+".ownerHumanId", actor.OwnerHumanID, warnings)
+	return &actor
 }
 
 func sanitizeUntrustedUsers(prefix string, users []kanbanUser, warnings *[]string) []kanbanUser {

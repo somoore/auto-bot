@@ -293,7 +293,7 @@ func (client *jiraClient) SearchKanbanCards(ctx context.Context) ([]kanbanCard, 
 				IssueType:         jiraObjectName(issue.Fields["issuetype"]),
 				ParentID:          jiraObjectKey(issue.Fields["parent"]),
 				EpicKey:           asString(issue.Fields[client.config.EpicLinkField]),
-				Assignee:          jiraUser(issue.Fields["assignee"]),
+				Assignee:          jiraAssigneeActor(issue.Fields["assignee"]),
 				Reporter:          jiraUser(issue.Fields["reporter"]),
 				DueDate:           asString(issue.Fields["duedate"]),
 				Priority:          jiraObjectName(issue.Fields["priority"]),
@@ -344,8 +344,8 @@ func (client *jiraClient) CreateIssue(ctx context.Context, card kanbanCard) (str
 	if labels := jiraLabels(card.Tags); len(labels) > 0 {
 		fields["labels"] = labels
 	}
-	if card.Assignee != nil && strings.TrimSpace(card.Assignee.AccountID) != "" {
-		fields["assignee"] = map[string]any{"accountId": card.Assignee.AccountID}
+	if card.Assignee != nil && card.Assignee.Kind == kanbanActorKindHuman && strings.TrimSpace(card.Assignee.ID) != "" {
+		fields["assignee"] = map[string]any{"accountId": card.Assignee.ID}
 	}
 	if strings.TrimSpace(card.DueDate) != "" {
 		fields["duedate"] = card.DueDate
@@ -807,6 +807,17 @@ func jiraUser(value any) *kanbanUser {
 	return &user
 }
 
+// jiraAssigneeActor hydrates a Jira assignee response into the canonical
+// Actor shape. Jira only returns human identities, so every hydrated
+// assignee is an Actor{Kind:Human}.
+func jiraAssigneeActor(value any) *kanbanActor {
+	user := jiraUser(value)
+	if user == nil {
+		return nil
+	}
+	return actorFromUser(*user)
+}
+
 func jiraComments(value any) []kanbanComment {
 	object, ok := value.(map[string]any)
 	if !ok {
@@ -856,6 +867,16 @@ func jiraAssigneeAccountID(args map[string]any, result map[string]any) string {
 		return accountID
 	}
 	switch assignee := result["assignee"].(type) {
+	case kanbanActor:
+		if assignee.Kind == kanbanActorKindHuman {
+			return assignee.ID
+		}
+		return ""
+	case *kanbanActor:
+		if assignee != nil && assignee.Kind == kanbanActorKindHuman {
+			return assignee.ID
+		}
+		return ""
 	case kanbanUser:
 		return assignee.AccountID
 	case *kanbanUser:
@@ -863,6 +884,15 @@ func jiraAssigneeAccountID(args map[string]any, result map[string]any) string {
 			return assignee.AccountID
 		}
 	case map[string]any:
+		// Support both Actor shape ({"kind","id"}) and legacy User shape
+		// ({"accountId"}). Reject non-human Actors so we never push an
+		// agent identity into Jira.
+		if kind, ok := assignee["kind"].(string); ok && kind != "" {
+			if kind == string(kanbanActorKindHuman) {
+				return asString(assignee["id"])
+			}
+			return ""
+		}
 		return asString(assignee["accountId"])
 	}
 	return ""

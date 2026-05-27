@@ -46,7 +46,7 @@ Measure weekly. If a phase doesn't move the number, diagnose before proceeding.
 
 ## Phase 1 — OpenAI Realtime Baseline
 
-**Goal:** Get the upstream `openai-realtime-meeting-assistant` demo running, validate the voice → tool-call → board-update loop, and build a failure inventory that becomes the test suite for everything after.
+**Goal:** Get the upstream OpenAI Realtime meeting-assistant demo running, validate the voice -> tool-call -> board-update loop, and build a failure inventory that becomes the test suite for everything after.
 
 **Tasks:**
 

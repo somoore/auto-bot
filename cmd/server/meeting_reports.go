@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -14,6 +15,7 @@ import (
 // /meeting/intelligence and archived when durable storage is configured.
 type meetingIntelligenceReport struct {
 	OK                   bool                       `json:"ok"`
+	TenantID             string                     `json:"tenant_id,omitempty"`
 	BoardID              string                     `json:"board_id"`
 	MeetingID            string                     `json:"meeting_id"`
 	MeetingType          string                     `json:"meeting_type,omitempty"`
@@ -41,6 +43,7 @@ type meetingIntelligenceReport struct {
 	TranscriptEvidence   []transcriptEvidence       `json:"transcript_evidence,omitempty"`
 	SprintIntelligence   sprintIntelligence         `json:"sprint_intelligence"`
 	GitHubContext        githubMeetingContext       `json:"github_context"`
+	ProductProof         productProofMetrics        `json:"product_proof"`
 	Observability        meetingObservability       `json:"observability"`
 	Setup                setupReadinessReport       `json:"setup"`
 	OpenQuestions        []string                   `json:"open_questions,omitempty"`
@@ -66,6 +69,7 @@ type meetingReportSummary struct {
 	AgentRunCnt    int              `json:"agent_run_count"`
 	BlockerCnt     int              `json:"blocker_count"`
 	ActionItemCnt  int              `json:"action_item_count"`
+	MinutesSaved   int              `json:"estimated_minutes_saved"`
 }
 
 type meetingParticipantReport struct {
@@ -102,6 +106,22 @@ type githubPullRequestSignal struct {
 	URL    string `json:"url,omitempty"`
 	State  string `json:"state,omitempty"`
 	Reason string `json:"reason,omitempty"`
+}
+
+type productProofMetrics struct {
+	BaselineMeetingMinutes       int      `json:"baseline_meeting_minutes"`
+	ActualMeetingMinutes         int      `json:"actual_meeting_minutes"`
+	EstimatedAdminMinutesAvoided int      `json:"estimated_admin_minutes_avoided"`
+	EstimatedNetMinutesSaved     int      `json:"estimated_net_minutes_saved"`
+	JiraChangesAutomated         int      `json:"jira_changes_automated"`
+	AgentRunsStarted             int      `json:"agent_runs_started"`
+	AgentRunsCompleted           int      `json:"agent_runs_completed"`
+	AgentRunsNeedingHuman        int      `json:"agent_runs_needing_human"`
+	NeedsToolingEscalations      int      `json:"needs_tooling_escalations"`
+	HumanFallbackSignals         int      `json:"human_fallback_signals"`
+	AutomationRate               float64  `json:"automation_rate"`
+	MeasurementQuality           string   `json:"measurement_quality"`
+	Evidence                     []string `json:"evidence,omitempty"`
 }
 
 type meetingObservability struct {
@@ -185,9 +205,11 @@ func (board *kanbanBoard) BuildMeetingIntelligenceReport(source string) meetingI
 	since := parseOptionalTime(startedAt)
 	jiraChanges := mutationViewsSince(mutations, since)
 	transcript := transcriptsSince(transcripts, since)
+	productProof := buildProductProofMetrics(firstNonEmpty(access.MeetingType, string(meeting.Mode)), startedAt, endedAt, now, jiraChanges, agentRuns, *meeting, pending)
 
 	report := meetingIntelligenceReport{
 		OK:                   true,
+		TenantID:             board.tenantID,
 		BoardID:              stateBoardID(state, board.boardID),
 		MeetingID:            meeting.MeetingID,
 		MeetingType:          firstNonEmpty(access.MeetingType, string(meeting.Mode)),
@@ -213,6 +235,7 @@ func (board *kanbanBoard) BuildMeetingIntelligenceReport(source string) meetingI
 		TranscriptEvidence:   transcriptEvidenceFromMutations(jiraChanges),
 		SprintIntelligence:   buildSprintIntelligence(cards, mutations, since),
 		GitHubContext:        buildGitHubMeetingContext(cards),
+		ProductProof:         productProof,
 		Observability:        buildMeetingObservability(state.SequenceNumber, access),
 		Setup:                buildSetupReadinessReport(),
 		OpenQuestions:        buildOpenQuestions(*meeting, cards),
@@ -251,6 +274,7 @@ func (report meetingIntelligenceReport) SummaryView() meetingReportSummary {
 		AgentRunCnt:    len(report.AgentRuns),
 		BlockerCnt:     len(report.UnresolvedBlockers) + len(report.SprintIntelligence.BlockedCards),
 		ActionItemCnt:  len(report.ActionItems) + len(report.FollowUps),
+		MinutesSaved:   report.ProductProof.EstimatedNetMinutesSaved,
 	}
 }
 
@@ -285,9 +309,22 @@ func (report meetingIntelligenceReport) buildSlackSummary() string {
 		actionItems = append(actionItems, formatFollowUpSummary(followUp))
 	}
 	lines = append(lines, markdownBullets(actionItems, "No action items captured.")...)
+	lines = append(lines, "", "*Product proof:*")
+	lines = append(lines, productProofBullets(report.ProductProof)...)
 	lines = append(lines, "", "*Open questions:*")
 	lines = append(lines, markdownBullets(report.OpenQuestions, "No unresolved questions.")...)
 	return strings.Join(lines, "\n")
+}
+
+func productProofBullets(metrics productProofMetrics) []string {
+	if metrics.MeasurementQuality == "" {
+		return []string{"- Product proof metrics were not generated."}
+	}
+	return []string{
+		fmt.Sprintf("- Estimated net minutes saved: %d (%s).", metrics.EstimatedNetMinutesSaved, metrics.MeasurementQuality),
+		fmt.Sprintf("- Automated Jira changes: %d; completed agent runs: %d.", metrics.JiraChangesAutomated, metrics.AgentRunsCompleted),
+		fmt.Sprintf("- Human fallback signals: %d; needs-tooling escalations: %d.", metrics.HumanFallbackSignals, metrics.NeedsToolingEscalations),
+	}
 }
 
 func markdownBullets(items []string, empty string) []string {
@@ -532,6 +569,156 @@ func dedupeGitHubSignals(signals []githubPullRequestSignal) []githubPullRequestS
 	return out
 }
 
+func buildProductProofMetrics(meetingType string, startedAt string, endedAt string, now time.Time, jiraChanges []boardMutationView, agentRuns []agentRunView, meeting scrumMeetingState, pending []pendingConfirmationView) productProofMetrics {
+	baseline := baselineMeetingMinutes(meetingType)
+	actual, quality := actualMeetingMinutes(startedAt, endedAt, now)
+	jiraChangeCount := countExternallyConfirmedJiraChanges(jiraChanges)
+	if jiraChangeCount == 0 {
+		jiraChangeCount = len(jiraChanges)
+	}
+	completedAgentRuns := 0
+	agentNeedsHuman := 0
+	needsTooling := 0
+	for _, run := range agentRuns {
+		switch run.Status {
+		case agentRunCompleted:
+			completedAgentRuns++
+		case agentRunNeedsInput, agentRunWaitingOnHuman, agentRunFailed, agentRunUnsupported, agentRunCancelled, agentRunTakenOver, agentRunRetrying:
+			agentNeedsHuman++
+		}
+		if agentRunMentionsNeedsTooling(run) {
+			needsTooling++
+		}
+	}
+
+	humanFallback := len(meeting.UnresolvedBlockers) + len(pending) + agentNeedsHuman
+	adminAvoided := jiraChangeCount*2 + completedAgentRuns*15
+	netSaved := adminAvoided
+	if actual > 0 {
+		netSaved += maxInt(0, baseline-actual)
+	}
+	automatedUnits := jiraChangeCount + completedAgentRuns
+	totalDecisionUnits := automatedUnits + humanFallback
+	automationRate := 0.0
+	if totalDecisionUnits > 0 {
+		automationRate = float64(automatedUnits) / float64(totalDecisionUnits)
+	}
+	evidence := []string{
+		fmt.Sprintf("%d Jira change%s handled during the meeting.", jiraChangeCount, plural(jiraChangeCount)),
+		fmt.Sprintf("%d completed agent run%s.", completedAgentRuns, plural(completedAgentRuns)),
+	}
+	if actual > 0 {
+		evidence = append(evidence, fmt.Sprintf("Meeting ran %d minute%s against a %d minute baseline.", actual, plural(actual), baseline))
+	} else {
+		evidence = append(evidence, fmt.Sprintf("No completed meeting duration yet; using a %d minute %s baseline.", baseline, firstNonEmpty(meetingType, "meeting")))
+	}
+	if humanFallback > 0 {
+		evidence = append(evidence, fmt.Sprintf("%d human fallback signal%s remain.", humanFallback, plural(humanFallback)))
+	}
+
+	return productProofMetrics{
+		BaselineMeetingMinutes:       baseline,
+		ActualMeetingMinutes:         actual,
+		EstimatedAdminMinutesAvoided: adminAvoided,
+		EstimatedNetMinutesSaved:     maxInt(0, netSaved),
+		JiraChangesAutomated:         jiraChangeCount,
+		AgentRunsStarted:             len(agentRuns),
+		AgentRunsCompleted:           completedAgentRuns,
+		AgentRunsNeedingHuman:        agentNeedsHuman,
+		NeedsToolingEscalations:      needsTooling,
+		HumanFallbackSignals:         humanFallback,
+		AutomationRate:               roundFloat(automationRate, 2),
+		MeasurementQuality:           quality,
+		Evidence:                     evidence,
+	}
+}
+
+func baselineMeetingMinutes(meetingType string) int {
+	if override := strings.TrimSpace(os.Getenv("AUTO_BOT_BASELINE_MEETING_MINUTES")); override != "" {
+		if parsed, err := strconv.Atoi(override); err == nil && parsed > 0 && parsed <= 480 {
+			return parsed
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(meetingType)) {
+	case meetingTypeStandup, string(scrumMeetingModeStandup):
+		return 15
+	case meetingTypeOneOnOne:
+		return 30
+	case meetingTypeSprintReview:
+		return 60
+	case meetingTypeOpenEnded:
+		return 30
+	default:
+		return 30
+	}
+}
+
+func actualMeetingMinutes(startedAt string, endedAt string, now time.Time) (int, string) {
+	start := parseOptionalTime(startedAt)
+	if start.IsZero() {
+		return 0, "estimated_no_start_time"
+	}
+	end := parseOptionalTime(endedAt)
+	quality := "measured"
+	if end.IsZero() {
+		end = now
+		quality = "estimated_active_meeting"
+	}
+	if end.Before(start) {
+		return 0, "estimated_invalid_duration"
+	}
+	duration := end.Sub(start)
+	if duration <= 0 {
+		return 0, quality
+	}
+	minutes := int(duration / time.Minute)
+	if duration%time.Minute != 0 {
+		minutes++
+	}
+	return minutes, quality
+}
+
+func countExternallyConfirmedJiraChanges(changes []boardMutationView) int {
+	count := 0
+	for _, change := range changes {
+		for _, confirmation := range change.ExternalConfirmations {
+			if strings.EqualFold(confirmation.System, "jira") && confirmation.OK {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
+func agentRunMentionsNeedsTooling(run agentRunView) bool {
+	text := strings.ToLower(strings.Join([]string{run.Summary, run.Error, run.CurrentStep}, " "))
+	if strings.Contains(text, "needs-tooling") || strings.Contains(text, "needs tooling") {
+		return true
+	}
+	for _, checkpoint := range run.Checkpoints {
+		text := strings.ToLower(checkpoint.Message + " " + checkpoint.Step)
+		if strings.Contains(text, "needs-tooling") || strings.Contains(text, "needs tooling") {
+			return true
+		}
+	}
+	return false
+}
+
+func roundFloat(value float64, places int) float64 {
+	if places <= 0 {
+		return float64(int(value + 0.5))
+	}
+	scale := 1.0
+	for i := 0; i < places; i++ {
+		scale *= 10
+	}
+	if value >= 0 {
+		return float64(int(value*scale+0.5)) / scale
+	}
+	return float64(int(value*scale-0.5)) / scale
+}
+
 func buildOpenQuestions(meeting scrumMeetingState, cards []kanbanCard) []string {
 	questions := make([]string, 0)
 	for _, blocker := range meeting.UnresolvedBlockers {
@@ -744,6 +931,13 @@ func minInt(a int, b int) int {
 	return b
 }
 
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func (board *kanbanBoard) persistMeetingReport(report meetingIntelligenceReport) {
 	store, ok := board.store.(meetingReportStore)
 	if !ok || report.MeetingID == "" {
@@ -757,7 +951,11 @@ func (board *kanbanBoard) persistMeetingReport(report meetingIntelligenceReport)
 func (board *kanbanBoard) archiveMeetingReport(source string) meetingIntelligenceReport {
 	report := board.BuildMeetingIntelligenceReport(source)
 	board.persistMeetingReport(report)
-	broadcastKanbanEventForBoard(board.boardID, "meeting_report", report.SummaryView())
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "meeting_report", report.SummaryView())
+	// Sprint 4.1: post-meeting closer materializes follow-ups + blockers
+	// as cards and kicks Runs for agent-assigned items. Failures are
+	// non-fatal — the report has already been archived above.
+	runClosersOnReport(report)
 	return report
 }
 
@@ -769,7 +967,7 @@ func loadMeetingReportFromStore(boardID string, meetingID string) (meetingIntell
 	if !ok {
 		return meetingIntelligenceReport{}, false, nil
 	}
-	return store.LoadMeetingReport(context.Background(), boardID, meetingID)
+	return store.LoadMeetingReport(context.Background(), sharedBoard.tenantID, boardID, meetingID)
 }
 
 func listMeetingReportsFromStore(boardID string, limit int) ([]meetingReportSummary, error) {
@@ -780,5 +978,5 @@ func listMeetingReportsFromStore(boardID string, limit int) ([]meetingReportSumm
 	if !ok {
 		return nil, nil
 	}
-	return store.ListMeetingReports(context.Background(), boardID, limit)
+	return store.ListMeetingReports(context.Background(), sharedBoard.tenantID, boardID, limit)
 }

@@ -780,8 +780,8 @@ func (app *kanbanBoardApp) handleToolCall(outputItem kanbanRealtimeOutputItem) {
 		result = hostOnlyToolResult(outputItem.Name)
 	} else {
 		result, changed, err = app.board.ApplyToolCallWithMeta(outputItem.Name, outputItem.Arguments, toolCallMeta{
-			Source: "openai-realtime",
-			CallID: outputItem.CallID,
+			Dispatcher: "openai-realtime",
+			CallID:     outputItem.CallID,
 		})
 		if err != nil {
 			log.Errorf("Kanban tool call %q failed: %v", outputItem.Name, err)

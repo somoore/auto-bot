@@ -2,6 +2,7 @@
 # Compiled binaries
 /auto-bot
 /server
+/mcpd
 openai-realtime-meeting-assistant
 *.exe
 *.exe~
@@ -91,3 +92,13 @@ $RECYCLE.BIN/
 # ignore runtime volumes and overrides
 docker-compose.override.yml
 var/
+
+# Agent worktrees
+.claude/
+
+# ---------- Node / Web frontend ----------
+# web/app is a Vite/React SPA. Dependencies and build artifacts are
+# never tracked; only the package.json + package-lock.json define what
+# the SPA expects at install time.
+node_modules/
+web/app/dist/

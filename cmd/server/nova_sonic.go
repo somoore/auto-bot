@@ -593,6 +593,15 @@ func (app *novaSonicApp) sendInitSequence() error {
 		return fmt.Errorf("send system contentEnd: %w", err)
 	}
 
+	// 3.5. Sprint 4.1: inject the pre-meeting agenda as a userContext text
+	// block so the voice agent opens with "We have N items today: ...". The
+	// agenda is built off the live board + agent_runs + run_questions
+	// tables. Errors during build do not block the session — the agent
+	// gracefully falls back to its usual greeting.
+	if err := app.sendAgendaUserContext(); err != nil {
+		log.Warnf("Nova Sonic: skipping agenda injection: %v", err)
+	}
+
 	// 4. Open audio stream: contentStart (AUDIO, USER)
 	if err := app.sendEvent(novaSonicEvent("contentStart", map[string]any{
 		"promptName":  app.promptID,
@@ -852,8 +861,8 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 		result = hostOnlyToolResult(tu.ToolName)
 	} else {
 		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
-			Source: "nova-sonic",
-			CallID: tu.ToolUseID,
+			Dispatcher: "nova-sonic",
+			CallID:     tu.ToolUseID,
 		})
 		if err != nil {
 			log.Errorf("Nova Sonic tool call %q failed: %v", tu.ToolName, err)

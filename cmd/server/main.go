@@ -44,7 +44,7 @@ var (
 	peerConnections []peerConnectionState
 	trackLocals     map[string]*webrtc.TrackLocalStaticRTP
 
-	log = logging.NewDefaultLoggerFactory().NewLogger("openai-realtime-meeting-assistant")
+	log = logging.NewDefaultLoggerFactory().NewLogger("auto-bot")
 
 	sharedBoard   *kanbanBoard
 	kanbanApp     *kanbanBoardApp
@@ -105,6 +105,7 @@ func main() {
 	if err := configureAppSecurity(); err != nil {
 		panic(err)
 	}
+	configureIntakeFromEnv()
 
 	upgrader.CheckOrigin = makeOriginChecker(*allowedOrigins)
 
@@ -115,11 +116,28 @@ func main() {
 	if boardStore != nil {
 		defer closeBoardStore(boardStore)
 	}
+	// Sprint 4.0: wire tenant settings + pending actions stores into the
+	// process-wide dry-run registry. When BOARD_SQLITE_PATH is unset the
+	// helpers fall back to in-memory stores so the trust ceremony APIs stay
+	// callable in tests and ephemeral demo runs.
+	installDryRunRuntime(boardStore)
 	sharedBoard, err = newPersistentKanbanBoard(appBoardID, boardStore)
 	if err != nil {
 		panic(err)
 	}
-	appContext := context.Background()
+	appContext, cancelAppContext := context.WithCancel(context.Background())
+	defer cancelAppContext()
+	// Background sweeper: expire RunQuestions whose TTL has elapsed and
+	// broadcast `"run_question_expired"` so the UI drops them in real time.
+	// The goroutine exits on appContext cancellation (deferred above) so
+	// shutdown is leak-free.
+	startRunQuestionSweeper(appContext, sharedBoard, defaultRunQuestionSweepInterval)
+	// Sprint 4.1: lightweight cron-style scheduler. Today it refreshes the
+	// pre-meeting agenda on a 15-minute cadence and sweeps expired
+	// pending_actions every minute. Future tasks (cost rollups, projection
+	// reconciliation) bolt onto the same ticker.
+	startCronScheduler(appContext, sharedBoard)
+	defer stopCronScheduler()
 	configuredJiraSync, err := setupJiraSync(appContext, sharedBoard)
 	if err != nil {
 		log.Errorf("Jira sync disabled: %v", err)
@@ -212,6 +230,32 @@ func main() {
 	mux.HandleFunc("/identity/status", identityStatusHandler)
 	mux.HandleFunc("/workspace/status", workspaceStatusHandler)
 	mux.HandleFunc("/voice/status", voiceStatusHandler)
+
+	// Internal RPC surface: cmd/mcpd (and any future tenant-side dispatcher)
+	// posts here to run MCP tool calls through the canonical ApplyToolCall
+	// path. Same auth as the rest of the server; see internal_dispatch.go
+	// for the contract.
+	mux.HandleFunc("/internal/tools/dispatch", internalToolsDispatchHandler)
+	mux.HandleFunc("/internal/board/cards", internalBoardCardsHandler)
+	mux.HandleFunc("/internal/board/cards/", internalBoardCardsHandler)
+
+	// Async-standup intake (Daria persona, docs/persona-feedback/
+	// daria-first-week.md). /intake/standup carries the form + API
+	// surface; /intake/slack carries the Slack webhook adapter behind
+	// HMAC signature verification (SLACK_SIGNING_SECRET).
+	mux.HandleFunc("/intake/standup", intakeStandupHandler)
+	mux.HandleFunc("/intake/slack", intakeSlackHandler)
+
+	// Sprint 4.0: trust ceremony — dry-run queue, diff preview, kill switch.
+	mux.HandleFunc("/tenant/settings", tenantSettingsHandler)
+	mux.HandleFunc("/tenant/pending_actions", pendingActionsHandler)
+	mux.HandleFunc("/tenant/pending_actions/", pendingActionDecisionHandler)
+	mux.HandleFunc("/tenant/mutations/", undoMutationHandler)
+
+	// Serve the React SPA built by `web/app/npm run build` under /app/*.
+	// If web/app/dist does not exist (frontend not built), http.FileServer
+	// returns 404 cleanly; the rest of the server is unaffected.
+	mux.Handle("/app/", http.StripPrefix("/app/", http.FileServer(http.Dir("web/app/dist"))))
 
 	baseURL := strings.TrimSpace(os.Getenv("APP_BASE_URL"))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -575,7 +619,7 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) { // nolint
 
 	defer c.Close() //nolint
 
-	if !registerWSClient(c, authCtx.BoardID) {
+	if !registerWSClient(c, authCtx.TenantID, authCtx.BoardID) {
 		log.Warnf("Rejecting WebSocket: max clients (%d) reached", maxWSClients)
 		return
 	}
@@ -803,7 +847,7 @@ func handleClientKanbanCommand(c *threadSafeWriter, rawData string, authCtx requ
 		return
 	}
 	rawArgs := mustMarshalJSON(request.Arguments)
-	result, changed, err := sharedBoard.ApplyToolCallWithMeta(request.Tool, rawArgs, toolCallMeta{Source: "ui"})
+	result, changed, err := sharedBoard.ApplyToolCallWithMeta(request.Tool, rawArgs, toolCallMeta{Dispatcher: "ui"})
 	if err != nil {
 		result = map[string]any{"ok": false, "error": err.Error()}
 	}
@@ -845,7 +889,7 @@ func kanbanCommandAllowed(authCtx requestAuthContext, toolName string) bool {
 func kanbanToolRequiresHost(toolName string) bool {
 	switch toolName {
 	case "confirm_action", "cancel_confirmation", "resolve_jira_conflict", "undo_last_mutation",
-		"switch_meeting_type", "start_meeting", "end_meeting":
+		"switch_meeting_type", "start_meeting", "end_meeting", "cancel_agent_run", "take_over_agent_run", "retry_agent_run":
 		return true
 	default:
 		return false

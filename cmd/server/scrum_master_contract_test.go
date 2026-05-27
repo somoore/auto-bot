@@ -321,7 +321,11 @@ func createContractCard(t *testing.T, board *kanbanBoard, title string) string {
 
 func requireContractToolOK(t *testing.T, board *kanbanBoard, name string, args string) (map[string]any, bool) {
 	t.Helper()
-	result, changed, err := board.ApplyToolCall(name, args)
+	// SkipConfirmation: contract tests assert the direct tool-execution
+	// behavior; the SecArch-002 default-deny confirmation gate would
+	// otherwise short-circuit risk-classified tools like set_sprint,
+	// rank_issue, prioritize_ticket, etc.
+	result, changed, err := board.ApplyToolCallWithMeta(name, args, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 	if err != nil {
 		t.Fatalf("%s returned error: %v", name, err)
 	}

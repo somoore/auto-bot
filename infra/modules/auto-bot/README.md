@@ -12,6 +12,7 @@ This module deploys the production-shaped runtime:
 - App task role with Bedrock invoke permission.
 - Secrets Manager wiring for OpenAI, LiveKit, Jira API token, Jira webhook secret, inline Jira sync config, and GitHub App credentials.
 - Autonomous Jira/GitHub agents use AWS Bedrock only. The PM classifier defaults to Claude Haiku 4.5 and the code-review specialist defaults to Claude Sonnet 4.6 through Bedrock US inference-profile IDs and explicit Bedrock IAM resources, not the Anthropic API. Opus should be configured only for escalation-grade reviews.
+- Agent runs include estimated per-run cost budgets and host cancel/takeover/retry controls. Cost values are estimates used to stop runaway runs before another model call.
 - Production runtime variables for room/board authorization and durable board state.
 
 The module is production-shaped and should not set `APP_LOCAL_LOGIN_TOKEN`; the local Keychain one-click login path is intentionally excluded from AWS.

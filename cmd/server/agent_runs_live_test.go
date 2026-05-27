@@ -84,7 +84,7 @@ func TestLiveAgentRunCodeReview(t *testing.T) {
 	}
 
 	assignArgs := fmt.Sprintf(`{"card_id":%q,"objective":%q,"repo":%q,"pull_request_number":%d}`, issueKey, objective, repo, prNumber)
-	runResult, changed, err := board.ApplyToolCall("assign_ticket_to_agent", assignArgs)
+	runResult, changed, err := board.ApplyToolCallWithMeta("assign_ticket_to_agent", assignArgs, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 	if err != nil {
 		t.Fatalf("assign_ticket_to_agent local mutation: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestLiveAgentRunCodeReview(t *testing.T) {
 		t.Fatal("assign_ticket_to_agent did not mutate")
 	}
 	run := runResult["agent_run"].(agentRunView)
-	orchestrator.Start(run.RunID)
+	orchestrator.executeRun(run.RunID)
 
 	finalRun, ok := board.agentRunByID(run.RunID)
 	if !ok {

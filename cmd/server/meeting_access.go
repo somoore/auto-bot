@@ -759,7 +759,7 @@ func applyMeetingTypeToBoard(meetingType string, source string) {
 	}
 	result, changed, err := sharedBoard.ApplyToolCallWithMeta("switch_meeting_type", mustMarshalJSON(map[string]any{
 		"meeting_type": meetingType,
-	}), toolCallMeta{Source: source})
+	}), toolCallMeta{Dispatcher: source})
 	if err != nil {
 		log.Errorf("Failed to apply meeting type %q to board: %v", meetingType, err)
 		return
@@ -778,7 +778,7 @@ func applyMeetingEndedToBoard(source string) {
 	}
 	result, changed, err := sharedBoard.ApplyToolCallWithMeta("end_meeting", mustMarshalJSON(map[string]any{
 		"decision": "Host left the meeting; meeting ended.",
-	}), toolCallMeta{Source: source})
+	}), toolCallMeta{Dispatcher: source})
 	if err != nil {
 		log.Errorf("Failed to end board meeting: %v", err)
 		return

@@ -154,9 +154,16 @@
         <div class="metric"><strong id="metricBlockers">0</strong><span>Blockers</span></div>
         <div class="metric"><strong id="metricActions">0</strong><span>Action items</span></div>
         <div class="metric"><strong id="metricRisk">0</strong><span>Sprint risk</span></div>
+        <div class="metric"><strong id="metricSaved">0</strong><span>Minutes saved</span></div>
+        <div class="metric"><strong id="metricAutomation">0%</strong><span>Automation rate</span></div>
+        <div class="metric"><strong id="metricFallback">0</strong><span>Human fallback</span></div>
       </div>
 
       <div class="grid">
+        <section class="wide">
+          <h2>Product Proof</h2>
+          <div id="productProof" class="list"></div>
+        </section>
         <section>
           <h2>Decisions</h2>
           <div id="decisions" class="list"></div>
@@ -228,6 +235,7 @@
         blockers: $('blockers'),
         timeline: $('timeline'),
         agentRuns: $('agentRuns'),
+        productProof: $('productProof'),
         sprint: $('sprint'),
         github: $('github'),
         setup: $('setup'),
@@ -303,6 +311,11 @@
         $('metricBlockers').textContent = String((report.unresolved_blockers || []).length + (report.sprint_intelligence?.blocked_cards || []).length)
         $('metricActions').textContent = String((report.action_items || []).length + (report.follow_ups || []).length)
         $('metricRisk').textContent = String(report.sprint_intelligence?.risk_score || 0)
+        const proof = report.product_proof || {}
+        $('metricSaved').textContent = String(proof.estimated_net_minutes_saved || 0)
+        $('metricAutomation').textContent = `${Math.round((proof.automation_rate || 0) * 100)}%`
+        $('metricFallback').textContent = String(proof.human_fallback_signals || 0)
+        renderProductProof(proof)
         renderList(els.decisions, report.decisions, 'No decisions captured.')
         renderList(els.actions, actionItems(report), 'No action items captured.')
         renderList(els.blockers, blockers(report), 'No blockers or risks detected.')
@@ -386,7 +399,17 @@
           title.textContent = `${item.card_id || item.cardId || 'Ticket'} · ${item.specialist || 'agent'} · ${item.status || 'unknown'}${pr ? ' · PR #' + pr : ''}`
           const meta = document.createElement('div')
           meta.className = 'muted'
-          meta.textContent = `${item.repo || 'repo not set'} · ${item.request_type || item.requestType || 'unclassified'} · ${item.review_lens || item.reviewLens || 'review'} lens · updated ${formatTime(item.updated_at || item.updatedAt)}`
+          const estimated = item.estimated_cost_cents || item.estimatedCostCents || 0
+          const budget = item.cost_budget_cents || item.costBudgetCents || 0
+          const retryOf = item.retry_of || item.retryOf
+          meta.textContent = [
+            item.repo || 'repo not set',
+            item.request_type || item.requestType || 'unclassified',
+            `${item.review_lens || item.reviewLens || 'review'} lens`,
+            budget ? `cost ${estimated}/${budget} cents` : '',
+            retryOf ? `retry of ${retryOf}` : '',
+            `updated ${formatTime(item.updated_at || item.updatedAt)}`,
+          ].filter(Boolean).join(' · ')
           row.append(title, meta)
           if (item.summary || item.error || item.current_step || item.currentStep) {
             const summary = document.createElement('div')
@@ -443,6 +466,17 @@
         ;(context.signals || []).forEach(signal => {
           appendItem(els.github, `${signal.card_id ? signal.card_id + ': ' : ''}${signal.title || signal.url || 'Pull request'}${signal.state ? ' · ' + signal.state : ''}`)
         })
+      }
+
+      function renderProductProof(proof) {
+        const items = [
+          `Baseline: ${proof.baseline_meeting_minutes || 0} min; actual: ${proof.actual_meeting_minutes || 0} min (${proof.measurement_quality || 'not measured'})`,
+          `Estimated admin minutes avoided: ${proof.estimated_admin_minutes_avoided || 0}`,
+          `Automated Jira changes: ${proof.jira_changes_automated || 0}; completed agent runs: ${proof.agent_runs_completed || 0}`,
+          `Needs-tooling escalations: ${proof.needs_tooling_escalations || 0}; human fallback signals: ${proof.human_fallback_signals || 0}`,
+          ...(proof.evidence || []),
+        ]
+        renderList(els.productProof, items, 'No product proof metrics available.')
       }
 
       function renderSetup(checks) {

@@ -87,7 +87,7 @@ while IFS= read -r manifest; do
     fail "JavaScript manifest lacks a lock file: $manifest"
     LOCK_FAIL=1
   fi
-done < <(find . -path './.git' -prune -o -path './node_modules' -prune -o -name package.json -print)
+done < <(find . -path './.git' -prune -o -path '*/node_modules' -prune -o -name package.json -print)
 
 while IFS= read -r manifest; do
   dir="$(dirname "$manifest")"

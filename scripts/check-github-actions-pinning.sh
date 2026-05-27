@@ -6,6 +6,12 @@ if [ ! -d .github/workflows ]; then
   exit 0
 fi
 
+workflow_count=$(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | wc -l | tr -d ' ')
+if [ "$workflow_count" -eq 0 ]; then
+  printf 'GitHub Actions workflow directory exists but contains no workflow files\n' >&2
+  exit 1
+fi
+
 fail=0
 while IFS= read -r line; do
   ref="${line#*@}"

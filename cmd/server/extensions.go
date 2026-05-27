@@ -7,22 +7,26 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openai/openai-realtime-meeting-assistant/internal/core"
+	"github.com/somoore/auto-bot/internal/core"
+	"github.com/somoore/auto-bot/internal/projection"
+	jiraproj "github.com/somoore/auto-bot/internal/projection/jira"
 )
 
 type extensionRuntimeState struct {
-	voice      *core.VoiceRegistry
-	connectors *core.ConnectorRegistry
-	models     *core.ModelRegistry
+	voice       *core.VoiceRegistry
+	connectors  *core.ConnectorRegistry
+	models      *core.ModelRegistry
+	projections *projection.Registry
 }
 
 var extensions *extensionRuntimeState
 
 func setupExtensionRuntime(board *kanbanBoard, syncer *jiraSyncer) *extensionRuntimeState {
 	runtime := &extensionRuntimeState{
-		voice:      core.NewVoiceRegistry(),
-		connectors: core.NewConnectorRegistry(),
-		models:     core.NewModelRegistry(),
+		voice:       core.NewVoiceRegistry(),
+		connectors:  core.NewConnectorRegistry(),
+		models:      core.NewModelRegistry(),
+		projections: projection.NewRegistry(),
 	}
 	_ = runtime.voice.Register(serverVoiceProviderDescriptor{
 		name:        "nova-sonic",
@@ -104,6 +108,15 @@ func setupExtensionRuntime(board *kanbanBoard, syncer *jiraSyncer) *extensionRun
 	}
 	_ = runtime.connectors.Register(jiraConnectorDescriptor{syncer: syncer})
 	_ = runtime.connectors.Register(githubConnectorDescriptor{})
+	if syncer != nil && syncer.client != nil {
+		jiraConfig := jiraproj.Config{}
+		if syncer.config != nil {
+			jiraConfig.BaseURL = syncer.config.BaseURL
+			jiraConfig.ProjectKey = syncer.config.ProjectKey
+			jiraConfig.Email = syncer.config.Email
+		}
+		_ = runtime.projections.Register(jiraproj.NewProjection(syncer.client, jiraConfig))
+	}
 	return runtime
 }
 
@@ -235,7 +248,7 @@ func (connector boardToolConnector) Execute(ctx context.Context, action core.Con
 		return core.ConnectorResult{}, fmt.Errorf("marshal connector action parameters: %w", err)
 	}
 	result, changed, err := connector.board.ApplyToolCallWithMeta(action.Type, string(rawArgs), toolCallMeta{
-		Source:     "connector:" + action.Connector,
+		Dispatcher: "connector:" + action.Connector,
 		Actor:      action.RequestedBy,
 		Transcript: evidenceText(action.Evidence),
 	})
@@ -266,7 +279,7 @@ func (connector boardToolConnector) Undo(ctx context.Context, receipt core.Actio
 		return core.ConnectorResult{OK: false, Status: "not_configured"}, nil
 	}
 	result, changed, err := connector.board.undoLastMutation(map[string]any{}, toolCallMeta{
-		Source: "connector:" + connector.Name(),
+		Dispatcher: "connector:" + connector.Name(),
 	})
 	if err != nil {
 		return core.ConnectorResult{OK: false, Status: "undo_failed", Message: err.Error()}, nil

@@ -117,3 +117,107 @@ func TestGitHubInlineReviewCommentsFromFindings(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentRunCostBudgetBlocksEstimatedOverrun(t *testing.T) {
+	t.Setenv("AGENT_COST_BUDGET_CENTS", "10")
+	board := newKanbanBoard()
+	previousOrchestrator := agentOrchestrator
+	agentOrchestrator = nil
+	t.Cleanup(func() { agentOrchestrator = previousOrchestrator })
+
+	cardResult, changed, err := board.ApplyToolCall("create_ticket", `{"title":"Review budget PR","status":"Backlog"}`)
+	if err != nil || !changed {
+		t.Fatalf("create_ticket changed=%v err=%v", changed, err)
+	}
+	card := cardResult["card"].(kanbanCard)
+	runResult, changed, err := board.ApplyToolCallWithMeta("assign_ticket_to_agent", `{"card_id":"`+card.ID+`","objective":"review the PR","repo":"scottmoore/auto-bot","pull_request_number":7}`, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
+	if err != nil || !changed {
+		t.Fatalf("assign_ticket_to_agent changed=%v err=%v", changed, err)
+	}
+	run := runResult["agent_run"].(agentRunView)
+	orchestrator := &agentRunOrchestrator{board: board}
+	if err := orchestrator.reserveAgentRunCost(run.RunID, "pm", 4); err != nil {
+		t.Fatalf("reserve PM cost returned error: %v", err)
+	}
+	if err := orchestrator.reserveAgentRunCost(run.RunID, "review", 7); err == nil {
+		t.Fatal("reserveAgentRunCost should reject estimated cost above budget")
+	}
+	updated, ok := board.agentRunByID(run.RunID)
+	if !ok {
+		t.Fatal("run missing")
+	}
+	if updated.EstimatedCostCents != 4 || updated.ModelCalls != 1 || updated.CostBudgetCents != 10 {
+		t.Fatalf("budget state = %#v, want one reserved PM call under ten-cent cap", updated)
+	}
+}
+
+func TestAgentRunTakeoverTagsPartialWork(t *testing.T) {
+	board := newKanbanBoard()
+	previousOrchestrator := agentOrchestrator
+	agentOrchestrator = nil
+	t.Cleanup(func() { agentOrchestrator = previousOrchestrator })
+
+	cardResult, changed, err := board.ApplyToolCall("create_ticket", `{"title":"Implement retry controls","status":"In Progress"}`)
+	if err != nil || !changed {
+		t.Fatalf("create_ticket changed=%v err=%v", changed, err)
+	}
+	card := cardResult["card"].(kanbanCard)
+	runResult, changed, err := board.ApplyToolCallWithMeta("assign_ticket_to_agent", `{"card_id":"`+card.ID+`","objective":"finish the controls","repo":"scottmoore/auto-bot","pull_request_number":8}`, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
+	if err != nil || !changed {
+		t.Fatalf("assign_ticket_to_agent changed=%v err=%v", changed, err)
+	}
+	run := runResult["agent_run"].(agentRunView)
+	result, changed, err := board.ApplyToolCallWithMeta("take_over_agent_run", `{"run_id":"`+run.RunID+`","actor":"Scott","reason":"Scott will finish from here"}`, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
+	if err != nil || !changed {
+		t.Fatalf("take_over_agent_run changed=%v err=%v result=%#v", changed, err, result)
+	}
+	updated, ok := board.agentRunByID(run.RunID)
+	if !ok || updated.Status != agentRunTakenOver {
+		t.Fatalf("updated run = %#v, want taken_over", updated)
+	}
+	state := board.SnapshotState()
+	var foundTag bool
+	for _, candidate := range state.Cards {
+		if candidate.ID != card.ID {
+			continue
+		}
+		for _, tag := range candidate.Tags {
+			if tag == "partial-agent-work" {
+				foundTag = true
+			}
+		}
+	}
+	if !foundTag {
+		t.Fatalf("card was not tagged partial-agent-work: %#v", state.Cards)
+	}
+}
+
+func TestAgentRunRetryQueuesReplacementRun(t *testing.T) {
+	board := newKanbanBoard()
+	previousOrchestrator := agentOrchestrator
+	agentOrchestrator = nil
+	t.Cleanup(func() { agentOrchestrator = previousOrchestrator })
+
+	cardResult, changed, err := board.ApplyToolCall("create_ticket", `{"title":"Retry review","status":"Backlog"}`)
+	if err != nil || !changed {
+		t.Fatalf("create_ticket changed=%v err=%v", changed, err)
+	}
+	card := cardResult["card"].(kanbanCard)
+	runResult, changed, err := board.ApplyToolCallWithMeta("assign_ticket_to_agent", `{"card_id":"`+card.ID+`","objective":"review the PR","repo":"scottmoore/auto-bot","pull_request_number":9}`, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
+	if err != nil || !changed {
+		t.Fatalf("assign_ticket_to_agent changed=%v err=%v", changed, err)
+	}
+	run := runResult["agent_run"].(agentRunView)
+	retryResult, changed, err := board.ApplyToolCallWithMeta("retry_agent_run", `{"run_id":"`+run.RunID+`","additional_context":"focus on authz regressions"}`, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
+	if err != nil || !changed {
+		t.Fatalf("retry_agent_run changed=%v err=%v result=%#v", changed, err, retryResult)
+	}
+	original, ok := board.agentRunByID(run.RunID)
+	if !ok || original.Status != agentRunRetrying {
+		t.Fatalf("original run = %#v, want retrying", original)
+	}
+	retryRun := retryResult["agent_run"].(agentRunView)
+	if retryRun.RetryOf != run.RunID || !strings.Contains(retryRun.Objective, "authz regressions") {
+		t.Fatalf("retry run = %#v, want retry_of and added constraint", retryRun)
+	}
+}

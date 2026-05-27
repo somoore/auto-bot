@@ -42,6 +42,10 @@ services:
       - NOVA_SONIC_VOICE=${NOVA_SONIC_VOICE:-matthew}
       - AGENT_PM_MODEL=${AGENT_PM_MODEL:-us.anthropic.claude-haiku-4-5-20251001-v1:0}
       - AGENT_REVIEW_MODEL=${AGENT_REVIEW_MODEL:-us.anthropic.claude-sonnet-4-6}
+      - AGENT_COST_BUDGET_CENTS=${AGENT_COST_BUDGET_CENTS:-250}
+      - AGENT_PM_CALL_ESTIMATE_CENTS=${AGENT_PM_CALL_ESTIMATE_CENTS:-2}
+      - AGENT_REVIEW_CALL_ESTIMATE_CENTS=${AGENT_REVIEW_CALL_ESTIMATE_CENTS:-40}
+      - AUTO_BOT_BASELINE_MEETING_MINUTES=${AUTO_BOT_BASELINE_MEETING_MINUTES:-15}
       - GITHUB_APP_ID=${GITHUB_APP_ID:-}
       - GITHUB_APP_INSTALLATION_ID=${GITHUB_APP_INSTALLATION_ID:-}
       - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY:-}
@@ -56,6 +60,32 @@ services:
       - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-}
     volumes:
       - ./config:/srv/config:ro
+      - board-data:/srv/data
+
+  mcpd:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcpd
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      - app
+    environment:
+      - MCPD_TRANSPORT=http
+      - MCPD_PORT=4000
+      - MCPD_TOKEN=${MCPD_TOKEN:-dev-mcp-token-change-me}
+      - APP_TENANT_ID=${APP_TENANT_ID:-default}
+      - APP_BOARD_ID=${APP_BOARD_ID:-default}
+      # mcpd dispatches every MCP tool call through cmd/server's
+      # /internal/tools/dispatch endpoint so ActionLedger + risk gates
+      # apply uniformly to voice, UI, and MCP callers. BOARD_TOKEN is the
+      # shared APP_API_TOKEN that authenticates the dispatch.
+      - BOARD_URL=${BOARD_URL:-http://app:3000}
+      - BOARD_TOKEN=${APP_API_TOKEN:?set APP_API_TOKEN via scripts/dc-up-keychain.sh or an exported environment variable}
+    # board-data is retained for future direct-access optimizations but
+    # is not load-bearing for S2.1; the live board state is fetched via
+    # HTTP from the app service.
+    volumes:
       - board-data:/srv/data
 
 volumes:

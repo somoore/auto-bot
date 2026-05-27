@@ -1,10 +1,15 @@
 openapi: 3.1.0
 info:
-  title: Auto Bot Meeting API
-  version: 0.1.0
+  title: Auto Bot Meeting + Agent API
+  version: 0.2.0
   description: >
-    HTTP API for the voice-first meeting assistant. Browser routes use HttpOnly
-    session cookies. Automation clients may use Bearer tokens when configured.
+    HTTP and WebSocket API for the voice-first meeting assistant and the
+    Sprint 2.0 agent-first surface. Browser routes use HttpOnly session
+    cookies (`auto_bot_session`); automation clients may use Bearer
+    tokens when configured. The MCP tool surface that mirrors this API
+    for external agents is documented in `docs/api/mcp-tools.md`; see
+    `docs/adrs/0003-mcp-server-as-universal-external-surface.md` for the
+    rationale.
 servers:
   - url: http://localhost:3001
     description: Local Nova Sonic stack
@@ -23,6 +28,23 @@ paths:
           description: HTML meeting UI shell. The shell contains no app token; authenticated control APIs still require a session or Bearer token.
           content:
             text/html: {}
+  /app/:
+    get:
+      summary: React SPA (S0.5) static assets.
+      description: >
+        Serves the Vite-built React frontend from `web/app/dist`. Mounted
+        via `http.StripPrefix("/app/", http.FileServer(...))` in
+        `cmd/server/main.go` near the `/app/` route registration. Any
+        sub-path resolves to a static file; client-side routing is
+        handled by the SPA. If `web/app/dist` does not exist (frontend
+        not built), the file server returns 404 — the rest of the server
+        is unaffected.
+      security: []
+      responses:
+        "200":
+          description: HTML, JS, CSS, or other static asset.
+        "404":
+          description: SPA assets not built.
   /healthz:
     get:
       summary: Health check
@@ -79,11 +101,37 @@ paths:
   /websocket:
     get:
       summary: WebSocket control channel for board, meeting, and agent events.
+      description: >
+        Long-lived WebSocket. The server pushes typed events to every
+        client subscribed to the same board, and clients push
+        `chat_message` or `kanban_command` envelopes back. Authentication
+        goes through `authorizeRequest` (`cmd/server/main.go`): either a
+        valid `auto_bot_session` cookie (browser) or `Authorization:
+        Bearer <token>` (automation) is accepted.
+
+
+        **Wire format is double-wrapped.** Every frame matches the outer
+        `WebSocketEnvelope` schema (`event: "kanban"`, `data: <string>`);
+        the string is JSON-decoded into a `WebSocketEvent` whose `event`
+        field selects the typed payload. See `WebSocketEvent` for the
+        full vocabulary. Source of truth: `cmd/server/main.go:63`
+        (`websocketMessage`), `cmd/server/board.go:2289`
+        (`sendKanbanEvent`), and `cmd/server/board.go:2353`
+        (`broadcastKanbanEventForBoard`).
+
+
+        The `event: "board"` payload (`BoardSnapshot`) carries an
+        `open_run_questions` field hydrated at broadcast time from
+        `RunStore.ListOpenRunQuestions` — added in commit `9aa953d`. The
+        field is persisted as `omitempty` and may be absent on snapshots
+        from older runs.
       responses:
         "101":
           description: WebSocket upgrade accepted.
         "401":
           description: Session or bearer token required.
+        "429":
+          description: Rate limit exceeded.
   /livekit-token:
     get:
       summary: Mint a room-scoped LiveKit token after voice readiness preflight.
@@ -292,6 +340,12 @@ paths:
   /jira/webhook:
     post:
       summary: Jira webhook refresh endpoint.
+      description: >
+        Authenticates via a shared secret carried in either an
+        `Authorization: Bearer <secret>` header or the
+        `X-Auto-Bot-Jira-Webhook-Secret` header. On a verified payload
+        the server triggers a Jira refresh and broadcasts an
+        `event: "board"` message over `/websocket`.
       security:
         - jiraWebhookSecret: []
         - jiraWebhookHeader: []
@@ -308,6 +362,535 @@ paths:
           description: Jira sync is not configured.
         "502":
           description: Jira refresh failed.
+  # ─── S2.1 internal RPC surface ──────────────────────────────────────
+  # cmd/mcpd (and any future tenant-side dispatcher) posts here so MCP
+  # tool calls route through the canonical ApplyToolCall path —
+  # ActionLedger, risk classification, and confirmation gates fire
+  # uniformly with voice and UI callers.
+  # Routes: `cmd/server/main.go:238` (`/internal/tools/dispatch`) and
+  # `:239`–`:240` (`/internal/board/cards` + trailing-slash variant).
+  /internal/tools/dispatch:
+    post:
+      summary: MCP-shaped tool dispatch into the canonical ApplyToolCall path.
+      description: >
+        Accepts an MCP tool name + arguments and translates them to the
+        cmd/server internal tool names before invoking
+        `ApplyToolCallWithMeta`. Supported `tool` values today are
+        `card.create`, `card.update`, and `card.comment`; read-side tools
+        (`board.list_cards`, `board.get_card`) go through
+        `GET /internal/board/cards` instead, not through this dispatch
+        endpoint. Source: `cmd/server/internal_dispatch.go:36`
+        (`internalToolsDispatchHandler`); the dispatcher tool-name switch
+        is at `cmd/server/internal_dispatch.go:70`-`:79`. Unknown tool
+        names return 400 with `{"error":"unknown tool \"<name>\""}`.
+
+
+        When the tenant has `dry_run_enabled=true`, the call returns the
+        `RequiresApprovalEnvelope` shape — the staged action is queued
+        rather than applied. Source:
+        `cmd/server/dry_run.go:106`-`:158` (`stagePendingAction`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool]
+              properties:
+                tool:
+                  type: string
+                  description: MCP tool name (`card.create` / `card.update` / `card.comment`).
+                args:
+                  description: MCP-shaped arguments for the tool. Schema varies by tool.
+                  type: object
+                  additionalProperties: true
+                dispatcher:
+                  type: string
+                  description: >
+                    Audit-ledger label for the caller. Defaults to `"mcp"`
+                    when omitted (`cmd/server/internal_dispatch.go:65`-`:67`).
+                tenant_id:
+                  type: string
+                  description: Optional. Defaults to the server's default tenant.
+                board_id:
+                  type: string
+                  description: Optional. Defaults to the server's default board.
+      responses:
+        "200":
+          description: >
+            Tool dispatched. Body shape varies by tool: `card.create` and
+            `card.update` return `{card_id?, card}`; `card.comment`
+            returns `{card_id, comment}`. When dry-run staging engages,
+            the body matches `RequiresApprovalEnvelope` (see schema).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/DispatchCardResult"
+                  - $ref: "#/components/schemas/DispatchCommentResult"
+                  - $ref: "#/components/schemas/RequiresApprovalEnvelope"
+        "400":
+          description: Body could not be decoded, required field missing, or `tool` is unknown.
+        "401":
+          description: Session or bearer token required.
+        "404":
+          description: Referenced `card_id` does not exist on the active board.
+        "405":
+          description: Only POST is accepted.
+  /internal/board/cards:
+    get:
+      summary: Read-side board snapshot for MCP HTTPBoardClient.
+      description: >
+        Returns the live card list from `sharedBoard.SnapshotState`. The
+        MCP server's `HTTPBoardClient` applies `CardFilter` client-side
+        (`internal/mcp/tools.go:575`-`:607`). Source:
+        `cmd/server/internal_dispatch.go:311`
+        (`internalBoardCardsHandler`).
+      responses:
+        "200":
+          description: Card snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cards]
+                properties:
+                  cards:
+                    type: array
+                    items: { $ref: "#/components/schemas/Card" }
+        "401":
+          description: Session or bearer token required.
+        "405":
+          description: Only GET is accepted.
+  /internal/board/cards/{card_id}:
+    get:
+      summary: Read one card by ID from the canonical board.
+      description: >
+        Returns the full `Card` shape for the supplied ID. The MCP server
+        translates this into the `board.get_card` tool response. Source:
+        `cmd/server/internal_dispatch.go:311`
+        (`internalBoardCardsHandler`).
+      parameters:
+        - name: card_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Single card.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [card]
+                properties:
+                  card: { $ref: "#/components/schemas/Card" }
+        "401":
+          description: Session or bearer token required.
+        "404":
+          description: No card with that ID on the active board.
+  # ─── Sprint 4.0 trust ceremony ──────────────────────────────────────
+  # Dry-run staging queue, diff preview, and the agents-paused kill
+  # switch. Routes: `cmd/server/main.go:250`-`:253`. Handlers live in
+  # `cmd/server/dry_run_http.go`.
+  /tenant/settings:
+    get:
+      summary: Read the per-tenant trust-ceremony settings.
+      description: >
+        Returns `{tenant_id, dry_run_enabled, agents_paused,
+        updated_at}`. Defaults are both flags off so legacy tenants are
+        unchanged. Source: `cmd/server/dry_run_http.go:131`
+        (`tenantSettingsHandler` GET branch);
+        `cmd/server/tenant_settings.go:14`-`:19` (`tenantSettings`
+        shape).
+      parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Override the resolved tenant for multi-tenant testing.
+        - name: board_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Settings record (all-defaults if no row exists yet).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantSettings" }
+        "401":
+          description: Session or bearer token required.
+        "503":
+          description: Tenant settings manager is not configured.
+    post:
+      summary: Update the per-tenant trust-ceremony settings.
+      description: >
+        Both fields are optional in the body; absent fields default to
+        their zero value. On a transition of `agents_paused` from
+        `false` to `true`, in-flight Runs are paused via
+        `handleAgentsPausedTransition`; transitioning back to `false`
+        resumes them. The handler broadcasts a `tenant_settings`
+        WebSocket event afterwards (`cmd/server/dry_run_http.go:169`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run_enabled: { type: boolean }
+                agents_paused:   { type: boolean }
+      responses:
+        "200":
+          description: Settings persisted; freshly-stamped `updated_at` returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantSettings" }
+        "400":
+          description: Body could not be decoded.
+        "401":
+          description: Session or bearer token required.
+  /tenant/pending_actions:
+    get:
+      summary: List the dry-run staging queue for the active tenant + board.
+      description: >
+        Returns `{actions: PendingAction[]}` newest-first. Terminal rows
+        (applied / rejected / expired) are excluded by default; set
+        `include_terminal=true` to surface the audit-log view. Source:
+        `cmd/server/dry_run_http.go:17`-`:44` (`pendingActionsHandler`);
+        store interface at `cmd/server/pending_actions.go:73`
+        (`pendingActionStore.ListPendingActions`).
+      parameters:
+        - name: include_terminal
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: board_id
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Pending action list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [actions]
+                properties:
+                  actions:
+                    type: array
+                    items: { $ref: "#/components/schemas/PendingAction" }
+        "401":
+          description: Session or bearer token required.
+        "503":
+          description: Pending action store is not configured.
+  /tenant/pending_actions/{action_id}/preview:
+    post:
+      summary: Compute the before/after diff for a staged action without applying it.
+      description: >
+        Runs `PreviewPendingAction` against a virtual copy of the board
+        and returns the resulting `PendingActionDiff`. Errors during the
+        simulated apply are surfaced in `error` rather than failing the
+        call so the UI can warn before approval. Source:
+        `cmd/server/dry_run_http.go:114` (the `preview` verb of
+        `pendingActionDecisionHandler`); diff shape at
+        `cmd/server/diff_preview.go:14`-`:27`.
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Diff envelope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PendingActionDiff" }
+        "401":
+          description: Session or bearer token required.
+        "404":
+          description: Action ID does not exist for the active tenant + board.
+        "503":
+          description: Board is not initialized.
+  /tenant/pending_actions/{action_id}/approve:
+    post:
+      summary: Approve a staged action; applies it via the trusted in-process path.
+      description: >
+        Loads the staged action, runs it through
+        `ApplyToolCallWithMeta` with `SkipConfirmation=true`, and
+        transitions the row to `applied` (or `rejected` if the apply
+        itself errored). Broadcasts `pending_action_resolved` on
+        success. Source: `cmd/server/dry_run_http.go:88`
+        (approve branch); `cmd/server/dry_run.go:164`
+        (`approvePendingAction`).
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        "200":
+          description: Action applied; `result` mirrors the original tool's success envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action: { $ref: "#/components/schemas/PendingAction" }
+                  result:
+                    type: object
+                    additionalProperties: true
+        "401":
+          description: Session or bearer token required.
+        "404":
+          description: Action not found.
+        "409":
+          description: Action is already terminal (applied / rejected / expired).
+  /tenant/pending_actions/{action_id}/reject:
+    post:
+      summary: Reject a staged action without executing it.
+      description: >
+        Transitions the row to `rejected` and records the decider in
+        `pendingAction.Decision`. Broadcasts `pending_action_resolved`.
+        Source: `cmd/server/dry_run_http.go:101` (reject branch);
+        `cmd/server/dry_run.go:218` (`rejectPendingAction`).
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        "200":
+          description: Action rejected.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  action: { $ref: "#/components/schemas/PendingAction" }
+        "401":
+          description: Session or bearer token required.
+        "404":
+          description: Action not found.
+        "409":
+          description: Action is already terminal.
+  /tenant/mutations/{event_id}/undo:
+    post:
+      summary: Reverse a recent mutation via the canonical undo path.
+      description: >
+        Runs `undo_last_mutation` (`Connector.Undo`) through
+        `ApplyToolCallWithMeta` with `SkipConfirmation=true` so the UI
+        kill-switch is not gated on a second confirmation. Source:
+        `cmd/server/dry_run_http.go:190` (`undoMutationHandler`). The
+        request body is ignored; the `event_id` path segment scopes the
+        undo target.
+      parameters:
+        - name: event_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Undo applied; `{ok, changed, result}` envelope.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:      { type: boolean }
+                  changed: { type: boolean }
+                  result:
+                    type: object
+                    additionalProperties: true
+        "400":
+          description: Path is missing the `event_id` segment.
+        "401":
+          description: Session or bearer token required.
+        "500":
+          description: Undo apply failed.
+  # ─── Async intake (Daria persona) ───────────────────────────────────
+  # Surface lands in S4.x. Routes registered at
+  # `cmd/server/main.go:246`-`:247`. Slack adapter behind HMAC
+  # signature verification (SLACK_SIGNING_SECRET).
+  /intake/standup:
+    post:
+      summary: Submit an async standup as JSON or free-form text.
+      description: >
+        Accepts either an `internal/intake.Intake` JSON body
+        (Content-Type `application/json`) or a free-form text body
+        (`text/plain`). For `text/plain` (or empty Content-Type) with no
+        structured fields, `intakeParser.Parse` fills
+        yesterday/today/blockers/mentioned_cards from the raw text.
+        `SourceForm` is treated as already structured and skipped by the
+        parser. Source: `cmd/server/intake_handler.go:77`
+        (`handleIntakePost`); decode at
+        `cmd/server/intake_handler.go:134`
+        (`decodeIntakeBody`); Intake shape at
+        `internal/intake/types.go:49` (`Intake`).
+
+
+        Caller identity is used as `Submitter` only when the body leaves
+        it blank, so an EM can legitimately file a standup on behalf of
+        a teammate (`stitchIntakeIdentity` at
+        `cmd/server/intake_handler.go:175`). For SecArch-002, the
+        `runIntakeFollowups` step uses the request-auth identity to
+        decide whether to skip the assign-ticket confirmation gate
+        (self-assign) or to queue it (third-party path).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeRecord" }
+          text/plain:
+            schema: { type: string }
+      responses:
+        "200":
+          description: Intake stored and follow-ups dispatched.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, intake]
+                properties:
+                  ok:     { type: boolean }
+                  intake: { $ref: "#/components/schemas/IntakeRecord" }
+                  created:
+                    type: array
+                    description: >
+                      Cards created by `runIntakeFollowups` from blockers
+                      / mentioned cards. Same shape as `Card`.
+                    items: { $ref: "#/components/schemas/Card" }
+                  comments:
+                    type: array
+                    description: Thread comments appended to mentioned cards.
+                    items:
+                      type: object
+                      properties:
+                        card_id: { type: string }
+                        body:    { type: string }
+                        author:  { type: string }
+        "400":
+          description: Body could not be decoded or normalized; `intake.Normalize` validates `Submitter` and minimum content.
+        "401":
+          description: Session or bearer token required.
+    get:
+      summary: List recent intakes for the active tenant + board.
+      description: >
+        Returns intakes with `SubmittedAt` >= now − 24h, newest-first.
+        The 24h window is fixed (`intakeRecentWindow` at
+        `cmd/server/intake_handler.go:20`) and is anchored on the
+        "EM picks up the world the next morning" scenario from Daria's
+        persona feedback.
+      responses:
+        "200":
+          description: Recent intakes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, intakes, window]
+                properties:
+                  ok: { type: boolean }
+                  intakes:
+                    type: array
+                    items: { $ref: "#/components/schemas/IntakeRecord" }
+                  window:
+                    type: string
+                    description: Lookback duration string (`24h0m0s`).
+        "401":
+          description: Session or bearer token required.
+  /intake/slack:
+    post:
+      summary: Slack webhook adapter for async standups.
+      description: >
+        Accepts a Slack-formatted POST and converts it to an async
+        standup. Supports both `application/x-www-form-urlencoded`
+        (slash-command shape with `user_name` + `text`) and
+        `application/json` (event-subscription / Block Kit shape with
+        `text` or `event.text`). HMAC verification uses
+        `slackSigningSecret` (loaded from `SLACK_SIGNING_SECRET`); a
+        missing secret rejects every request as 401. Timestamp drift
+        greater than 5 minutes also returns 401. Source:
+        `cmd/server/intake_slack.go:32` (`intakeSlackHandler`);
+        verification at `internal/intake/slack.go`
+        (`VerifySlackSignature`).
+
+
+        SecArch-002: Slack-origin intakes are treated as third-party —
+        the assign-ticket confirmation gate is not skipped because the
+        Slack server, not the submitter, made the HTTP call.
+      security:
+        - slackSignature: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                text:      { type: string }
+                user_name: { type: string }
+                user_id:   { type: string }
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:      { type: string }
+                user_name: { type: string }
+                user_id:   { type: string }
+                event:
+                  type: object
+                  properties:
+                    text: { type: string }
+                    user: { type: string }
+      responses:
+        "200":
+          description: Intake accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:       { type: boolean }
+                  intake:   { $ref: "#/components/schemas/IntakeRecord" }
+                  created:
+                    type: array
+                    items: { $ref: "#/components/schemas/Card" }
+                  comments:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        "400":
+          description: Body could not be decoded or required text field is empty.
+        "401":
+          description: Signature missing, stale, or mismatched.
 components:
   securitySchemes:
     browserSession:
@@ -324,3 +907,566 @@ components:
       type: apiKey
       in: header
       name: X-Auto-Bot-Jira-Webhook-Secret
+    slackSignature:
+      type: apiKey
+      in: header
+      name: X-Slack-Signature
+      description: >
+        Slack-style HMAC of the request body keyed by
+        `SLACK_SIGNING_SECRET`. The `X-Slack-Request-Timestamp` header is
+        also required and must be within 5 minutes of the server clock.
+        Verification at `internal/intake/slack.go`
+        (`VerifySlackSignature`).
+  schemas:
+    # ─── WebSocket payload schemas ──────────────────────────────────────
+    # The wire format is double-wrapped. Every frame matches
+    # `WebSocketEnvelope` (always Event=="kanban"); the `data` field is a
+    # JSON-encoded *string* that decodes to `WebSocketEvent`. Source of
+    # truth: `cmd/server/main.go:63` (`websocketMessage`) and
+    # `cmd/server/board.go:2289` / `:2353` (send + broadcast).
+    WebSocketEnvelope:
+      type: object
+      description: Outer wire frame for every `/websocket` message.
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [kanban]
+        data:
+          type: string
+          description: JSON-encoded `WebSocketEvent`.
+      example:
+        event: kanban
+        data: '{"event":"board","data":{"cards":[],"sequenceNumber":42}}'
+    WebSocketEvent:
+      type: object
+      description: >
+        Inner typed event. `event` selects which payload shape `data`
+        carries. The vocabulary is grep-able from the call sites of
+        `broadcastKanbanEventForBoard` and `sendKanbanEvent` in
+        `cmd/server/`.
+      required: [event]
+      properties:
+        event:
+          type: string
+          enum:
+            - board
+            - status
+            - agent_run
+            - run_question_asked
+            - run_question_answered
+            - run_question_expired
+            - run_paused
+            - run_resumed
+            - action_result
+            - command_result
+            - audit_events
+            - replay_state
+            - highlight
+            - close_detail
+            # Sprint 4.0 trust-ceremony + closed-loop standup events. The
+            # actual broadcast names emitted from cmd/server differ from
+            # earlier drafts — these strings match `broadcastKanbanEventForBoard`
+            # call sites. There is no `pending_action_created`,
+            # `pending_action_applied`, `pending_action_rejected`,
+            # `pending_action_expired`, or `tenant_settings_changed` —
+            # use the names below instead.
+            - pending_action          # cmd/server/dry_run.go:144 — fired on stage; payload {action, diff}
+            - pending_action_resolved # cmd/server/dry_run.go:211,:242 — fired on approve or reject; payload PendingAction
+            - pending_actions_expired # cmd/server/cron.go:139 — TTL sweeper fanout; payload {count}
+            - tenant_settings         # cmd/server/dry_run_http.go:169 — fired after POST /tenant/settings; payload TenantSettings
+            - standup_closer          # cmd/server/standup_closer.go:142 — fired after post-meeting closer; payload standup.CloseResult
+            - conflict_resolved       # cmd/server/jira_conflicts.go:168 — Jira three-way merge resolution
+            - undo_result             # cmd/server/meeting_intelligence.go:618 — Connector.Undo outcome
+            - meeting_report          # cmd/server/meeting_reports.go:954 — post-meeting archive summary
+            - pre_meeting_agenda      # cmd/server/cron.go:116 — scheduled agenda builder
+            - confirmation            # cmd/server/meeting_intelligence.go:156 — confirmation queued
+            - confirmation_cancelled  # cmd/server/meeting_intelligence.go:261 — confirmation cancelled
+        data:
+          description: Payload shape varies by event. See per-event schemas.
+          oneOf:
+            - $ref: "#/components/schemas/BoardSnapshot"
+            - $ref: "#/components/schemas/AgentRunView"
+            - $ref: "#/components/schemas/RunQuestion"
+            - $ref: "#/components/schemas/ActionResult"
+            - $ref: "#/components/schemas/PendingAction"
+            - $ref: "#/components/schemas/PendingActionDiff"
+            - $ref: "#/components/schemas/TenantSettings"
+            - { type: string }
+            - { type: object, additionalProperties: true }
+            - { type: "null" }
+    BoardSnapshot:
+      type: object
+      description: >
+        Payload for `event: "board"`. Mirrors `kanbanBoardState` at
+        `cmd/server/board.go:105`. `open_run_questions` is hydrated at
+        broadcast time from `RunStore.ListOpenRunQuestions` (introduced
+        in commit `9aa953d`). The field is omitempty on persisted
+        snapshots — the `run_questions` SQLite table is the source of
+        truth.
+      properties:
+        cards:
+          type: array
+          items: { $ref: "#/components/schemas/Card" }
+        meeting:
+          type: object
+          additionalProperties: true
+          description: Mirrors `internal/meetings.State`.
+        agentRuns:
+          type: array
+          items: { $ref: "#/components/schemas/AgentRunView" }
+        pendingConfirmations:
+          type: array
+          items: { type: object, additionalProperties: true }
+        recentMutations:
+          type: array
+          items: { type: object, additionalProperties: true }
+        conflicts:
+          type: array
+          items: { type: object, additionalProperties: true }
+        open_run_questions:
+          type: array
+          description: >
+            Open `RunQuestion` records (status="open"). Populated at
+            broadcast time only. See `internal/agent/types.go:129`
+            (`RunQuestion`).
+          items: { $ref: "#/components/schemas/RunQuestion" }
+        updatedAt:
+          type: string
+          format: date-time
+        sequenceNumber:
+          type: integer
+          format: int64
+          description: Monotonically increasing per-board sequence; lets clients reconcile out-of-order events.
+    Card:
+      type: object
+      description: >
+        Canonical card shape. Mirrors `internal/board/types.go` `Card`.
+        Externally projected to Jira/Linear/GitHub via the projection
+        layer (see ADR 0002).
+      required: [id, status, title]
+      properties:
+        id: { type: string }
+        status:
+          type: string
+          enum: [Backlog, "In Progress", Blocked, Done]
+        title: { type: string }
+        notes: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        assignee:
+          $ref: "#/components/schemas/Actor"
+        comments:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              body: { type: string }
+              author: { type: string }
+              createdAt: { type: string }
+    Actor:
+      type: object
+      description: >
+        Canonical assignee identity. `kind` discriminates human from
+        agent. Mirrors `internal/board/types.go` `Actor`.
+      required: [kind, id]
+      properties:
+        kind:
+          type: string
+          enum: [human, agent]
+        id: { type: string }
+        displayName: { type: string }
+        agentProfile: { type: string }
+        ownerHumanId: { type: string }
+        email: { type: string }
+    AgentRunView:
+      type: object
+      description: >
+        Client-safe Run timeline. Payload for `event: "agent_run"`,
+        `run_paused`, and `run_resumed`. Mirrors
+        `internal/agent/types.go:204` (`RunView`).
+      properties:
+        run_id: { type: string }
+        card_id: { type: string }
+        objective: { type: string }
+        agent_profile: { type: string }
+        status:
+          type: string
+          description: >
+            One of `queued`, `classifying`, `fetching_context`,
+            `reviewing`, `publishing`, `retrying`, `needs_input`,
+            `waiting_on_human`, `completed`, `failed`, `unsupported`,
+            `cancelled`, `taken_over`. See `internal/agent/types.go`
+            `RunStatus`.
+        current_step: { type: string }
+        plan:
+          type: array
+          items: { $ref: "#/components/schemas/PlanStep" }
+        checkpoints:
+          type: array
+          items: { $ref: "#/components/schemas/Checkpoint" }
+        cost: { $ref: "#/components/schemas/CostBreakdown" }
+        waiting_on: { $ref: "#/components/schemas/RunQuestionRef" }
+        finding_count: { type: integer }
+        jira_comment_posted: { type: boolean }
+        pr_review_posted: { type: boolean }
+        created_at: { type: string }
+        updated_at: { type: string }
+    PlanStep:
+      type: object
+      description: Mirrors `internal/agent/types.go:101` (`PlanStep`).
+      properties:
+        index: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        status:
+          type: string
+          enum: [pending, running, done, skipped, paused]
+        outcome: { type: string }
+        started_at: { type: string }
+        completed_at: { type: string }
+    Checkpoint:
+      type: object
+      description: Mirrors `internal/agent/types.go:195` (`Checkpoint`).
+      properties:
+        at: { type: string }
+        status: { type: string }
+        step: { type: string }
+        message: { type: string }
+    CostBreakdown:
+      type: object
+      description: Mirrors `internal/agent/types.go:116` (`CostBreakdown`).
+      properties:
+        cents: { type: integer }
+        by_model:
+          type: object
+          additionalProperties: { type: integer }
+        audio_seconds: { type: integer }
+        tokens_in: { type: integer }
+        tokens_out: { type: integer }
+        updated_at: { type: string }
+    RunQuestion:
+      type: object
+      description: >
+        Ask-the-human pause. Payload for `event: "run_question_asked"`,
+        `run_question_answered`, and `run_question_expired`. Mirrors
+        `internal/agent/types.go:129` (`RunQuestion`).
+      required: [id, tenant_id, board_id, run_id, card_id, prompt, status]
+      properties:
+        id: { type: string, description: "Crockford-base32 ULID." }
+        tenant_id: { type: string }
+        board_id: { type: string }
+        run_id: { type: string }
+        card_id: { type: string }
+        step_index: { type: integer }
+        prompt: { type: string }
+        reasoning: { type: string }
+        suggestions:
+          type: array
+          items: { type: string }
+        asked_at: { type: string }
+        ttl_seconds: { type: integer, description: "Default 14400 (4h)." }
+        answered_at: { type: string }
+        answer: { type: string }
+        answered_by: { type: string }
+        answered_via:
+          type: string
+          enum: [ui, voice, mcp]
+        status:
+          type: string
+          enum: [open, answered, expired, cancelled]
+    RunQuestionRef:
+      type: object
+      description: >
+        Lightweight pointer embedded in `RunView.waiting_on`. See
+        `internal/agent/types.go:159`.
+      properties:
+        question_id: { type: string }
+        prompt: { type: string }
+        asked_at: { type: string }
+    ActionResult:
+      type: object
+      description: >
+        Payload for `event: "action_result"`. Broadcast after a tool
+        call (voice or UI) succeeds or fails. Shape is dynamic; common
+        fields below.
+      properties:
+        ok: { type: boolean }
+        tool: { type: string }
+        card_id: { type: string }
+        error: { type: string }
+      additionalProperties: true
+    # ─── Sprint 2.1 dispatch envelopes ──────────────────────────────────
+    DispatchCardResult:
+      type: object
+      description: >
+        Success envelope returned by `POST /internal/tools/dispatch` for
+        `card.create` and `card.update`. Source:
+        `cmd/server/internal_dispatch.go:150`, `:261`.
+      properties:
+        card_id: { type: string }
+        card:    { $ref: "#/components/schemas/Card" }
+    DispatchCommentResult:
+      type: object
+      description: >
+        Success envelope returned by `POST /internal/tools/dispatch` for
+        `card.comment`. Source:
+        `cmd/server/internal_dispatch.go:302`.
+      required: [card_id, comment]
+      properties:
+        card_id: { type: string }
+        comment:
+          type: object
+          description: Mirrors `internal/board/types.go:162` (`Comment`).
+          properties:
+            id:        { type: string }
+            body:      { type: string }
+            author:    { type: string }
+            createdAt: { type: string }
+    RequiresApprovalEnvelope:
+      type: object
+      description: >
+        Returned by any cmd/server tool call (including dispatch and the
+        voice tool surface) when the tenant has `dry_run_enabled=true`.
+        The call is staged as a `PendingAction` instead of being applied
+        and the caller receives this envelope so the UI / agent can
+        surface the queued action. Source:
+        `cmd/server/dry_run.go:148`-`:157` (`stagePendingAction`).
+      required: [ok, dry_run, requires_approval, action_id, tool, prompt]
+      properties:
+        ok:                { type: boolean, description: Always false. }
+        dry_run:           { type: boolean, description: Always true. }
+        requires_approval: { type: boolean, description: Always true. }
+        action_id:
+          type: string
+          description: >
+            `pa_` + 24 hex chars, minted by `generatePendingActionID`
+            (`cmd/server/pending_actions.go:486`).
+        tool:       { type: string, description: The cmd/server tool name that was staged. }
+        expires_at: { type: string, description: RFC3339Nano deadline; default TTL 24h (`cmd/server/pending_actions.go:32`). }
+        prompt:     { type: string, description: Human-readable summary the voice / UI surface plays back. }
+    # ─── Sprint 4.0 trust ceremony ──────────────────────────────────────
+    TenantSettings:
+      type: object
+      description: >
+        Per-tenant trust-ceremony configuration. Both flags default to
+        `false` so legacy tenants are unaffected. Mirrors
+        `cmd/server/tenant_settings.go:14` (`tenantSettings`).
+      required: [tenant_id]
+      properties:
+        tenant_id:        { type: string }
+        dry_run_enabled: { type: boolean, default: false }
+        agents_paused:    { type: boolean, default: false }
+        updated_at:
+          type: string
+          description: RFC3339Nano timestamp written by `tenantSettingsManager.Set`.
+    PendingAction:
+      type: object
+      description: >
+        A single staged tool call queued by dry-run mode. Mirrors
+        `cmd/server/pending_actions.go:37` (`pendingAction`). Persisted
+        in the `pending_actions` SQLite table; the in-memory store is
+        used by tests.
+      required: [tenant_id, board_id, action_id, tool, status]
+      properties:
+        tenant_id: { type: string }
+        board_id:  { type: string }
+        action_id: { type: string, description: "`pa_` + 24 hex characters." }
+        tool:      { type: string, description: "cmd/server internal tool name (e.g. `create_ticket`, `move_ticket`)." }
+        args:
+          type: object
+          additionalProperties: true
+          description: Arbitrary JSON arguments; tool-specific shape.
+        intent:
+          type: object
+          additionalProperties: true
+          description: >
+            Risk classification + evidence. The current implementation
+            stores dispatcher / actor / call_id / transcript / raw_args
+            (`cmd/server/dry_run.go:114`-`:120`). Schema will narrow as
+            the risk classifier graduates.
+        created_at: { type: string, description: RFC3339Nano. }
+        expires_at: { type: string, description: RFC3339Nano deadline. Default TTL 24h. }
+        status:
+          type: string
+          enum: [pending, applied, rejected, expired]
+          description: Lifecycle state (`cmd/server/pending_actions.go:23`-`:27`).
+        result:
+          type: object
+          additionalProperties: true
+          description: Apply outcome (filled when `status=applied`).
+        decision:
+          $ref: "#/components/schemas/PendingActionDecision"
+    PendingActionDecision:
+      type: object
+      description: >
+        Resolution metadata for a `PendingAction`. Mirrors
+        `cmd/server/pending_actions.go:54` (`pendingActionDecision`).
+      required: [decided_at, disposition]
+      properties:
+        decided_at:  { type: string, description: RFC3339Nano. }
+        decided_by:  { type: string, description: Operator identity (or `"sweeper"` for TTL expiry). }
+        decided_via: { type: string, description: "Origin channel: `ui` | `voice` | `mcp` | `sweeper`." }
+        disposition:
+          type: string
+          enum: [applied, rejected, expired]
+        note: { type: string }
+    PendingActionDiff:
+      type: object
+      description: >
+        Before/after card snapshot for a staged action. Returned by
+        `POST /tenant/pending_actions/{id}/preview` and embedded inside
+        the `pending_action` WebSocket broadcast (`{action, diff}`).
+        Mirrors `cmd/server/diff_preview.go:14`
+        (`pendingActionDiff`). Errors during the simulated apply are
+        surfaced in `error` so the UI can warn before approval.
+      required: [action_id, tool, before, after]
+      properties:
+        action_id: { type: string }
+        tool:      { type: string }
+        args:
+          type: object
+          additionalProperties: true
+        before:
+          type: array
+          items: { $ref: "#/components/schemas/Card" }
+        after:
+          type: array
+          items: { $ref: "#/components/schemas/Card" }
+        changed_card_ids:
+          type: array
+          items: { type: string }
+        created_card_ids:
+          type: array
+          items: { type: string }
+        removed_card_ids:
+          type: array
+          items: { type: string }
+        sequence_before: { type: integer, format: int64 }
+        sequence_after:  { type: integer, format: int64 }
+        meeting_changed: { type: boolean }
+        error:
+          type: string
+          description: Non-empty when the simulated apply errored; the action is still safe to preview.
+    # ─── Sprint 2.0 Run (persisted shape) + closed-loop standup ─────────
+    Run:
+      type: object
+      description: >
+        Persisted internal state for an autonomous agent Run. Mirrors
+        `internal/agent/types.go:50` (`Run`). The client-safe projection
+        used in WebSocket broadcasts is `AgentRunView` (sourced from
+        `internal/agent/types.go:210` (`RunView`)). Distinct from
+        `AgentRunView` because the persisted shape carries unpublished
+        fields (`Findings`, `Classification`) that the view exposes only
+        when the Run is published.
+      required: [run_id, board_id, card_id, objective, agent_profile, status, created_at, updated_at]
+      properties:
+        run_id:        { type: string }
+        tenant_id:     { type: string }
+        board_id:      { type: string }
+        card_id:       { type: string }
+        jira_issue_key:{ type: string }
+        card_title:    { type: string }
+        objective:     { type: string }
+        requested_by:  { type: string }
+        retry_of:      { type: string }
+        agent_profile: { type: string }
+        request_type:  { type: string }
+        specialist:    { type: string }
+        status:
+          type: string
+          description: >
+            Lifecycle status (`internal/agent/types.go` `RunStatus`).
+            One of `queued`, `classifying`, `fetching_context`,
+            `reviewing`, `publishing`, `retrying`, `needs_input`,
+            `waiting_on_human`, `completed`, `failed`, `unsupported`,
+            `cancelled`, `taken_over`, `paused`.
+        current_step:  { type: string }
+        repo:          { type: string }
+        branch:        { type: string }
+        pull_request_number: { type: integer }
+        pull_request_url:    { type: string }
+        pm_model:      { type: string }
+        review_model:  { type: string }
+        review_lens:   { type: string }
+        summary:       { type: string }
+        publish_warnings:
+          type: array
+          items: { type: string }
+        cost_budget_cents:    { type: integer }
+        estimated_cost_cents: { type: integer }
+        model_calls:          { type: integer }
+        jira_comment_posted:  { type: boolean }
+        pr_review_posted:     { type: boolean }
+        error:                { type: string }
+        checkpoints:
+          type: array
+          items: { $ref: "#/components/schemas/Checkpoint" }
+        plan:
+          type: array
+          items: { $ref: "#/components/schemas/PlanStep" }
+        cost:       { $ref: "#/components/schemas/CostBreakdown" }
+        waiting_on: { $ref: "#/components/schemas/RunQuestionRef" }
+        sequence_number_start:
+          type: integer
+          format: int64
+          description: Board sequence observed when the Run started.
+        sequence_number_end:
+          type: integer
+          format: int64
+          description: Board sequence observed when the Run completed.
+        created_at:    { type: string }
+        updated_at:    { type: string }
+        started_at:    { type: string }
+        completed_at:  { type: string }
+    BlockerItem:
+      type: object
+      description: >
+        A single blocker mentioned in an async intake. Mirrors
+        `internal/intake/types.go:37` (`BlockerItem`).
+      required: [text]
+      properties:
+        text:    { type: string }
+        card_id: { type: string }
+        due:
+          type: string
+          description: Free-form date string; ISO-8601 preferred but not enforced.
+    IntakeRecord:
+      type: object
+      description: >
+        Structured async-standup record. Mirrors
+        `internal/intake/types.go:49` (`Intake`). `intake.Normalize`
+        (`internal/intake/types.go:70`) validates that at least one of
+        `yesterday`, `today`, `blockers`, or `raw_text` is set and that
+        `submitter` is non-empty.
+      required: [submitter]
+      properties:
+        tenant_id:    { type: string }
+        board_id:     { type: string }
+        submitter:    { type: string }
+        submitted_at:
+          type: string
+          format: date-time
+          description: Stamped by `Normalize` if blank; coerced to UTC.
+        yesterday:    { type: string }
+        today:        { type: string }
+        blockers:
+          type: array
+          items: { $ref: "#/components/schemas/BlockerItem" }
+        mentioned_cards:
+          type: array
+          items: { type: string }
+          description: Card IDs the submitter referenced; deduplicated by `Normalize`.
+        source:
+          type: string
+          enum: [form, slack, api]
+          description: Origin channel; `form` is the default.
+        raw_text:
+          type: string
+          description: >
+            Free-form body for `slack` / `api` sources. When structured
+            fields are empty, `intakeParser.Parse`
+            (`cmd/server/intake_handler.go:192`-`:226`) fills
+            yesterday/today/blockers from this text.

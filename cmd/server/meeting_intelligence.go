@@ -6,83 +6,67 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/somoore/auto-bot/internal/meetings"
 )
 
-type toolRiskLevel string
+// toolRiskLevel and the canonical risk constants are aliased to the pure
+// risk classification in internal/meetings (which itself re-exports
+// internal/core.RiskLevel). Behavior in cmd/server is unchanged; the aliases
+// let existing code keep referring to the local names.
+type toolRiskLevel = meetings.RiskLevel
 
 const (
-	toolRiskLow    toolRiskLevel = "low"
-	toolRiskMedium toolRiskLevel = "medium"
-	toolRiskHigh   toolRiskLevel = "high"
+	toolRiskLow    = meetings.RiskLow
+	toolRiskMedium = meetings.RiskMedium
+	toolRiskHigh   = meetings.RiskHigh
 )
 
+// toolCallMeta carries provenance about an ApplyToolCallWithMeta invocation.
+//
+// Dispatcher describes the dispatcher that produced the tool call (e.g.
+// "nova-sonic", "openai-realtime", "ui", "tool"). It is propagated to audit
+// records as the mutation's `source` and is never used as a trust signal.
+//
+// SkipConfirmation is the explicit opt-out gate for the confirmation queue.
+// It must only be set by trusted in-process call paths whose intent is to
+// bypass the human confirmation step (e.g. tests that exercise direct
+// mutation, replay-by-event-id, and the confirmed-action execution path).
+// Default-deny: every external dispatcher (Nova Sonic, OpenAI realtime, MCP,
+// REST) must leave SkipConfirmation false so risky tools always queue a
+// pending confirmation. See SecArch-002.
 type toolCallMeta struct {
-	Source     string
-	Actor      string
-	CallID     string
-	Transcript string
+	Dispatcher       string
+	Actor            string
+	CallID           string
+	Transcript       string
+	SkipConfirmation bool
 }
 
-type pendingConfirmation struct {
-	ConfirmationID string         `json:"confirmationId"`
-	ToolName       string         `json:"toolName"`
-	Arguments      map[string]any `json:"arguments,omitempty"`
-	RiskLevel      toolRiskLevel  `json:"riskLevel"`
-	Prompt         string         `json:"prompt"`
-	Source         string         `json:"source,omitempty"`
-	Actor          string         `json:"actor,omitempty"`
-	CallID         string         `json:"callId,omitempty"`
-	CreatedAt      string         `json:"createdAt"`
-	ExpiresAt      string         `json:"expiresAt"`
-}
+// pendingConfirmation, pendingConfirmationView, transcriptEntry,
+// transcriptEvidence, externalActionConfirmation, boardMutationView,
+// scrumFollowUp, scrumBlocker, scrumOwnership, and scrumBriefing are aliased
+// to internal/meetings so the JSON shape, field tags, and value identity
+// are shared with any caller outside cmd/server. See
+// internal/meetings/types.go for the canonical definitions.
+type (
+	pendingConfirmation        = meetings.PendingConfirmation
+	pendingConfirmationView    = meetings.PendingConfirmationView
+	transcriptEntry            = meetings.TranscriptEntry
+	transcriptEvidence         = meetings.TranscriptEvidence
+	externalActionConfirmation = meetings.ExternalConfirmation
+	boardMutationView          = meetings.BoardMutationView
+	scrumFollowUp              = meetings.FollowUp
+	scrumBlocker               = meetings.Blocker
+	scrumOwnership             = meetings.Ownership
+	scrumBriefing              = meetings.Briefing
+)
 
-// pendingConfirmationView is the client-safe representation of a medium/high
-// risk action waiting for host confirmation.
-type pendingConfirmationView struct {
-	ConfirmationID    string        `json:"confirmationId"`
-	ToolName          string        `json:"toolName"`
-	RiskLevel         toolRiskLevel `json:"riskLevel"`
-	Prompt            string        `json:"prompt"`
-	Source            string        `json:"source,omitempty"`
-	Actor             string        `json:"actor,omitempty"`
-	Confidence        float64       `json:"confidence,omitempty"`
-	ConfidenceReasons []string      `json:"confidenceReasons,omitempty"`
-	MatchedCardID     string        `json:"matchedCardId,omitempty"`
-	GuardrailDecision string        `json:"guardrailDecision,omitempty"`
-	CreatedAt         string        `json:"createdAt"`
-	ExpiresAt         string        `json:"expiresAt"`
-}
-
-// transcriptEntry is the retained meeting transcript shape used for audit and
-// intelligence reports. CreatedAt is RFC3339Nano UTC.
-type transcriptEntry struct {
-	Role           string `json:"role"`
-	Speaker        string `json:"speaker,omitempty"`
-	Text           string `json:"text"`
-	OriginalText   string `json:"original_text,omitempty"`
-	TranslatedText string `json:"translated_text,omitempty"`
-	Language       string `json:"language,omitempty"`
-	InputMode      string `json:"input_mode,omitempty"`
-	CreatedAt      string `json:"createdAt"`
-}
-
-type transcriptEvidence struct {
-	Entries []transcriptEntry `json:"entries,omitempty"`
-	Summary string            `json:"summary,omitempty"`
-}
-
-type externalActionConfirmation struct {
-	System      string `json:"system"`
-	Operation   string `json:"operation,omitempty"`
-	Required    bool   `json:"required"`
-	Configured  bool   `json:"configured"`
-	OK          bool   `json:"ok"`
-	Message     string `json:"message,omitempty"`
-	Error       string `json:"error,omitempty"`
-	ConfirmedAt string `json:"confirmedAt,omitempty"`
-	Evidence    string `json:"evidence,omitempty"`
-}
-
+// boardMutationRecord retains the full before/after board snapshots used for
+// undo and audit replay. It stays in cmd/server because BeforeCards /
+// AfterCards reference application-level kanbanCard values (which still
+// alias internal/board.Card) and because mutation persistence is owned by
+// the kanbanBoard actor here.
 type boardMutationRecord struct {
 	EventID               string                       `json:"eventId"`
 	OccurredAt            string                       `json:"occurredAt"`
@@ -107,70 +91,6 @@ type boardMutationRecord struct {
 	UndoOf                string                       `json:"undoOf,omitempty"`
 }
 
-// boardMutationView is the client-safe audit summary for one board or Jira
-// mutation.
-type boardMutationView struct {
-	EventID               string                       `json:"eventId"`
-	OccurredAt            string                       `json:"occurredAt"`
-	Source                string                       `json:"source"`
-	Actor                 string                       `json:"actor,omitempty"`
-	ToolName              string                       `json:"toolName"`
-	RiskLevel             toolRiskLevel                `json:"riskLevel"`
-	Confirmation          string                       `json:"confirmationId,omitempty"`
-	CardIDs               []string                     `json:"cardIds,omitempty"`
-	Summary               string                       `json:"summary"`
-	Confidence            float64                      `json:"confidence,omitempty"`
-	ConfidenceReasons     []string                     `json:"confidenceReasons,omitempty"`
-	MatchedCardID         string                       `json:"matchedCardId,omitempty"`
-	GuardrailDecision     string                       `json:"guardrailDecision,omitempty"`
-	ExternalConfirmations []externalActionConfirmation `json:"externalConfirmations,omitempty"`
-	APIStatus             string                       `json:"apiStatus,omitempty"`
-	Transcript            transcriptEvidence           `json:"transcript,omitempty"`
-	Sequence              int64                        `json:"sequenceNumber"`
-	Reverted              bool                         `json:"reverted,omitempty"`
-	UndoOf                string                       `json:"undoOf,omitempty"`
-}
-
-type scrumFollowUp struct {
-	ID        string `json:"id"`
-	Owner     string `json:"owner,omitempty"`
-	Text      string `json:"text"`
-	CardID    string `json:"cardId,omitempty"`
-	DueDate   string `json:"dueDate,omitempty"`
-	Status    string `json:"status,omitempty"`
-	CreatedAt string `json:"createdAt"`
-}
-
-type scrumBlocker struct {
-	ID         string `json:"id"`
-	Owner      string `json:"owner,omitempty"`
-	Text       string `json:"text"`
-	CardID     string `json:"cardId,omitempty"`
-	Status     string `json:"status"`
-	CreatedAt  string `json:"createdAt"`
-	ResolvedAt string `json:"resolvedAt,omitempty"`
-}
-
-type scrumOwnership struct {
-	Owner          string `json:"owner"`
-	CardID         string `json:"cardId,omitempty"`
-	Responsibility string `json:"responsibility"`
-	UpdatedAt      string `json:"updatedAt"`
-}
-
-type scrumBriefing struct {
-	GeneratedAt          string   `json:"generatedAt"`
-	Since                string   `json:"since"`
-	Summary              string   `json:"summary"`
-	TicketsMoved         int      `json:"ticketsMoved"`
-	PRsReady             int      `json:"prsReady"`
-	BlockedCount         int      `json:"blockedCount"`
-	UnassignedCount      int      `json:"unassignedCount"`
-	StaleCards           []string `json:"staleCards,omitempty"`
-	UnresolvedBlockers   []string `json:"unresolvedBlockers,omitempty"`
-	RecommendedQuestions []string `json:"recommendedQuestions,omitempty"`
-}
-
 // jiraConflict is the client-visible local-vs-Jira divergence record used to
 // ask the meeting host which version should win.
 type jiraConflict struct {
@@ -188,10 +108,10 @@ type jiraConflict struct {
 }
 
 func normalizeToolCallMeta(meta toolCallMeta) toolCallMeta {
-	if strings.TrimSpace(meta.Source) == "" {
-		meta.Source = "tool"
+	if strings.TrimSpace(meta.Dispatcher) == "" {
+		meta.Dispatcher = "tool"
 	}
-	meta.Source = truncateString(meta.Source, 80)
+	meta.Dispatcher = truncateString(meta.Dispatcher, 80)
 	meta.Actor = truncateString(meta.Actor, 120)
 	meta.CallID = truncateString(meta.CallID, 160)
 	meta.Transcript = truncateString(meta.Transcript, 2000)
@@ -200,7 +120,7 @@ func normalizeToolCallMeta(meta toolCallMeta) toolCallMeta {
 
 func riskForTool(toolName string) toolRiskLevel {
 	switch toolName {
-	case "assign_ticket", "unassign_ticket", "assign_ticket_to_agent", "set_eta", "set_priority", "set_reporter":
+	case "assign_ticket", "unassign_ticket", "assign_ticket_to_agent", "cancel_agent_run", "take_over_agent_run", "retry_agent_run", "set_eta", "set_priority", "set_reporter":
 		return toolRiskMedium
 	case "delete_ticket", "set_sprint", "rank_issue", "prioritize_ticket":
 		return toolRiskHigh
@@ -223,7 +143,7 @@ func (board *kanbanBoard) createPendingConfirmation(toolName string, args map[st
 		Arguments:      cloneToolArgs(args),
 		RiskLevel:      riskForTool(toolName),
 		Prompt:         confirmationPrompt(toolName, args),
-		Source:         meta.Source,
+		Source:         meta.Dispatcher,
 		Actor:          meta.Actor,
 		CallID:         meta.CallID,
 		CreatedAt:      now.Format(time.RFC3339Nano),
@@ -233,7 +153,7 @@ func (board *kanbanBoard) createPendingConfirmation(toolName string, args map[st
 		board.pendingConfirmations = map[string]pendingConfirmation{}
 	}
 	board.pendingConfirmations[confirmation.ConfirmationID] = confirmation
-	broadcastKanbanEventForBoard(board.boardID, "confirmation", pendingConfirmationToView(confirmation))
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "confirmation", pendingConfirmationToView(confirmation))
 	return map[string]any{
 		"ok":                    false,
 		"requires_confirmation": true,
@@ -338,7 +258,7 @@ func (board *kanbanBoard) cancelPendingConfirmation(args map[string]any) (map[st
 	if !ok {
 		return map[string]any{"ok": false, "error": "pending confirmation not found"}, false, nil
 	}
-	broadcastKanbanEventForBoard(board.boardID, "confirmation_cancelled", pendingConfirmationToView(confirmation))
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "confirmation_cancelled", pendingConfirmationToView(confirmation))
 	return map[string]any{"ok": true, "cancelled": true, "confirmation_id": confirmationID}, false, nil
 }
 
@@ -384,7 +304,7 @@ func (board *kanbanBoard) recordMutation(toolName string, args map[string]any, r
 	record := boardMutationRecord{
 		EventID:       eventID,
 		OccurredAt:    time.Now().UTC().Format(time.RFC3339Nano),
-		Source:        meta.Source,
+		Source:        meta.Dispatcher,
 		Actor:         meta.Actor,
 		ToolName:      toolName,
 		Arguments:     cloneToolArgs(args),
@@ -532,6 +452,12 @@ func mutationSummary(toolName string, args map[string]any, result map[string]any
 		return fmt.Sprintf("Prioritized %s", cardID)
 	case "record_participant_update":
 		return fmt.Sprintf("Recorded update from %s", firstNonEmptyString(args, "participant", "display_name", "participant_id"))
+	case "cancel_agent_run":
+		return fmt.Sprintf("Cancelled agent run %s", asString(args["run_id"]))
+	case "take_over_agent_run":
+		return fmt.Sprintf("Human took over agent run %s", asString(args["run_id"]))
+	case "retry_agent_run":
+		return fmt.Sprintf("Retried agent run %s", asString(args["run_id"]))
 	default:
 		if cardID != "" {
 			return fmt.Sprintf("%s on %s", toolName, cardID)
@@ -689,7 +615,7 @@ func (board *kanbanBoard) undoLastMutation(args map[string]any, meta toolCallMet
 	}
 	record := board.recordMutation("undo_last_mutation", args, result, before, after, meta, "", target.EventID)
 	board.persistMutationRecord(record, after)
-	broadcastKanbanEventForBoard(board.boardID, "undo_result", boardMutationToView(record))
+	broadcastKanbanEventForBoard(board.tenantID, board.boardID, "undo_result", boardMutationToView(record))
 	return result, true, nil
 }
 
@@ -1125,7 +1051,48 @@ func boardMutationToView(record boardMutationRecord) boardMutationView {
 		Sequence:              record.Sequence,
 		Reverted:              record.Reverted,
 		UndoOf:                record.UndoOf,
+		Undoable:              mutationIsUndoable(record),
 	}
+}
+
+// mutationIsUndoable returns true when the React timeline should render a
+// 1-click undo button next to this entry. We surface undo for any record
+// that has not been reverted, is not itself an undo, has at least one
+// before-card snapshot to restore from, and uses a tool that mutates board
+// state. The connector capability list in extensions.go remains the source
+// of truth for tool-level support; this function captures the runtime
+// "we have the data to roll it back" condition.
+func mutationIsUndoable(record boardMutationRecord) bool {
+	if record.Reverted {
+		return false
+	}
+	if record.ToolName == "undo_last_mutation" {
+		return false
+	}
+	if record.ToolName == "" {
+		return false
+	}
+	// Connector list of tools that explicitly opt out of undo (no-op /
+	// audit-only). Everything else gets the button.
+	switch record.ToolName {
+	case "get_board", "get_card", "get_audit_events", "replay_audit_event",
+		"list_pending_confirmations", "list_priorities", "list_agent_runs",
+		"get_agent_run", "search_jira_users", "record_meeting_memory":
+		return false
+	}
+	// We need the BeforeCards snapshot to roll back; without it the undo
+	// path has nothing to restore. Mutation records persisted via
+	// persistMutationRecord always include BeforeCards.
+	if len(record.BeforeCards) == 0 && record.BeforeMeeting == nil {
+		// Allow undo of create_ticket even when BeforeCards is empty —
+		// removing the created card is the rollback.
+		switch record.ToolName {
+		case "create_ticket", "create_subtask":
+			return true
+		}
+		return false
+	}
+	return true
 }
 
 func confidenceForMutation(record boardMutationRecord) (float64, []string) {
@@ -1276,10 +1243,11 @@ func (board *kanbanBoard) persistMutationRecord(record boardMutationRecord, stat
 	if board.store == nil {
 		return
 	}
-	if err := board.store.SaveSnapshot(context.Background(), board.boardID, state); err != nil {
+	if err := board.store.SaveSnapshot(context.Background(), board.tenantID, board.boardID, state); err != nil {
 		log.Errorf("Failed to persist board snapshot: %v", err)
 	}
 	event := boardEventRecord{
+		TenantID:       board.tenantID,
 		BoardID:        board.boardID,
 		OccurredAt:     record.OccurredAt,
 		ToolName:       record.ToolName,
@@ -1294,11 +1262,11 @@ func (board *kanbanBoard) persistMutationRecord(record boardMutationRecord, stat
 		UndoOf:         record.UndoOf,
 		Summary:        record.Summary,
 	}
-	if err := board.store.AppendEvent(context.Background(), board.boardID, event, state); err != nil {
+	if err := board.store.AppendEvent(context.Background(), board.tenantID, board.boardID, event, state); err != nil {
 		log.Errorf("Failed to persist board event: %v", err)
 	}
 	if ledgerStore, ok := board.store.(mutationLedgerStore); ok {
-		if err := ledgerStore.SaveMutationRecord(context.Background(), board.boardID, record, state); err != nil {
+		if err := ledgerStore.SaveMutationRecord(context.Background(), board.tenantID, board.boardID, record, state); err != nil {
 			log.Errorf("Failed to persist action replay event: %v", err)
 		}
 	}

@@ -63,7 +63,10 @@ func TestBoardMutationsIncrementSequenceNumber(t *testing.T) {
 	}
 
 	for index, operation := range operations {
-		_, changed, err := board.ApplyToolCall(operation.name, operation.args)
+		// SkipConfirmation: test exercises the direct-mutation path; risky
+		// tools (e.g. delete_ticket) require the explicit opt-out under the
+		// SecArch-002 default-deny gate.
+		_, changed, err := board.ApplyToolCallWithMeta(operation.name, operation.args, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 		if err != nil {
 			t.Fatalf("%s returned error: %v", operation.name, err)
 		}
@@ -168,7 +171,7 @@ func TestRiskyVoiceToolsRequireConfirmationAndCanBeConfirmed(t *testing.T) {
 	}
 	card := result["card"].(kanbanCard)
 
-	result, changed, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`","account_id":"account-123","display_name":"Scott Moore"}`, toolCallMeta{Source: "openai-realtime"})
+	result, changed, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`","account_id":"account-123","display_name":"Scott Moore"}`, toolCallMeta{Dispatcher: "openai-realtime"})
 	if err != nil {
 		t.Fatalf("assign_ticket returned error: %v", err)
 	}
@@ -183,7 +186,7 @@ func TestRiskyVoiceToolsRequireConfirmationAndCanBeConfirmed(t *testing.T) {
 		t.Fatalf("pending confirmations = %d, want 1", len(board.SnapshotState().PendingConfirmations))
 	}
 
-	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"`+confirmationID+`"}`, toolCallMeta{Source: "openai-realtime"})
+	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"`+confirmationID+`"}`, toolCallMeta{Dispatcher: "openai-realtime"})
 	if err != nil {
 		t.Fatalf("confirm_action returned error: %v", err)
 	}
@@ -215,12 +218,12 @@ func TestAssignTicketToAgentCreatesPersistentRunState(t *testing.T) {
 	}
 	card := result["card"].(kanbanCard)
 
-	runResult, changed, err := board.ApplyToolCall("assign_ticket_to_agent", `{
+	runResult, changed, err := board.ApplyToolCallWithMeta("assign_ticket_to_agent", `{
 		"card_id":"`+card.ID+`",
 		"objective":"conduct a code review",
 		"repo":"scottmoore/auto-bot",
 		"pull_request_number":42
-	}`)
+	}`, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 	if err != nil {
 		t.Fatalf("assign_ticket_to_agent returned error: %v", err)
 	}
@@ -241,12 +244,25 @@ func TestAssignTicketToAgentCreatesPersistentRunState(t *testing.T) {
 	if state.AgentRuns[0].Status != agentRunQueued {
 		t.Fatalf("agent run status = %q, want queued", state.AgentRuns[0].Status)
 	}
+	// assign_ticket_to_agent must promote the card's Assignee to an
+	// Actor{Kind:Agent} so the Paper screens (D1.1 / D1.3) can render
+	// agent-owned cards differently from human-owned ones.
+	updated := findBoardTestCard(t, state.Cards, card.ID)
+	if updated.Assignee == nil {
+		t.Fatalf("Assignee = nil, want agent actor")
+	}
+	if updated.Assignee.Kind != kanbanActorKindAgent {
+		t.Fatalf("Assignee.Kind = %q, want %q", updated.Assignee.Kind, kanbanActorKindAgent)
+	}
+	if updated.Assignee.AgentProfile == "" {
+		t.Fatalf("Assignee.AgentProfile is empty, want a profile string")
+	}
 }
 
 func TestMeetingMemoryBriefingAuditReplayAndUndo(t *testing.T) {
 	board := newKanbanBoard()
 	board.RecordTranscript("user", "Scott", "I finished the LiveKit work and EMAL-14 is blocked by DNS.")
-	result, changed, err := board.ApplyToolCallWithMeta("start_meeting", `{"participants":["Scott","Sarah"],"agenda":["standup"]}`, toolCallMeta{Source: "nova-sonic"})
+	result, changed, err := board.ApplyToolCallWithMeta("start_meeting", `{"participants":["Scott","Sarah"],"agenda":["standup"]}`, toolCallMeta{Dispatcher: "nova-sonic"})
 	if err != nil {
 		t.Fatalf("start_meeting returned error: %v", err)
 	}
@@ -257,7 +273,7 @@ func TestMeetingMemoryBriefingAuditReplayAndUndo(t *testing.T) {
 		t.Fatalf("start_meeting result missing briefing_text: %#v", result)
 	}
 
-	result, changed, err = board.ApplyToolCallWithMeta("create_ticket", `{"title":"Track DNS blocker","notes":"LiveKit DNS needs validation","tags":["livekit"],"status":"Backlog"}`, toolCallMeta{Source: "nova-sonic"})
+	result, changed, err = board.ApplyToolCallWithMeta("create_ticket", `{"title":"Track DNS blocker","notes":"LiveKit DNS needs validation","tags":["livekit"],"status":"Backlog"}`, toolCallMeta{Dispatcher: "nova-sonic"})
 	if err != nil {
 		t.Fatalf("create_ticket returned error: %v", err)
 	}
@@ -273,7 +289,7 @@ func TestMeetingMemoryBriefingAuditReplayAndUndo(t *testing.T) {
 		"blocker":"DNS validation is missing",
 		"follow_up":"Scott to validate DNS before AWS apply",
 		"eta":"2026-05-20"
-	}`, toolCallMeta{Source: "nova-sonic"})
+	}`, toolCallMeta{Dispatcher: "nova-sonic"})
 	if err != nil {
 		t.Fatalf("record_participant_update returned error: %v", err)
 	}
@@ -306,7 +322,7 @@ func TestMeetingMemoryBriefingAuditReplayAndUndo(t *testing.T) {
 	}
 
 	beforeUndo := board.SnapshotState().SequenceNumber
-	undo, changed, err := board.ApplyToolCallWithMeta("undo_last_mutation", `{}`, toolCallMeta{Source: "ui"})
+	undo, changed, err := board.ApplyToolCallWithMeta("undo_last_mutation", `{}`, toolCallMeta{Dispatcher: "ui"})
 	if err != nil {
 		t.Fatalf("undo_last_mutation returned error: %v", err)
 	}
@@ -328,7 +344,7 @@ func TestMutationReplayIncludesAPIConfirmationEvidence(t *testing.T) {
 
 	board := newKanbanBoard()
 	result, changed, err := board.ApplyToolCallWithMeta("move_ticket", `{"card_id":"card-002","status":"In Progress"}`, toolCallMeta{
-		Source:     "nova-sonic",
+		Dispatcher: "nova-sonic",
 		CallID:     "call-1",
 		Transcript: "Move the RTP retransmission task to in progress.",
 	})
@@ -375,7 +391,7 @@ func TestMutationReplayIncludesAPIConfirmationEvidence(t *testing.T) {
 
 func TestJiraConflictResolutionKeepsLocalOrUsesJira(t *testing.T) {
 	board := newKanbanBoard()
-	result, _, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Local title","notes":"Local notes","tags":["local"],"status":"Backlog"}`, toolCallMeta{Source: "openai-realtime"})
+	result, _, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Local title","notes":"Local notes","tags":["local"],"status":"Backlog"}`, toolCallMeta{Dispatcher: "openai-realtime"})
 	if err != nil {
 		t.Fatalf("create_ticket returned error: %v", err)
 	}
@@ -458,7 +474,7 @@ func TestPrioritizeTicketMovesCardsAcrossColumns(t *testing.T) {
 		{ID: "EMAL-16", Status: kanbanStatusBlocked, Title: "Production guardrail"},
 	})
 
-	result, changed, err := board.ApplyToolCall("prioritize_ticket", `{"card_id":"EMAL-10","above_card_id":"EMAL-15"}`)
+	result, changed, err := board.ApplyToolCallWithMeta("prioritize_ticket", `{"card_id":"EMAL-10","above_card_id":"EMAL-15"}`, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 	if err != nil {
 		t.Fatalf("prioritize_ticket returned error: %v", err)
 	}
@@ -490,7 +506,7 @@ func TestPrioritizeTicketSupportsSubtasksAndColumnPositions(t *testing.T) {
 		{ID: "EMAL-22", Status: kanbanStatusInProgress, Title: "UI wiring", IssueType: "Sub-task", ParentID: "EMAL-20"},
 	})
 
-	_, _, err := board.ApplyToolCall("prioritize_ticket", `{"card_id":"EMAL-22","position":"top","status":"In Progress"}`)
+	_, _, err := board.ApplyToolCallWithMeta("prioritize_ticket", `{"card_id":"EMAL-22","position":"top","status":"In Progress"}`, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 	if err != nil {
 		t.Fatalf("prioritize_ticket top returned error: %v", err)
 	}
@@ -557,7 +573,11 @@ func TestBoardJiraTaskMetadataTools(t *testing.T) {
 	}
 
 	for _, operation := range operations {
-		_, changed, err := board.ApplyToolCall(operation.name, operation.args)
+		// SkipConfirmation: these tests cover the direct-mutation path for
+		// medium-risk Jira metadata tools (assign_ticket, set_eta,
+		// set_priority, etc.); explicit opt-out is required under the
+		// SecArch-002 default-deny gate.
+		_, changed, err := board.ApplyToolCallWithMeta(operation.name, operation.args, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 		if err != nil {
 			t.Fatalf("%s returned error: %v", operation.name, err)
 		}

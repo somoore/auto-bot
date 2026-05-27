@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/openai/openai-realtime-meeting-assistant/internal/core"
+	"github.com/somoore/auto-bot/internal/core"
 )
 
 // VoiceProvider is a configurable in-memory implementation of

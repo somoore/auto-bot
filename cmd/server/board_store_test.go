@@ -74,7 +74,7 @@ func TestSQLiteBoardStorePersistsActionReplayLedger(t *testing.T) {
 		t.Fatalf("newPersistentKanbanBoard returned error: %v", err)
 	}
 	result, changed, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Replay persisted ticket","notes":"Audit should survive restart","status":"In Progress"}`, toolCallMeta{
-		Source:     "test",
+		Dispatcher: "test",
 		Actor:      "Scott",
 		Transcript: "create a ticket for replay persistence",
 	})
@@ -136,13 +136,13 @@ func TestSQLiteBoardStorePersistsMeetingReports(t *testing.T) {
 	sharedBoard = board
 	t.Cleanup(func() { sharedBoard = previousSharedBoard })
 
-	if _, changed, err := board.ApplyToolCallWithMeta("start_meeting", `{"meeting_id":"standup-report-1","meeting_type":"standup","participants":["Scott","Sarah"],"agenda":["blockers","owners"]}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+	if _, changed, err := board.ApplyToolCallWithMeta("start_meeting", `{"meeting_id":"standup-report-1","meeting_type":"standup","participants":["Scott","Sarah"],"agenda":["blockers","owners"]}`, toolCallMeta{Dispatcher: "nova-sonic"}); err != nil {
 		t.Fatalf("start_meeting returned error: %v", err)
 	} else if !changed {
 		t.Fatal("start_meeting should mutate")
 	}
 
-	createResult, changed, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Report persistence work","notes":"Need archived intelligence","status":"In Progress","tags":["reporting"]}`, toolCallMeta{Source: "nova-sonic"})
+	createResult, changed, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Report persistence work","notes":"Need archived intelligence","status":"In Progress","tags":["reporting"]}`, toolCallMeta{Dispatcher: "nova-sonic"})
 	if err != nil {
 		t.Fatalf("create_ticket returned error: %v", err)
 	}
@@ -151,19 +151,19 @@ func TestSQLiteBoardStorePersistsMeetingReports(t *testing.T) {
 	}
 	card := createResult["card"].(kanbanCard)
 
-	if _, changed, err := board.ApplyToolCallWithMeta("record_participant_update", `{"participant":"Sarah","card_id":"`+card.ID+`","spoken_text":"I will finish the report page today.","follow_up":"Sarah to validate post-meeting report","eta":"2026-05-20"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+	if _, changed, err := board.ApplyToolCallWithMeta("record_participant_update", `{"participant":"Sarah","card_id":"`+card.ID+`","spoken_text":"I will finish the report page today.","follow_up":"Sarah to validate post-meeting report","eta":"2026-05-20"}`, toolCallMeta{Dispatcher: "nova-sonic"}); err != nil {
 		t.Fatalf("record_participant_update returned error: %v", err)
 	} else if !changed {
 		t.Fatal("record_participant_update should mutate")
 	}
 
-	if _, changed, err := board.ApplyToolCallWithMeta("end_meeting", `{"decision":"Ship the report archive.","action_items":["Scott to review the recap"]}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+	if _, changed, err := board.ApplyToolCallWithMeta("end_meeting", `{"decision":"Ship the report archive.","action_items":["Scott to review the recap"]}`, toolCallMeta{Dispatcher: "nova-sonic"}); err != nil {
 		t.Fatalf("end_meeting returned error: %v", err)
 	} else if !changed {
 		t.Fatal("end_meeting should mutate")
 	}
 
-	summaries, err := store.ListMeetingReports(context.Background(), "team-board", 10)
+	summaries, err := store.ListMeetingReports(context.Background(), defaultTenantID, "team-board", 10)
 	if err != nil {
 		t.Fatalf("ListMeetingReports returned error: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestSQLiteBoardStorePersistsMeetingReports(t *testing.T) {
 		t.Fatalf("summary counts = %#v, want Jira changes and action items", summaries[0])
 	}
 
-	report, found, err := store.LoadMeetingReport(context.Background(), "team-board", "standup-report-1")
+	report, found, err := store.LoadMeetingReport(context.Background(), defaultTenantID, "team-board", "standup-report-1")
 	if err != nil {
 		t.Fatalf("LoadMeetingReport returned error: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestSQLiteBoardStorePersistsAgentRuns(t *testing.T) {
 		t.Fatal("create_ticket should mutate")
 	}
 	card := createResult["card"].(kanbanCard)
-	runResult, changed, err := board.ApplyToolCall("assign_ticket_to_agent", `{"card_id":"`+card.ID+`","objective":"conduct a code review","repo":"scottmoore/auto-bot","pull_request_number":7}`)
+	runResult, changed, err := board.ApplyToolCallWithMeta("assign_ticket_to_agent", `{"card_id":"`+card.ID+`","objective":"conduct a code review","repo":"scottmoore/auto-bot","pull_request_number":7}`, toolCallMeta{Dispatcher: "test", SkipConfirmation: true})
 	if err != nil {
 		t.Fatalf("assign_ticket_to_agent returned error: %v", err)
 	}
@@ -228,12 +228,9 @@ func TestSQLiteBoardStorePersistsAgentRuns(t *testing.T) {
 	}
 	run := runResult["agent_run"].(agentRunView)
 
-	stored, found, err := store.LoadAgentRun(context.Background(), "team-board", run.RunID)
+	stored, err := store.LoadRun(context.Background(), defaultTenantID, "team-board", run.RunID)
 	if err != nil {
-		t.Fatalf("LoadAgentRun returned error: %v", err)
-	}
-	if !found {
-		t.Fatal("agent run not found")
+		t.Fatalf("LoadRun returned error: %v", err)
 	}
 	if stored.CardID != card.ID || stored.PullRequestNumber != 7 {
 		t.Fatalf("stored run = %#v, want card/pr", stored)
