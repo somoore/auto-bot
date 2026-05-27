@@ -146,7 +146,7 @@ export function CardRunTab({
             <button
               type="submit"
               disabled={busy || free.trim().length === 0}
-              className="inline-flex items-center gap-2 rounded-md border border-solar bg-solar/15 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-star hover:bg-solar/25 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-md bg-aurora px-3 py-2 text-xs font-semibold uppercase tracking-wider text-void hover:bg-aurora/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Send answer
             </button>
@@ -262,9 +262,41 @@ function PlanList({
   onRetry: (stepIndex: number) => void
   disabled: boolean
 }): JSX.Element {
+  // D-fix: collapsed by default. The summary line stays glanceable
+  // ("7 steps · step 3 in progress · show plan ↓") so the drawer doesn't
+  // get dominated by step rows when the agent has a long plan.
+  const [expanded, setExpanded] = useState(false)
+  const total = plan.length
+  const runningIdx = plan.findIndex((s) => s.status === "running")
+  const doneCount = plan.filter((s) => s.status === "done").length
+  const summary =
+    runningIdx >= 0
+      ? `step ${runningIdx + 1} in progress`
+      : doneCount === total
+        ? "all steps complete"
+        : `${doneCount} of ${total} complete`
   return (
-    <ol className="space-y-1" data-testid="plan-list">
-      {plan.map((step) => (
+    <div data-testid="plan-list" className="space-y-2">
+      <button
+        type="button"
+        onClick={(): void => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 rounded-md border border-edge bg-sky px-3 py-2 text-xs text-twilight hover:text-star"
+        aria-expanded={expanded}
+      >
+        <span>
+          <span className="font-mono uppercase tracking-wider text-farstar">
+            {total} {total === 1 ? "step" : "steps"}
+          </span>
+          <span className="px-2 text-farstar">·</span>
+          <span className="text-twilight">{summary}</span>
+        </span>
+        <span className="text-twilight" aria-hidden>
+          {expanded ? "hide plan ↑" : "show plan ↓"}
+        </span>
+      </button>
+      {expanded ? (
+        <ol className="space-y-1">
+          {plan.map((step) => (
         <li
           key={step.index}
           className={
@@ -292,7 +324,9 @@ function PlanList({
             </button>
           ) : null}
         </li>
-      ))}
-    </ol>
+          ))}
+        </ol>
+      ) : null}
+    </div>
   )
 }

@@ -28,15 +28,15 @@ export function SuggestedAnswerChip({
       aria-label={recommended ? `${label} (recommended)` : label}
       className={
         recommended
-          ? "group flex w-full items-center gap-2 rounded-md border border-solar bg-solar/15 px-3 py-2 text-left text-sm text-star hover:bg-solar/25 disabled:cursor-not-allowed disabled:opacity-50"
-          : "group flex w-full items-center gap-2 rounded-md border border-edge bg-atmos px-3 py-2 text-left text-sm text-star hover:border-solar/50 disabled:cursor-not-allowed disabled:opacity-50"
+          ? "group flex w-full items-center gap-2 rounded-md border border-aurora bg-aurora/10 px-3 py-2 text-left text-sm text-star hover:bg-aurora/20 disabled:cursor-not-allowed disabled:opacity-50"
+          : "group flex w-full items-center gap-2 rounded-md border border-dashed border-edge bg-transparent px-3 py-2 text-left text-sm text-twilight hover:border-edge/80 hover:text-star disabled:cursor-not-allowed disabled:opacity-50"
       }
     >
       <span
         aria-hidden
         className={
           recommended
-            ? "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-solar bg-solar/30 text-[10px] font-mono text-star"
+            ? "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-aurora bg-aurora/25 text-[10px] font-mono text-star"
             : "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-edge bg-sky text-[10px] font-mono text-twilight"
         }
       >
@@ -44,7 +44,7 @@ export function SuggestedAnswerChip({
       </span>
       <span className="flex-1">{label}</span>
       {recommended ? (
-        <span className="rounded bg-solar/30 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-star">
+        <span className="rounded bg-aurora/25 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-aurora">
           recommended
         </span>
       ) : null}

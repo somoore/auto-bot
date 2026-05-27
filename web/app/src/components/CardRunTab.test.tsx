@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { CardRunTab } from "./CardRunTab"
 import { makeCard, makeQuestion, makeRun } from "../test/fixtures"
 
@@ -61,7 +62,8 @@ describe("CardRunTab", () => {
     })
   })
 
-  it("renders the plan with the running step highlighted", () => {
+  it("renders a collapsed plan summary by default and expands on click", async () => {
+    const user = userEvent.setup()
     render(
       <CardRunTab
         card={makeCard()}
@@ -71,6 +73,11 @@ describe("CardRunTab", () => {
     )
     const plan = screen.getByTestId("plan-list")
     expect(plan).toBeInTheDocument()
+    // Collapsed: step rows are NOT rendered; summary line is.
+    expect(screen.queryByText("Run tests")).not.toBeInTheDocument()
+    expect(screen.getByText(/step 2 in progress/i)).toBeInTheDocument()
+    // Click the disclosure to expand.
+    await user.click(screen.getByText(/show plan/i))
     expect(screen.getByText("Run tests")).toBeInTheDocument()
   })
 
