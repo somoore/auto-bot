@@ -5,6 +5,7 @@ import { BoardSubBar } from "./components/BoardSubBar"
 import { BoardColumn } from "./components/BoardColumn"
 import { CardDrawer } from "./components/CardDrawer"
 import { DryRunQueue } from "./components/DryRunQueue"
+import { AgendaOverlay, type Agenda } from "./components/AgendaOverlay"
 import { EmptyState } from "./components/EmptyState"
 import { SignInGate } from "./components/SignInGate"
 import {
@@ -15,6 +16,67 @@ import {
 } from "./types/board"
 
 const URL_PARAM_CARD = "card"
+const URL_PARAM_AGENDA = "agenda"
+
+// TODO(standup): once GET /internal/standup/agenda lands (internal/standup
+// Sprint 4) this should fetch live data — yesterday's runs, open blockers,
+// reviews awaiting host, and a suggested speaker order. The shape mirrors
+// internal/standup.Agenda so the swap is mechanical.
+const SAMPLE_AGENDA: Agenda = {
+  preparedAt: "2m ago",
+  scheduledFor: "Tuesday, May 26 · 9:00 AM",
+  estimate: "est. 8 minutes",
+  participantSummary: "3 participants joining",
+  highlights: [
+    {
+      kind: "shipped",
+      title: "Tenant threading through auth + board + store",
+      attribution: "SM · 14h",
+    },
+    {
+      kind: "shipped",
+      title: "Actor discriminated type — agents as first-class assignees",
+      attribution: "swe-3 · 11h",
+    },
+    {
+      kind: "run_done",
+      title: "JiraSyncer projection refactor · 7/7 steps · evidence attached",
+      attribution: "swe-1 · 2h",
+    },
+  ],
+  blockers: [
+    {
+      cardId: "ABV2-088",
+      question: "Per-tenant DB file vs shared with tenant_id partitioning?",
+      ownerLabel: "swe-1 needs an answer · 3h left",
+    },
+  ],
+  reviews: [
+    {
+      cardId: "ABV2-093",
+      title: "JiraSyncer Projection refactor — replay test green",
+      prNumber: "PR #142",
+      reviewLabel: "ready for your review",
+    },
+  ],
+  speakerOrder: [
+    {
+      participant: { id: "scott", name: "Scott", initials: "SM" },
+      action: "— answer ABV2-088, review ABV2-093",
+      estimate: "~3 min",
+    },
+    {
+      participant: { id: "aki", name: "Aki", initials: "AK" },
+      action: "— Linear webhook handoff, LiveKit retry kickoff",
+      estimate: "~2 min",
+    },
+    {
+      participant: { id: "jordan", name: "Jordan", initials: "JR" },
+      action: "— /readyz migration plan",
+      estimate: "~2 min",
+    },
+  ],
+}
 
 function App(): JSX.Element {
   const { state, dispatch } = useBoardSocket()
@@ -32,6 +94,22 @@ function App(): JSX.Element {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(() =>
     readCardParam(),
   )
+  const [agendaOpen, setAgendaOpen] = useState<boolean>(() => readAgendaParam())
+
+  const openAgenda = useCallback((): void => {
+    setAgendaOpen(true)
+    pushAgendaParam()
+  }, [])
+  const closeAgenda = useCallback((): void => {
+    setAgendaOpen(false)
+    clearAgendaParam()
+  }, [])
+  const startAgenda = useCallback((): void => {
+    // TODO(standup): wire to the standup meeting kickoff (LiveKit room +
+    // scrum-master agent). For F-D2.5 the CTA just dismisses the overlay.
+    setAgendaOpen(false)
+    clearAgendaParam()
+  }, [])
 
   const openCard = useCallback((cardId: string): void => {
     setSelectedCardId(cardId)
@@ -44,7 +122,10 @@ function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    const onPop = (): void => setSelectedCardId(readCardParam())
+    const onPop = (): void => {
+      setSelectedCardId(readCardParam())
+      setAgendaOpen(readAgendaParam())
+    }
     window.addEventListener("popstate", onPop)
     return (): void => window.removeEventListener("popstate", onPop)
   }, [])
@@ -82,6 +163,7 @@ function App(): JSX.Element {
         status={state.status}
         session={state.session}
         reconnectAttempt={state.reconnectAttempt}
+        onStartStandup={openAgenda}
       />
       <BoardSubBar
         agentActive={isAgentActive(activeRun?.status)}
@@ -122,6 +204,14 @@ function App(): JSX.Element {
           dispatch={dispatch}
           currentUserId={state.session.participantIdentity}
           onClose={closeCard}
+        />
+      ) : null}
+      {agendaOpen ? (
+        <AgendaOverlay
+          agenda={SAMPLE_AGENDA}
+          onStart={startAgenda}
+          onSkip={closeAgenda}
+          onClose={closeAgenda}
         />
       ) : null}
     </div>
@@ -205,6 +295,31 @@ function clearCardParam(): void {
   const params = new URLSearchParams(window.location.search)
   if (!params.has(URL_PARAM_CARD)) return
   params.delete(URL_PARAM_CARD)
+  const query = params.toString()
+  const next = query ? `${window.location.pathname}?${query}` : window.location.pathname
+  window.history.pushState({}, "", next)
+}
+
+function readAgendaParam(): boolean {
+  if (typeof window === "undefined") return false
+  const params = new URLSearchParams(window.location.search)
+  return params.get(URL_PARAM_AGENDA) === "open"
+}
+
+function pushAgendaParam(): void {
+  if (typeof window === "undefined") return
+  const params = new URLSearchParams(window.location.search)
+  if (params.get(URL_PARAM_AGENDA) === "open") return
+  params.set(URL_PARAM_AGENDA, "open")
+  const next = `${window.location.pathname}?${params.toString()}`
+  window.history.pushState({ agenda: "open" }, "", next)
+}
+
+function clearAgendaParam(): void {
+  if (typeof window === "undefined") return
+  const params = new URLSearchParams(window.location.search)
+  if (!params.has(URL_PARAM_AGENDA)) return
+  params.delete(URL_PARAM_AGENDA)
   const query = params.toString()
   const next = query ? `${window.location.pathname}?${query}` : window.location.pathname
   window.history.pushState({}, "", next)
