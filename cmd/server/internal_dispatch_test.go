@@ -38,8 +38,8 @@ func TestInternalDispatchRejectsMissingBearer(t *testing.T) {
 
 // TestInternalDispatchCardCreateRoutesThroughApplyToolCall asserts that a
 // valid Bearer token admits the request and that card.create actually
-// mutates sharedBoard via the canonical ApplyToolCall path (so ActionLedger
-// + risk gates fire alongside).
+// mutates sharedBoard via the canonical ApplyToolCall path (so the audit
+// log + risk gates fire alongside).
 func TestInternalDispatchCardCreateRoutesThroughApplyToolCall(t *testing.T) {
 	restore := snapshotAuthGlobals()
 	defer restore()
@@ -91,10 +91,11 @@ func TestInternalDispatchCardCreateRoutesThroughApplyToolCall(t *testing.T) {
 		t.Fatalf("card %s not present in sharedBoard after dispatch", payload.CardID)
 	}
 
-	// And confirm the ActionLedger / mutation history recorded the call —
-	// the recordMutation path runs inside ApplyToolCallWithMeta, so a
-	// non-empty mutation history is proof we routed through the canonical
-	// path rather than mutating state directly.
+	// And confirm the mutation history (boardMutationRecord) and audit log
+	// (action_replay_events) recorded the call — the recordMutation path
+	// runs inside ApplyToolCallWithMeta, so a non-empty mutation history is
+	// proof we routed through the canonical path rather than mutating state
+	// directly.
 	if len(snap.RecentMutations) == 0 {
 		t.Errorf("RecentMutations is empty; ApplyToolCallWithMeta path was not exercised")
 	} else {

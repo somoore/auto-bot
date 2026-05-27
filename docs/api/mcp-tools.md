@@ -159,8 +159,9 @@ plane. ADR 0004 covers the multi-tenant model.
 As of Sprint 2.1, the five active tools are no longer terminal: a
 mutation tool call on the MCP side now reaches cmd/server's canonical
 `ApplyToolCall` path over HTTP, so MCP-driven changes flow through the
-same `ActionLedger`, risk classification, and confirmation gates as
-voice and UI callers. Reads take a separate, lighter HTTP path.
+same audit log (`action_replay_events`), risk classification, and
+confirmation gates as voice and UI callers. Reads take a separate,
+lighter HTTP path.
 
 The chain for a mutating tool (`card.create` / `card.update` /
 `card.comment`):
@@ -187,7 +188,7 @@ cmd/server.internalToolsDispatchHandler  (cmd/server/internal_dispatch.go:36)
     │   dispatcher label.
     ▼
 cmd/server.ApplyToolCallWithMeta
-    │   ActionLedger + risk gates + tenant dry-run check
+    │   audit log + risk gates + tenant dry-run check
     ▼
   Apply OR stage as PendingAction (when tenant has dry_run_enabled)
 ```
@@ -539,7 +540,7 @@ tool routes through `HTTPBoardClient.CreateCard`
 `/internal/tools/dispatch`. `cmd/server.dispatchCardCreate`
 (`cmd/server/internal_dispatch.go:85`) translates the MCP-shaped args
 to `create_ticket` and runs them through `ApplyToolCallWithMeta`, so
-`ActionLedger` + risk gates + dry-run staging now apply uniformly with
+the audit log + risk gates + dry-run staging now apply uniformly with
 the voice / UI surface. When the optional `assignee` is supplied, the
 dispatcher fans out a follow-up `assign_ticket` call against the
 freshly-created card so the MCP call site stays single-step
@@ -831,7 +832,7 @@ Trust Ceremony confirmation gate by default.
 **Purpose.** Start a Run against an existing card so an agent (PM,
 SWE, code-reviewer, etc.) picks up the work and posts back to the
 card's thread. The same path that voice's `assign_ticket_to_agent`
-tool exercises — ActionLedger, risk classification, and the agent
+tool exercises — the audit log, risk classification, and the agent
 orchestrator all apply uniformly. Source: `buildStartRunTool` in
 `internal/mcp/tools.go`.
 

@@ -44,7 +44,7 @@ Local Docker Compose maps `127.0.0.1:3001` to `cmd/server`, `127.0.0.1:4000` to 
 - **`internal/intake`** — Async written-standup intake: `Intake` type, `parser.go`, `slack.go` HMAC verification, in-memory `Store` (`store.go:50`). Daria persona's #1 finding.
 - **`internal/standup`** — `AgendaBuilder.BuildAgenda` (`agenda.go:106`) assembles the pre-meeting briefing from board state plus open RunQuestions plus recent intakes; `Closer.Close` (`closer.go:87`) walks a `MeetingArtifact` and creates follow-up cards through a `CardCreator`.
 - **`internal/mcp`** — MCP server core, `BoardClient` interface, `HTTPBoardClient` production transport, `ServeStdio` / `HTTPHandler`. `tools.go` defines the five Sprint 2.0 tools and reserves the Sprint 2.1 Run-lifecycle surface.
-- **`internal/core`** — Stable extension contracts: `Connector` (`types.go:118`), `VoiceProvider` (`types.go:251`), `ModelProvider`, `ActionLedger` (`ledger.go:90`), registries, evidence + receipt types.
+- **`internal/core`** — Stable extension contracts: `Connector` (`types.go:118`), `VoiceProvider` (`types.go:251`), `ModelProvider`, registries, evidence + receipt types. The audit substrate is `boardEventRecord` writing the `action_replay_events` SQLite table in `cmd/server/board_store.go` — not a core interface.
 - **`internal/core/contracttest`** and **`internal/projection/contracttest`** — Shared harnesses that any new implementation must pass.
 - **`internal/auth`** — Identity context; every authenticated subject carries `TenantID`. ADR 0004.
 - **`internal/tenant`** — Documentation package today; will own the per-tenant SQLite / Secrets-Manager router under Sprint 5's hosted control plane.
@@ -126,7 +126,7 @@ Migration shape: `board_store.go:328-356` records a `user_version` 1 → 2 bump 
 1. Browser joins LiveKit room; `cmd/server` (`nova_sonic.go`) opens a bidirectional Bedrock stream and sends one SYSTEM block plus the pre-meeting agenda (`sendInitSequence`, `nova_sonic.go:511`).
 2. Speech transcripts return as `VoiceSessionEvent` tool-call requests through `core.VoiceSession`.
 3. Tool dispatch enters `meeting_intelligence.go`, classifies risk via `riskForTool`, and either executes immediately (Low) or enqueues a `pending_action` (Medium / High).
-4. Execution records `ActionIntent` to `ToolCallRecord` to `ExternalConfirmation` in the `ActionLedger`. The agent only speaks "Jira was updated" when `external_action_status=api_confirmed`.
+4. Execution writes a `boardEventRecord` to the `action_replay_events` table via `ApplyToolCallWithMeta`; the resulting `audit_event_id` is replay-survivable. The agent only speaks "Jira was updated" when `external_action_status=api_confirmed`.
 5. Board mutation broadcasts on the WebSocket fanout, filtered by `(tenant_id, board_id)`.
 
 ### MCP tool call
@@ -153,13 +153,12 @@ Migration shape: `board_store.go:328-356` records a `user_version` 1 → 2 bump 
 
 ## 7. Audit and replay
 
-Three layers compound:
+Two layers compound:
 
-- **`ActionLedger`** (`internal/core/ledger.go:90`) records `ActionIntent` → `ToolCallRecord` → `ExternalConfirmation` per mutation. `Replay(intentID)` reconstructs the full causal chain for the meeting-intelligence UI.
 - **`board_events`** logs the event JSON plus post-state JSON per mutation, so the audit-replay UI can show before/after diffs without re-running connector calls.
-- **`action_replay_events`** is the projection-grade log: complete mutation JSON, complete state JSON, sequence-numbered per `(tenant_id, board_id)`. ADR 0002 calls out that "replay of yesterday's events against the new projection must yield identical Jira output" — that's the regression gate for shipping Linear and GitHub Issues projections in Sprint 3.1.
+- **`action_replay_events`** is the projection-grade log: complete mutation JSON, complete state JSON, sequence-numbered per `(tenant_id, board_id)`. Every `ApplyToolCallWithMeta` writes a `boardEventRecord` here and returns an `audit_event_id` so callers can later request `replay_audit_event`. ADR 0002 calls out that "replay of yesterday's events against the new projection must yield identical Jira output" — that's the regression gate for shipping Linear and GitHub Issues projections in Sprint 3.1.
 
-The ledger persists across restart; recent records are loaded into the in-memory cache by `cmd/server`'s startup path so audit-replay survives a `docker compose restart`.
+The audit log persists across restart; recent records are loaded into the in-memory cache by `cmd/server`'s startup path so audit-replay survives a `docker compose restart`.
 
 ## 8. Trust ceremony
 

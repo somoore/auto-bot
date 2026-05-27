@@ -54,7 +54,7 @@ Two binaries; eighteen Go packages under `internal/`. The boundaries are enforce
 
 - `cmd/server/` — the main HTTP/WebSocket binary. Process startup, route table, voice provider selection, LiveKit signaling, OpenAI WebRTC, security headers. Nothing imports this.
 - `cmd/mcpd/` — the MCP daemon. Connects to `cmd/server` over HTTP and re-exposes the board, cards, and runs as MCP tools for Claude Code, Cursor, and `claude-agent-sdk`.
-- `internal/core/` — universal vocabulary (`Action`, `RiskLevel`, `Decision`, `Actor`, `ActionLedger`). Stdlib only. The most-isolated tier.
+- `internal/core/` — universal vocabulary (`Action`, `RiskLevel`, `Decision`, `Actor`). Stdlib only. The most-isolated tier.
 - `internal/board/` — canonical Board / Issue / Sprint types that every external system projects into.
 - `internal/agent/` — `Run`, `Plan`, `Cost`, `WaitingOn`, `RunCoordinator`. The runtime state machine for agent work.
 - `internal/meetings/` — scrum + transcript types shared between voice providers and the meeting intelligence layer.
@@ -200,7 +200,7 @@ The script assumes the `local-aws-refresh-broker` (started by `scripts/local-up.
 
 ## The MCP path
 
-`cmd/mcpd` runs as a separate container (see `docker-compose.yml:65-89`). It listens on `127.0.0.1:4000` and dispatches every MCP tool call through `cmd/server`'s `/internal/tools/dispatch` endpoint — so the `ActionLedger`, risk gates, and trust-ceremony confirmations apply uniformly to voice, UI, and MCP callers. MCP clients authenticate with signed bearer tokens issued by `POST /admin/mcp-tokens` (verified against `MCP_SIGNING_KEYS`, shared by app and mcpd); `BOARD_TOKEN` (which equals `APP_API_TOKEN`) authenticates `mcpd` against the app's internal dispatch endpoint. See [docs/api/mcp-tools.md#authentication](docs/api/mcp-tools.md#authentication) for the full token model.
+`cmd/mcpd` runs as a separate container (see `docker-compose.yml:65-89`). It listens on `127.0.0.1:4000` and dispatches every MCP tool call through `cmd/server`'s `/internal/tools/dispatch` endpoint — so the audit log (`action_replay_events`), risk gates, and trust-ceremony confirmations apply uniformly to voice, UI, and MCP callers. MCP clients authenticate with signed bearer tokens issued by `POST /admin/mcp-tokens` (verified against `MCP_SIGNING_KEYS`, shared by app and mcpd); `BOARD_TOKEN` (which equals `APP_API_TOKEN`) authenticates `mcpd` against the app's internal dispatch endpoint. See [docs/api/mcp-tools.md#authentication](docs/api/mcp-tools.md#authentication) for the full token model.
 
 To connect Claude Code, add this to `~/.claude/mcp.json` (full snippet in [`docs/marketing/dev-adoption.md`](./docs/marketing/dev-adoption.md) line 27-43):
 

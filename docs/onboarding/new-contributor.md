@@ -75,7 +75,7 @@ curl -fsS http://localhost:3001/healthz   # → {"ok":true}
 Compose brings up three services: `livekit` (the SFU on 7880), `app`
 (`cmd/server`, exposed on 3001), and `mcpd` (`cmd/mcpd`, exposed on 4000).
 `mcpd` proxies MCP tool calls through `app`'s `/internal/tools/dispatch` so
-that the `ActionLedger`, risk gates, and trust-ceremony confirmations apply
+that the audit log, risk gates, and trust-ceremony confirmations apply
 uniformly to voice, UI, and MCP callers.
 
 Open <http://localhost:3001/app/> to confirm the React SPA loads.
@@ -107,8 +107,10 @@ Read in this order. Skim, don't memorize. Each file under 400 LoC; this is
    *why* behind every package boundary you'll see.
 3. **`internal/core/types.go`** — universal vocabulary (`Action`, `RiskLevel`,
    `Decision`, `Actor`). If a type isn't here, it's provider-specific.
-4. **`internal/core/ledger.go`** — the append-only audit ledger. Every
-   mutation that matters lands here. Read this before you write any handler.
+4. **`cmd/server/board.go`** (`ApplyToolCallWithMeta`) — the single mutation
+   funnel. Every change routes through here and lands an `audit_event_id`
+   in the `action_replay_events` SQLite table. Read this before you write
+   any handler.
 5. **`internal/board/types.go`** — the canonical Board / Issue / Sprint shape
    that all external systems project into.
 6. **`internal/agent/types.go`** — `Run`, `Plan`, `Cost`, `WaitingOn`,
@@ -340,8 +342,8 @@ You've internalized the project when you can do all six:
 
 1. **Trace a tool call end-to-end** — from a WebSocket message arriving at
    `cmd/server/main.go:215` (the `/websocket` handler), through
-   `scrum_tools.go`, through `ApplyToolCallWithMeta`, into the
-   `ActionLedger`, and back out as a response.
+   `scrum_tools.go`, through `ApplyToolCallWithMeta`, into the audit
+   log (`action_replay_events`), and back out as a response.
 2. **Trace an MCP tool call end-to-end** — from `claude-code` calling
    `board.list_cards` against `cmd/mcpd`, through `internal/mcp/tools.go`,
    over HTTP to `cmd/server`'s `/internal/tools/dispatch`, into the same

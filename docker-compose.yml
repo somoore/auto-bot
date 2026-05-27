@@ -86,7 +86,7 @@ services:
       - APP_TENANT_ID=${APP_TENANT_ID:-default}
       - APP_BOARD_ID=${APP_BOARD_ID:-default}
       # mcpd dispatches every MCP tool call through cmd/server's
-      # /internal/tools/dispatch endpoint so ActionLedger + risk gates
+      # /internal/tools/dispatch endpoint so the audit log + risk gates
       # apply uniformly to voice, UI, and MCP callers. BOARD_TOKEN is the
       # shared APP_API_TOKEN that authenticates the dispatch.
       - BOARD_URL=${BOARD_URL:-http://app:3000}

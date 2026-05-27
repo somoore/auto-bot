@@ -123,7 +123,7 @@ This is the public extension surface. The package defines:
 - `Connector`, `ConnectorCapability`, `ConnectorAction`, `ActionReceipt`, `ConnectorResult` (`internal/core/types.go:51-131`). `ConnectorRegistry` (`:134`) stores implementations by normalized lowercase name.
 - `VoiceProvider`, `VoiceCapabilities`, `VoiceSession`, `VoiceSessionEvent` (`internal/core/types.go:196-262`) and `VoiceRegistry` (`:265`).
 - `ModelProvider`, `ModelRequest`, `ModelResponse`, `ModelCapabilities` (`internal/core/types.go:317-357`) and `ModelRegistry` (`:360`).
-- `ActionLedger` (`internal/core/ledger.go`) — `RecordIntent`, `RecordToolCall`, `RecordExternalConfirmation`, `Replay`. Every externally-visible action should round-trip through this surface.
+- Audit substrate (NOT a `core` interface): every `ApplyToolCallWithMeta` writes a `boardEventRecord` to the SQLite `action_replay_events` table via `cmd/server/board_store.go`. `replay_audit_event` reconstructs the mutation from `audit_event_id`. The former `core.ActionLedger` interface was removed in #57 — it had zero non-test call sites; the SQLite table is the source of truth.
 
 `internal/core/contracttest/contracts.go` provides `contracttest.Connector(t, connector, cases)` and `contracttest.VoiceProvider(t, provider, cases)` — shared test helpers any extension implementation can run to assert metadata, health, and execution behavior (`internal/core/contracttest/contracts.go:26-114`).
 

@@ -365,7 +365,7 @@ paths:
   # ─── S2.1 internal RPC surface ──────────────────────────────────────
   # cmd/mcpd (and any future tenant-side dispatcher) posts here so MCP
   # tool calls route through the canonical ApplyToolCall path —
-  # ActionLedger, risk classification, and confirmation gates fire
+  # the audit log, risk classification, and confirmation gates fire
   # uniformly with voice and UI callers.
   # Routes: `cmd/server/main.go:238` (`/internal/tools/dispatch`) and
   # `:239`–`:240` (`/internal/board/cards` + trailing-slash variant).

@@ -16,7 +16,7 @@ Category: **agent-native work surface.** Not a kanban (the Run object and projec
 
 - **Voice standup writes the board.** Speak in the LiveKit room; cards move, comments append, follow-up cards get created. The Nova Sonic scrum-master agent receives a pre-meeting agenda assembled from the live board state (`internal/standup/agenda.go`) and the closer (`internal/standup/closer.go`) drops follow-ups when the meeting ends.
 - **Agents pick up cards and pause for input.** A Run is a durable, checkpointed unit of agent work bound to a card (`internal/agent/run.go`, `agent_runs` + `run_checkpoints` SQLite tables). When the agent needs a decision it writes a `RunQuestion` (`run_questions` table); the React card drawer surfaces it with suggested-answer chips; answering resumes the run on the same checkpoint.
-- **MCP-driven coding agents update their own cards.** Claude Code / Cursor / `claude-agent-sdk` connect to `cmd/mcpd` and call `board.list_cards`, `card.create`, `card.comment`, etc. Every call HTTP-dispatches through `cmd/server`'s `/internal/tools/dispatch` route so the ActionLedger, risk gate, and trust ceremony apply identically to voice, UI, and MCP callers.
+- **MCP-driven coding agents update their own cards.** Claude Code / Cursor / `claude-agent-sdk` connect to `cmd/mcpd` and call `board.list_cards`, `card.create`, `card.comment`, etc. Every call HTTP-dispatches through `cmd/server`'s `/internal/tools/dispatch` route so the audit log (`action_replay_events`), risk gate, and trust ceremony apply identically to voice, UI, and MCP callers.
 
 ## Architecture at a glance
 
@@ -49,7 +49,7 @@ Category: **agent-native work surface.** Not a kanban (the Run object and projec
 | `internal/intake`                      | Async intake parser + Slack adapter; folds into the next standup.             |
 | `internal/mcp`                         | MCP server core, `BoardClient` interface, `HTTPBoardClient` dispatcher.       |
 | `internal/meetings`                    | Voice meeting domain types.                                                   |
-| `internal/core`                        | Stable extension contracts: `Connector`, `VoiceProvider`, `ModelProvider`, `ActionLedger`. |
+| `internal/core`                        | Stable extension contracts: `Connector`, `VoiceProvider`, `ModelProvider`. |
 | `internal/core/contracttest`           | Shared contract-test helpers.                                                 |
 | `internal/projection/contracttest`     | Projection contract harness.                                                  |
 | `internal/mocks`                       | Credential-free fakes for tests and the MCP smoke binary.                     |
@@ -163,7 +163,7 @@ The product is opinionated about not lying to humans about what was done to thei
 - **Dry-run staging.** Medium- and high-risk mutations land in `pending_actions` first; the UI shows a diff preview before they commit (`cmd/server/pending_actions.go`, `cmd/server/diff_preview.go`, `web/app/src/components/DryRunQueue.tsx`).
 - **Undo.** Every mutation routes through `core.Connector.Undo`; the Card drawer's history tab surfaces an undo button on the most recent change.
 - **Pause-all kill switch.** A per-tenant `tenant_settings.agents_paused` flag rejects new Run starts with `agent.ErrAgentsPaused` (`internal/agent/store.go:34`); the pill is a visible UI control (`web/app/src/components/PauseAllPill.tsx`).
-- **ActionLedger audit.** Voice / UI / MCP mutations all record `ActionIntent` to `ToolCallRecord` to `ExternalConfirmation` in the same ledger (`internal/core/ledger.go`); `action_replay_events` persists this in SQLite for restart-survivable replay.
+- **Audit log.** Voice / UI / MCP mutations all flow through `ApplyToolCallWithMeta`, which writes a `boardEventRecord` to the `action_replay_events` SQLite table for restart-survivable replay (`cmd/server/board_store.go`).
 
 Architectural rationale: [docs/adrs/0001-core-extension-boundaries.md](docs/adrs/0001-core-extension-boundaries.md), [0002](docs/adrs/0002-canonical-board-with-external-projections.md), [0003](docs/adrs/0003-mcp-server-as-universal-external-surface.md), [0004](docs/adrs/0004-multi-tenant-model.md).
 

@@ -20,9 +20,10 @@ import (
 //     snippet, attributed to the submitter.
 //
 // All board mutations route through sharedBoard.ApplyToolCallWithMeta
-// using a dedicated dispatcher ("intake") so ActionLedger,
-// risk-classification, and confirmation gates fire exactly the same
-// way they do for voice-driven and MCP-driven calls.
+// using a dedicated dispatcher ("intake") so the audit log
+// (action_replay_events), risk-classification, and confirmation gates
+// fire exactly the same way they do for voice-driven and MCP-driven
+// calls.
 //
 // SecArch-002 alignment: assign_ticket is risk-medium and normally
 // queues a confirmation. We skip that queue ONLY when the caller is
@@ -73,7 +74,7 @@ func runIntakeFollowups(in intake.Intake, callerIdentity string) intakeFollowupR
 		// immediately. Skip-confirmation only when the authenticated
 		// caller IS the submitter; cross-user EM-files-on-behalf goes
 		// through the normal confirmation queue (SecArch-002). The
-		// ApplyToolCall path records the assignment in ActionLedger
+		// ApplyToolCall path records the assignment in the audit log
 		// either way.
 		assignMeta := meta
 		assignMeta.SkipConfirmation = selfAssigning

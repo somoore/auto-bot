@@ -24,8 +24,9 @@ var ErrCardNotFound = errors.New("mcp: card not found")
 // The MCP package owns this interface so the protocol layer stays
 // provider-neutral. In production, cmd/mcpd injects an HTTPBoardClient that
 // fans out to cmd/server's /internal endpoints — every MCP-driven mutation
-// then flows through cmd/server's ApplyToolCall, so ActionLedger, risk
-// classification, and confirmation gates apply uniformly.
+// then flows through cmd/server's ApplyToolCall, so the audit log
+// (action_replay_events), risk classification, and confirmation gates apply
+// uniformly.
 //
 // All methods are scoped by (tenantID, boardID). Empty values mean
 // "default" — the implementation normalizes them.
@@ -318,7 +319,7 @@ func findActiveRunForCard(ctx context.Context, store agent.RunStore, tenantID, b
 func buildCreateCardTool(deps ToolDeps) Tool {
 	return Tool{
 		Name:        "card.create",
-		Description: "Create a new card on the active board. Routes through cmd/server's ApplyToolCall path, so ActionLedger + risk gates apply (same as voice / UI callers).",
+		Description: "Create a new card on the active board. Routes through cmd/server's ApplyToolCall path, so the audit log + risk gates apply (same as voice / UI callers).",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"title"},
@@ -457,7 +458,7 @@ func buildCommentTool(deps ToolDeps) Tool {
 func buildStartRunTool(deps ToolDeps) Tool {
 	return Tool{
 		Name:        "runs.start",
-		Description: "Start an agent run against an existing card. Routes through cmd/server's assign_ticket_to_agent so ActionLedger, risk gates, and the Run lifecycle apply uniformly with voice and UI callers.",
+		Description: "Start an agent run against an existing card. Routes through cmd/server's assign_ticket_to_agent so the audit log, risk gates, and the Run lifecycle apply uniformly with voice and UI callers.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"card_id", "objective"},

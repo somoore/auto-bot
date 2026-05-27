@@ -16,7 +16,7 @@ The value of "agent posts on card thread" versus "agent opens a PR with evidence
 
 ## 3. MCP is a footgun
 
-MCP in 2026 is still a moving spec; every client (Claude Code, Cursor, Agent SDK, ChatGPT desktop) implements a different subset, none agreeing on auth, streaming, or error shape; tool-call latency stacks badly; the security model for "agents mutate the board remotely" is a disaster waiting. Per-tenant tokens with "scoped capabilities" is the same model that produced years of OAuth-scope CVEs. Realistic abuse: a compromised laptop's Claude Code session silently drains a board, reassigns work to a hostile agent identity, comments fabricated evidence on cards, and the ActionLedger faithfully records every step — exactly the way a real attacker wants it logged. Audit is not defense.
+MCP in 2026 is still a moving spec; every client (Claude Code, Cursor, Agent SDK, ChatGPT desktop) implements a different subset, none agreeing on auth, streaming, or error shape; tool-call latency stacks badly; the security model for "agents mutate the board remotely" is a disaster waiting. Per-tenant tokens with "scoped capabilities" is the same model that produced years of OAuth-scope CVEs. Realistic abuse: a compromised laptop's Claude Code session silently drains a board, reassigns work to a hostile agent identity, comments fabricated evidence on cards, and the audit log faithfully records every step — exactly the way a real attacker wants it logged. Audit is not defense.
 
 Worse: if the value prop is "any LLM drives the board," then *the board itself is the wrong product*. See §6.
 

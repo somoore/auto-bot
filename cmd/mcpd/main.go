@@ -5,8 +5,9 @@
 //
 // Sprint 2.1 status: MCP tools route through cmd/server's
 // /internal/tools/dispatch endpoint, so every MCP-driven mutation flows
-// through ApplyToolCall — ActionLedger, risk classification, and
-// confirmation gates apply uniformly to voice, UI, and MCP callers.
+// through ApplyToolCall — the audit log (action_replay_events), risk
+// classification, and confirmation gates apply uniformly to voice, UI,
+// and MCP callers.
 //
 // When --board-url is empty, mcpd falls back to an in-memory mock board.
 // This keeps the foundational slice runnable in standalone tests and

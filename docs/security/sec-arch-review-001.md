@@ -72,7 +72,9 @@ card.Assignee = &kanbanActor{
 
 ## 5. ActionLedger as audit substrate
 
-**The claim that ActionLedger is the audit substrate is false in this codebase.** `internal/core/ledger.go` defines the interface and `InMemoryActionLedger`. Grep across `cmd/server` returns **zero** non-test call sites of `RecordIntent`/`RecordToolCall`/`RecordExternalConfirmation`. Only `internal/mcp/doc.go:6` and `internal/mcp/tools.go:285` reference it, both aspirationally.
+> **Status (#57 — resolved):** `internal/core/ledger.go` and `InMemoryActionLedger` were removed. The finding below stands as the rationale; the substrate is now exclusively `boardEventRecord` (`action_replay_events`).
+
+**Original finding (now resolved):** The claim that ActionLedger is the audit substrate was false in this codebase. `internal/core/ledger.go` defined the interface and `InMemoryActionLedger`. Grep across `cmd/server` returned **zero** non-test call sites of `RecordIntent`/`RecordToolCall`/`RecordExternalConfirmation`.
 
 What actually persists is `boardEventRecord` via `AppendEvent` and `boardMutationRecord` via `SaveMutationRecord`. Tenant-scoped, but with **documented bypasses**:
 
@@ -97,7 +99,7 @@ The threat-model entry "SQLite action replay ledger persists mutation replay rec
 | Run hijack via question answer (new) | Med | Open RunQuestions broadcast in WS payload (S1.4). |
 | Prompt injection in Jira text | **Elevated** | Agents now own PR write + `run.start`; payload reach is wider. |
 | Stolen session token | **Elevated** | Sessions tenant-bound but boards globally keyed; "default" board is shared. |
-| Audit loss after restart | **Elevated** | ActionLedger unused in prod; inbound Jira + async run updates bypass `action_replay_events`. |
+| Audit loss after restart | **Elevated** | Inbound Jira + async run updates bypass `action_replay_events`. (ActionLedger removed in #57; the historical "unused in prod" finding no longer applies.) |
 
 All old threats remain. v2 is strictly additive in risk.
 
@@ -110,7 +112,7 @@ All old threats remain. v2 is strictly additive in risk.
 | 1 | **Critical** | `wsClients` keyed only by `boardID`; multi-tenant deploys leak board state cross-tenant on duplicate board names. | Change `board.go:2270` to `map[*threadSafeWriter]struct{Tenant, Board string}`. Update `registerWSClient:2273` to read `authCtx.TenantID` and the fanout at `:2380` to compare both fields. Regression test: two clients with `(tenA, default)` + `(tenB, default)` — only one receives a tenant-A broadcast. |
 | 2 | **Critical** | MCP token is a single static bearer; no tenant binding, no scopes, no rotation. | Replace `checkBearer` (`internal/mcp/auth.go:16`) with a JWT verifier. Mint tokens with `{ten, sub, scope[], aud=mcpd, exp<=30m, jti}`. In `tools.go:30-36`, refuse if request `tenantID` ≠ `ten` claim. Add per-tool scope gates: `board.read`, `board.write`, `run.start`, `run.answer`. Drop the stdio carve-out at `server.go:99` — require JWT via env var. |
 | 3 | **High** | `assign_ticket_to_agent` lets a caller set `agent_profile` to any string and `requested_by` to any human ID. Agent identity is forgeable. | At `agent_runs.go:97`, validate `agentProfile` against a server-side allowlist (start with the existing six). At line 108, replace the args lookup with `meta.Actor` from `ApplyToolCallWithMeta` (thread through if missing). Regression test: `agent_profile: "ceo-bot"` returns an error. |
-| 4 | **High** | The cited "ActionLedger" audit substrate has zero production callers. Inbound Jira via `ReplaceCards` and async run updates bypass `action_replay_events`. | Either delete `internal/core/ActionLedger` and update `docs/threat-model.md` to name `action_replay_events` as the substrate, or wire the ledger into `ApplyToolCallWithMeta` (`board.go:319`) **and** the Jira hydrator (`jira.go:82`). Add a mutation record on every `executeRun` status transition. |
+| 4 | **Partially resolved (#57)** | ActionLedger had zero production callers — deleted in #57. The substrate is now exclusively `action_replay_events` written by `boardEventRecord` inside `ApplyToolCallWithMeta`. Inbound Jira via `ReplaceCards` and async run updates still bypass the substrate (~40% coverage gap) — tracked under `R-AUDIT-COVERAGE-GAP`. Open work: add a mutation record on the Jira hydrator path and on every `executeRun` status transition. |
 | 5 | **Med** | `MarkRunQuestionAnswered` (`board_store.go:907`) accepts caller-supplied tenant scope without re-validating against the loaded row; `OwnerHumanID` on agents comes from unauthenticated args. | After `LoadRunQuestion` at `:909`, refuse if loaded `q.TenantID != tenantID`. For agent assignees, sanitize `OwnerHumanID` via `authCtx.Identity` per recommendation #3. |
 
 ---

@@ -10,8 +10,9 @@ import (
 )
 
 // internalToolsDispatchHandler accepts MCP-shaped tool calls and routes them
-// through the canonical ApplyToolCallWithMeta path so ActionLedger, risk
-// classification, and confirmation gates apply uniformly. The MCP tool name
+// through the canonical ApplyToolCallWithMeta path so the audit log
+// (action_replay_events), risk classification, and confirmation gates apply
+// uniformly. The MCP tool name
 // space (card.create, card.update, card.comment) is translated to cmd/server's
 // internal tool names (create_ticket, update_ticket/move_ticket/etc.,
 // add_comment) before dispatch.
@@ -83,7 +84,7 @@ func internalToolsDispatchHandler(w http.ResponseWriter, r *http.Request) {
 
 // dispatchRunsStart translates the MCP runs.start args into cmd/server's
 // assign_ticket_to_agent tool. The Run is minted by the standard path so
-// ActionLedger, the agent orchestrator hand-off, and persistence all apply.
+// the audit log, the agent orchestrator hand-off, and persistence all apply.
 // The response is the slim { run_id, status, agent_profile } shape the MCP
 // caller expects.
 func dispatchRunsStart(w http.ResponseWriter, args json.RawMessage, meta toolCallMeta) {

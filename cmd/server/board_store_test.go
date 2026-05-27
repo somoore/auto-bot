@@ -58,7 +58,7 @@ func TestSQLiteBoardStorePersistsSnapshotsAndEvents(t *testing.T) {
 	}
 }
 
-func TestSQLiteBoardStorePersistsActionReplayLedger(t *testing.T) {
+func TestSQLiteBoardStorePersistsActionReplayEvents(t *testing.T) {
 	store, err := newSQLiteBoardStore(filepath.Join(t.TempDir(), "board.sqlite"))
 	if err != nil {
 		t.Fatalf("newSQLiteBoardStore returned error: %v", err)

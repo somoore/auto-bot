@@ -79,8 +79,8 @@ register as `R-AGENT-PROFILE-ALLOWLIST`.
 emits a tool call that the server then dispatches against the board.
 Without dispatcher tracking, a malicious or model-injected tool call could
 be indistinguishable from a UI action initiated by a logged-in browser
-session. An audit reader watching the ActionLedger or `boardEventRecord`
-stream would see no provenance for the call.
+session. An audit reader watching the `boardEventRecord` stream
+(`action_replay_events`) would see no provenance for the call.
 
 **Assets at risk.** Audit provenance; the "live speech only" invariant
 that the v1 threat model relied on to bound mutation authority; the human
@@ -280,18 +280,13 @@ captures the source string and sanitized tool result for every
 `ApplyToolCallWithMeta` call site (`main.go:874` for UI;
 `nova_sonic.go:890` for Nova Sonic).
 
-`internal/core/ledger.go` additionally defines `ActionIntent`,
-`ToolCallRecord`, and `ExternalConfirmation` records with a `RunID`
-field for full Run lineage. This is the intended substrate for the
-intent → tool-call → external-confirmation triple that agent-first v2
-ultimately needs. The interface and an in-memory implementation exist;
-production callers do not yet invoke `RecordIntent` /
-`RecordToolCall` / `RecordExternalConfirmation`. Comments in
-`cmd/server/internal_dispatch.go:13` and `cmd/server/intake_followups.go:23,76`
-reference the ledger aspirationally; the dispatch path itself routes
-through `ApplyToolCallWithMeta`, which writes through the
-`boardEventRecord` / `boardMutationRecord` substrate above, not the
-ActionLedger.
+Historical note: an earlier `internal/core/ledger.go` defined a
+parallel `ActionLedger` interface (`ActionIntent` / `ToolCallRecord` /
+`ExternalConfirmation`). It was removed in #57 — it had zero non-test
+call sites and the SQLite `action_replay_events` table written by
+`boardEventRecord` is the actual audit substrate. The threat model
+below is written against that real substrate, not the deleted
+interface.
 
 **Residual risk.** SecArch-001 §5 documented two persistent bypasses of
 the mutation-record substrate: (a) inbound Jira via
@@ -639,7 +634,7 @@ document.
 | `R-ANSWER-RACE` | Med | `MarkRunQuestionAnswered` is a read-modify-write; concurrent answers race and the first answer's `answered_by` is overwritten. | One-statement conditional UPDATE with `RowsAffected` check; new `ErrRunQuestionAlreadyAnswered` sentinel. SE-1 F9. |
 | `R-PRECOMMIT-CI-PARITY` | Low | `scripts/pre-commit` can be bypassed with `--no-verify`; only CI replay catches it. One documented `--no-verify` incident in this branch's history. | Server-side branch protection + mandatory CI status check. `docs/erratum-commit-title-swaps.md`. |
 | `R-AUDIT-COVERAGE-GAP` | High | Inbound Jira (`ReplaceCards` → `jira.go:82`) and async `executeRun` status updates bypass `boardMutationRecord`. ~60% mutation coverage. | Wire mutation record on Jira-driven snapshots and on every `executeRun` status transition. SA-1 §5. |
-| `R-ACTIONLEDGER-NOT-WIRED` | High | `internal/core/ActionLedger` is the intended intent → tool-call → confirmation substrate; no production caller invokes `RecordIntent` / `RecordToolCall` / `RecordExternalConfirmation`. | Either wire the ledger into `ApplyToolCallWithMeta` and the Jira hydrator, or delete the abstraction and rename the threat-model substrate. SA-1 §5. |
+| `R-ACTIONLEDGER-NOT-WIRED` | **Resolved (#57)** | `internal/core/ActionLedger` had zero non-test call sites. Resolved by deletion: the interface and `InMemoryActionLedger` were removed; the real audit substrate is the `action_replay_events` SQLite table written by `boardEventRecord` inside `ApplyToolCallWithMeta`. The remaining audit-coverage gap (inbound Jira + async run updates) is tracked under `R-AUDIT-COVERAGE-GAP`. |
 | `R-RUNQ-TENANT-RECHECK` | Med | `MarkRunQuestionAnswered` overwrites `q.TenantID` from caller scope without re-asserting against the loaded row. | Add `if q.TenantID != tenantID { return ErrInvalidActor-equivalent }` after `LoadRunQuestion`. SA-1 §1. |
 | `R-CARDID-GLOBAL` | Low | Card IDs collide across tenants by design (`nextOperationIDLocked` is per-board). | Document the invariant in `docs/codebase-map.md`; ensure any future debug tool keys on `(tenant, board, card)`. SA-1 §1. |
 | `R-LOG-SANITIZE-DRIFT` | Med | Log sanitization in `cmd/server` is by convention, not enforced. New log sites can reintroduce log injection. | gosec G706 in CI for `cmd/server` (currently only `cmd/mcpd` is fully annotated). |
