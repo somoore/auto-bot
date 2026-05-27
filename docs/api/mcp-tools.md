@@ -1,4 +1,4 @@
-# MCP Tool Reference (Sprint 2.0)
+# MCP Tool Reference (Sprint 2.0 + S2.1 wire-through)
 
 This document describes the Model Context Protocol (MCP) tools exposed
 by the auto-bot MCP server. The MCP server is the universal external
@@ -9,7 +9,7 @@ architectural rationale, and
 these tools relate to the projection layer.
 
 The tool registry, JSON schemas, and handlers are defined in
-`internal/mcp/tools.go:130` (`BuildTools`). The JSON-RPC envelope and
+`internal/mcp/tools.go:132` (`BuildTools`). The JSON-RPC envelope and
 transports (stdio + HTTP) are defined in the MCP server core that lives
 alongside `tools.go` (search for `ServeStdio`, `HTTPHandler`, and
 `HandleRequest`).
@@ -33,8 +33,105 @@ time. The call site stays the same — only the verification widens.
 
 Tenant scoping: each tool call is implicitly scoped by the
 `(tenant_id, board_id)` configured in `ToolDeps`
-(`internal/mcp/tools.go:114`). Cross-tenant access is not possible
+(`internal/mcp/tools.go:116`). Cross-tenant access is not possible
 through this surface. ADR 0004 covers the multi-tenant model.
+
+## How dispatch works (S2.1 wire-through)
+
+As of Sprint 2.1, the five active tools are no longer terminal: a
+mutation tool call on the MCP side now reaches cmd/server's canonical
+`ApplyToolCall` path over HTTP, so MCP-driven changes flow through the
+same `ActionLedger`, risk classification, and confirmation gates as
+voice and UI callers. Reads take a separate, lighter HTTP path.
+
+The chain for a mutating tool (`card.create` / `card.update` /
+`card.comment`):
+
+```
+MCP client (Claude, Cursor, automation)
+    │   JSON-RPC tools/call over stdio or HTTP
+    ▼
+cmd/mcpd  →  internal/mcp/tools.go  (handler closure)
+    │            (`buildCreateCardTool` / `buildUpdateCardTool` /
+    │             `buildCommentTool` at :278 / :320 / :374)
+    ▼
+internal/mcp.HTTPBoardClient.post  (internal/mcp/tools.go:483)
+    │   POST <BoardURL>/internal/tools/dispatch
+    │   { tool, args, dispatcher, tenant_id, board_id }
+    │   Authorization: Bearer <APP_API_TOKEN>
+    ▼
+cmd/server.internalToolsDispatchHandler  (cmd/server/internal_dispatch.go:36)
+    │   tool switch at :70 — translates MCP names to cmd/server
+    │   internal names and fans out across multiple legs as needed
+    │   (e.g. card.update → update_ticket + move_ticket + assign_ticket +
+    │   add_tags / remove_tags). Each leg runs through
+    │   sharedBoard.ApplyToolCallWithMeta with the caller-supplied
+    │   dispatcher label.
+    ▼
+cmd/server.ApplyToolCallWithMeta
+    │   ActionLedger + risk gates + tenant dry-run check
+    ▼
+  Apply OR stage as PendingAction (when tenant has dry_run_enabled)
+```
+
+Reads (`board.list_cards`, `board.get_card`) do **not** go through
+`/internal/tools/dispatch`. They use the read-side endpoint instead:
+
+```
+HTTPBoardClient.get (internal/mcp/tools.go:545)
+    GET <BoardURL>/internal/board/cards         → { cards: [...] }
+    GET <BoardURL>/internal/board/cards/{id}    → { card:  ... }
+```
+
+The dispatch endpoint switch at `cmd/server/internal_dispatch.go:70`
+only recognizes `card.create`, `card.update`, and `card.comment`; any
+other tool name returns 400 with body
+`{"error":"unknown tool \"<name>\""}`. The read-side handler is at
+`cmd/server/internal_dispatch.go:311`
+(`internalBoardCardsHandler`).
+
+### Dry-run staging envelope
+
+When the tenant has `dry_run_enabled=true`
+(`cmd/server/tenant_settings.go:14`), any mutating tool call routed
+through `ApplyToolCallWithMeta` is queued as a `PendingAction` rather
+than applied. The caller sees this envelope (source:
+`cmd/server/dry_run.go:148`–`:157`):
+
+```json
+{
+  "ok": false,
+  "dry_run": true,
+  "requires_approval": true,
+  "action_id": "pa_<24 hex chars>",
+  "tool": "<cmd/server internal tool name>",
+  "expires_at": "<RFC3339Nano deadline; 24h default>",
+  "prompt": "I would have run <tool> but dry-run mode is enabled..."
+}
+```
+
+The MCP tool layer surfaces this envelope to the agent — it is not
+silently swallowed. The agent's next step is to wait for the human to
+approve via `POST /tenant/pending_actions/{action_id}/approve` (see
+`docs/api/openapi.yaml`).
+
+### Wire envelope reference
+
+The exact JSON shapes for `/internal/tools/dispatch` and
+`/internal/board/cards[/{id}]` live in
+`docs/api/openapi.yaml` under the `DispatchCardResult`,
+`DispatchCommentResult`, and `RequiresApprovalEnvelope` schemas.
+
+### Auth pass-through
+
+`HTTPBoardClient` injects the configured bearer token
+(`internal/mcp/tools.go:511`) and cmd/server's
+`internalToolsDispatchHandler` runs `authorizeBaseRequest` first thing
+(`cmd/server/internal_dispatch.go:42`). Browser session cookies are
+also accepted, which is what lets the React drawer dry-run the same
+endpoints as the MCP path. The token is shared with the rest of
+cmd/server (`APP_API_TOKEN`); per-tool scoping arrives in a later
+sprint.
 
 ## JSON-RPC envelope
 
@@ -79,17 +176,21 @@ result inside `data` / the decoded `text` block.
 
 ## Tool index
 
-| Tool                 | Sprint | Risk    | Purpose                                                |
-| -------------------- | ------ | ------- | ------------------------------------------------------ |
-| `board.list_cards`   | 2.0    | Low     | Read filtered card list.                               |
-| `board.get_card`     | 2.0    | Low     | Read one card with thread + active-run summary.        |
-| `card.create`        | 2.0    | Medium  | Create a card.                                         |
-| `card.update`        | 2.0    | Medium  | Patch a card.                                          |
-| `card.comment`       | 2.0    | Low     | Append a comment to a card thread.                     |
-| `run.start`          | 2.1    | High    | (Coming next) Kick off an agent Run on a card.         |
-| `run.checkpoint`     | 2.1    | Low     | (Coming next) Append a checkpoint to a Run timeline.   |
-| `run.ask_human`      | 2.1    | Medium  | (Coming next) Pause a Run on a `RunQuestion`.          |
-| `run.complete`       | 2.1    | Medium  | (Coming next) Terminate a Run (success or failure).    |
+| Tool                   | Sprint | Risk    | Status   | Purpose                                                |
+| ---------------------- | ------ | ------- | -------- | ------------------------------------------------------ |
+| `board.list_cards`     | 2.0    | Low     | Wired    | Read filtered card list.                               |
+| `board.get_card`       | 2.0    | Low     | Wired    | Read one card with thread + active-run summary.        |
+| `card.create`          | 2.0    | Medium  | Wired    | Create a card. Routes via `/internal/tools/dispatch`.  |
+| `card.update`          | 2.0    | Medium  | Wired    | Patch a card. Routes via `/internal/tools/dispatch`.   |
+| `card.comment`         | 2.0    | Low     | Wired    | Append a comment. Routes via `/internal/tools/dispatch`. |
+| `run.start`            | 2.1    | High    | Stub     | Kick off an agent Run on a card. 400 today.            |
+| `run.checkpoint`       | 2.1    | Low     | Stub     | Append a checkpoint to a Run timeline. 400 today.      |
+| `run.ask_human`        | 2.1    | Medium  | Stub     | Pause a Run on a `RunQuestion`. 400 today.             |
+| `run.answer_question`  | 2.1    | Medium  | Stub     | Answer an open `RunQuestion` and resume the Run.       |
+| `run.complete`         | 2.1    | Medium  | Stub     | Terminate a Run (success or failure). 400 today.       |
+| `agent.take_over_run`  | 2.1    | High    | Stub     | Reassign an in-flight Run to a human or other agent.   |
+| `agent.cancel_run`     | 2.1    | Medium  | Stub     | Cancel an in-flight Run without applying side effects. |
+| `agent.retry_run`      | 2.1    | High    | Stub     | Re-queue a failed / cancelled Run.                     |
 
 Risk levels mirror the voice tool gates (`riskForTool` at
 `cmd/server/meeting_intelligence.go:107`): **Low** runs without
@@ -106,8 +207,14 @@ Low; mutations are classified by impact and reversibility.
 **Purpose.** List cards on the active board. Optional filters narrow by
 status, assignee ID, or agent-owned cards only. Returns a slim
 `CardSummary` view (full details flow through `board.get_card`). The
-adapter scans cards in stable ID order. Source:
-`internal/mcp/tools.go:142` (`buildListCardsTool`).
+handler also opens the run-question store and decorates any card with
+an open question with the corresponding `run_id`
+(`internal/mcp/tools.go:174`–`:182`). Source:
+`internal/mcp/tools.go:144` (`buildListCardsTool`).
+
+**Wire path.** Reads bypass `/internal/tools/dispatch` and go to
+`GET /internal/board/cards` (`HTTPBoardClient.ListCards` at
+`internal/mcp/tools.go:575`); the filter is applied client-side.
 
 ### Input schema
 
@@ -205,8 +312,16 @@ Response `data`:
 **Purpose.** Fetch one card by ID, including its recent comment thread
 and any active agent run summary. The active-run lookup scans open
 `RunQuestion` records for this card and loads the matching `Run` —
-best-effort; returns `active_run: null` when no run is in flight.
-Source: `internal/mcp/tools.go:202` (`buildGetCardTool`).
+best-effort; returns `active_run: null` when no run is in flight. The
+lookup picks the newest open question for the card and shapes its
+`Run` into a `RunSummary` (`internal/mcp/tools.go:241`–`:274`,
+`findActiveRunForCard`). Source: `internal/mcp/tools.go:201`
+(`buildGetCardTool`).
+
+**Wire path.** `GET /internal/board/cards/{card_id}` via
+`HTTPBoardClient.GetCard` (`internal/mcp/tools.go:610`). The comment
+thread is returned inline on `Card.Comments`; the active-run lookup
+runs in-process against the local `RunStore` injected into `ToolDeps`.
 
 ### Input schema
 
@@ -240,7 +355,7 @@ Source: `internal/mcp/tools.go:202` (`buildGetCardTool`).
         "agent_profile": { "type": "string" },
         "objective":     { "type": "string" },
         "current_step":  { "type": "string" },
-        "waiting_on":    { "$ref": "internal/agent/types.go:159#RunQuestionRef" },
+        "waiting_on":    { "$ref": "internal/agent/types.go:165#RunQuestionRef" },
         "updated_at":    { "type": "string" }
       }
     }
@@ -299,12 +414,19 @@ Response `data`:
 
 **Risk:** Medium — creates persistent board state.
 
-**Purpose.** Create a new card on the active board. Routes through the
-same mutation path as voice tools. In S2.0 the `ActionLedger` + risk
-gates are not yet wired through MCP (the cross-process state-sharing
-question lands in S2.1); the tool itself is therefore safe to expose to
-trusted automation only — gate by transport (stdio process tree, or
-HTTP bearer scope). See `internal/mcp/tools.go:282`
+**Purpose.** Create a new card on the active board. As of S2.1 the
+tool routes through `HTTPBoardClient.CreateCard`
+(`internal/mcp/tools.go:634`), which posts a `card.create` envelope to
+`/internal/tools/dispatch`. `cmd/server.dispatchCardCreate`
+(`cmd/server/internal_dispatch.go:85`) translates the MCP-shaped args
+to `create_ticket` and runs them through `ApplyToolCallWithMeta`, so
+`ActionLedger` + risk gates + dry-run staging now apply uniformly with
+the voice / UI surface. When the optional `assignee` is supplied, the
+dispatcher fans out a follow-up `assign_ticket` call against the
+freshly-created card so the MCP call site stays single-step
+(`cmd/server/internal_dispatch.go:136`–`:149`).
+
+Source on the MCP side: `internal/mcp/tools.go:278`
 (`buildCreateCardTool`).
 
 ### Input schema
@@ -397,13 +519,26 @@ Response `data`:
 **Risk:** Medium — mutates persistent board state.
 
 **Purpose.** Patch one card. Pointer-typed fields in the Go shape
-(`CardPatch` at `internal/mcp/tools.go:62`) distinguish "no change"
+(`CardPatch` at `internal/mcp/tools.go:64`) distinguish "no change"
 from "set to empty"; the JSON surface mirrors this by treating absent
 keys as unchanged. Status changes use the canonical status vocabulary
 (`Backlog` / `In Progress` / `Blocked` / `Done`). `tags` follows
-explicit set-tracking — the field is updated only when the key is
-present in `patch`. Source: `internal/mcp/tools.go:324`
-(`buildUpdateCardTool`).
+explicit set-tracking — `TagsSet` (`internal/mcp/tools.go:70`) is set
+to true only when the key is present in `patch`, so `tags: []` clears
+the set while omission leaves it alone. Source:
+`internal/mcp/tools.go:320` (`buildUpdateCardTool`).
+
+**Wire path.** `HTTPBoardClient.UpdateCard`
+(`internal/mcp/tools.go:662`) sends the patch with
+`tags` rendered as a pointer (`updatePatchPayloadInner.Tags` at
+`internal/mcp/tools.go:658`) so the dispatch endpoint preserves
+omit-vs-clear semantics. `cmd/server.dispatchCardUpdate`
+(`cmd/server/internal_dispatch.go:162`) fans the patch out across
+`update_ticket` (title/notes), `move_ticket` (status),
+`assign_ticket` / `unassign_ticket` (assignee), and the
+add/remove-tag pair (`cmd/server/internal_dispatch.go:236`–`:253`).
+Each leg is a separate `ApplyToolCallWithMeta` call so the risk gate
+fires per-field.
 
 ### Input schema
 
@@ -486,9 +621,18 @@ Response `data`:
 
 **Purpose.** Append a comment to a card's thread. `as_actor` overrides
 the default MCP actor for the duration of this call (`DefaultActor` in
-`ToolDeps` at `internal/mcp/tools.go:114`). In S2.1 this will be scoped
-to per-token identities rather than free-text. Source:
-`internal/mcp/tools.go:383` (`buildCommentTool`).
+`ToolDeps` at `internal/mcp/tools.go:127`); per-token identities arrive
+in a later sprint. Source: `internal/mcp/tools.go:374`
+(`buildCommentTool`).
+
+**Wire path.** `HTTPBoardClient.AddComment`
+(`internal/mcp/tools.go:693`) posts a `card.comment` envelope to
+`/internal/tools/dispatch`. `cmd/server.dispatchCardComment`
+(`cmd/server/internal_dispatch.go:267`) translates the MCP-shaped
+args to `add_comment` (`body` → `comment`) and runs them through
+`ApplyToolCallWithMeta`. When `as_actor` is non-empty the dispatcher
+overrides `toolCallMeta.Actor` so the comment is attributed correctly
+(`cmd/server/internal_dispatch.go:285`–`:287`).
 
 ### Input schema
 
@@ -560,12 +704,20 @@ Response `data`:
 
 ---
 
-## Coming next (Sprint 2.1)
+## Coming next (Sprint 2.1+)
 
-The four Run-lifecycle tools below are planned but not yet shipped.
-Their shapes are illustrative; the canonical schemas will land
-alongside the implementations and will live next to the S2.0 tools in
-`internal/mcp/tools.go`.
+The Run-lifecycle and agent-control tools below are planned but not
+yet wired through the dispatch endpoint. Their shapes are illustrative;
+the canonical schemas will land alongside the implementations and will
+live next to the S2.0 tools in `internal/mcp/tools.go`.
+
+**Today's behavior:** the dispatch endpoint switch at
+`cmd/server/internal_dispatch.go:70`–`:79` only recognizes
+`card.create`, `card.update`, and `card.comment`. Any of the names
+below sent to `/internal/tools/dispatch` returns 400 with body
+`{"error":"unknown tool \"<name>\""}`. The MCP UI surfaces that error
+inline rather than swallowing it, so agents see the failure on their
+next planning step.
 
 ### `run.start`
 
@@ -585,7 +737,7 @@ alongside the implementations and will live next to the S2.0 tools in
 ```
 
 Returns `{ "run_id": "...", "run": <RunView> }`. `RunView` shape:
-`internal/agent/types.go:204`.
+`internal/agent/types.go:210`.
 
 ### `run.checkpoint`
 
@@ -605,7 +757,7 @@ Returns `{ "run_id": "...", "run": <RunView> }`. `RunView` shape:
 ```
 
 Returns `{ "checkpoint": <Checkpoint> }`. `Checkpoint` shape:
-`internal/agent/types.go:195`.
+`internal/agent/types.go:201`.
 
 ### `run.ask_human`
 
@@ -626,7 +778,7 @@ Returns `{ "checkpoint": <Checkpoint> }`. `Checkpoint` shape:
 ```
 
 Returns `{ "question": <RunQuestion>, "run": <RunView> }`. `RunQuestion`
-shape: `internal/agent/types.go:129`.
+shape: `internal/agent/types.go:135`.
 
 ### `run.complete`
 
@@ -646,3 +798,104 @@ shape: `internal/agent/types.go:129`.
 ```
 
 Returns `{ "run": <RunView> }`.
+
+### `run.answer_question`
+
+**Risk:** Medium — resolves the human gate that paused a Run; the
+agent loop resumes from the same step.
+
+```json
+{
+  "type": "object",
+  "required": ["question_id", "answer"],
+  "properties": {
+    "question_id": { "type": "string" },
+    "answer":      { "type": "string" },
+    "answered_by": { "type": "string" }
+  }
+}
+```
+
+The server-side handler will mirror `RunCoordinator.AnswerQuestion`
+(see `internal/agent/coordinator.go` `AnswerQuestion`). Today the
+voice / UI surfaces are the only callers; once wired the MCP path will
+share the `answered_via=mcp` branch
+(`internal/agent/types.go:155`–`:157`). Returns `{ "question":
+<RunQuestion>, "run": <RunView> }`.
+
+### `agent.take_over_run`
+
+**Risk:** High — transfers responsibility for an in-flight Run to a
+human or to a different agent profile. The original agent's checkpoint
+trail is preserved.
+
+```json
+{
+  "type": "object",
+  "required": ["run_id"],
+  "properties": {
+    "run_id":      { "type": "string" },
+    "new_owner":   { "$ref": "internal/board/types.go#Actor" },
+    "note":        { "type": "string" }
+  }
+}
+```
+
+Returns `{ "run": <RunView> }`. The new owner is recorded as an
+`Actor` so an agent can hand off to a human or to a peer agent.
+
+### `agent.cancel_run`
+
+**Risk:** Medium — terminates the Run cleanly without applying any
+remaining side effects. The audit trail records cancellation as a
+terminal `cancelled` status.
+
+```json
+{
+  "type": "object",
+  "required": ["run_id"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "reason": { "type": "string" }
+  }
+}
+```
+
+Returns `{ "run": <RunView> }`.
+
+### `agent.retry_run`
+
+**Risk:** High — re-queues a failed or cancelled Run. The retry Run
+inherits the original objective and card binding; `Run.RetryOf`
+(`internal/agent/types.go:59`) points back at the source run for
+audit-trail continuity.
+
+```json
+{
+  "type": "object",
+  "required": ["run_id"],
+  "properties": {
+    "run_id":          { "type": "string" },
+    "new_objective":   { "type": "string" },
+    "cost_budget_cents": { "type": "integer" }
+  }
+}
+```
+
+Returns `{ "run_id": "...", "run": <RunView> }`.
+
+---
+
+## Cross-references
+
+- `docs/api/openapi.yaml` — canonical HTTP schema. The
+  `/internal/tools/dispatch` and `/internal/board/cards[/{id}]` paths
+  document the request / response envelopes
+  `HTTPBoardClient` (`internal/mcp/tools.go:438`) speaks.
+  `DispatchCardResult`, `DispatchCommentResult`, and
+  `RequiresApprovalEnvelope` schemas live in the same file.
+- `docs/adrs/0003-mcp-server-as-universal-external-surface.md` —
+  architectural rationale for the MCP server as the canonical external
+  surface.
+- `docs/adrs/0002-canonical-board-with-external-projections.md` —
+  how MCP tools relate to the Jira / GitHub projection layer.
