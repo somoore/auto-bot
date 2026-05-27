@@ -10,6 +10,7 @@ import (
 
 	"github.com/somoore/auto-bot/internal/agent"
 	"github.com/somoore/auto-bot/internal/board"
+	"github.com/somoore/auto-bot/internal/intake"
 	"github.com/somoore/auto-bot/internal/meetings"
 )
 
@@ -110,8 +111,14 @@ type kanbanBoardState struct {
 	RecentMutations      []boardMutationView       `json:"recentMutations,omitempty"`
 	Conflicts            []jiraConflict            `json:"conflicts,omitempty"`
 	OpenRunQuestions     []agent.RunQuestion       `json:"open_run_questions,omitempty"`
-	UpdatedAt            string                    `json:"updatedAt,omitempty"`
-	SequenceNumber       int64                     `json:"sequenceNumber"`
+	// RecentIntakes is the rolling 24h async-standup window for this
+	// (tenant, board), populated at broadcast time from internal/intake
+	// — see snapshotStateLocked. Like OpenRunQuestions it is computed at
+	// broadcast time rather than persisted; intakeStore is the source of
+	// truth.
+	RecentIntakes  []intake.Intake `json:"recent_intakes,omitempty"`
+	UpdatedAt      string          `json:"updatedAt,omitempty"`
+	SequenceNumber int64           `json:"sequenceNumber"`
 }
 
 type kanbanBoard struct {
@@ -518,11 +525,25 @@ func (board *kanbanBoard) snapshotStateLocked() kanbanBoardState {
 		Conflicts:            append([]jiraConflict(nil), board.conflicts...),
 		SequenceNumber:       board.sequenceNumber,
 	}
+	state.RecentIntakes = recentIntakesForBoard(board.tenantID, board.boardID)
 	if !board.updatedAt.IsZero() {
 		state.UpdatedAt = board.updatedAt.UTC().Format(time.RFC3339Nano)
 	}
 
 	return state
+}
+
+// recentIntakesForBoard reads the 24h window from intakeStore. Kept as a
+// package-level function so tests can override intakeStore without
+// touching the board. intakeStore has its own mutex, so calling this
+// while board.mu is held is safe — the call chain never loops back into
+// the board.
+func recentIntakesForBoard(tenantID, boardID string) []intake.Intake {
+	if intakeStore == nil {
+		return nil
+	}
+	since := time.Now().Add(-intakeRecentWindow)
+	return intakeStore.Recent(tenantID, boardID, since)
 }
 
 // ReplaceCards swaps the board with a Jira-hydrated card set, advances the

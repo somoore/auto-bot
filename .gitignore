@@ -95,3 +95,10 @@ var/
 
 # Agent worktrees
 .claude/
+
+# ---------- Node / Web frontend ----------
+# web/app is a Vite/React SPA. Dependencies and build artifacts are
+# never tracked; only the package.json + package-lock.json define what
+# the SPA expects at install time.
+node_modules/
+web/app/dist/

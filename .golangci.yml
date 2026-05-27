@@ -1,0 +1,14 @@
+version: "2"
+
+# Lint only Go code that is part of this module. node_modules contains
+# third-party Go sources shipped alongside JS packages (e.g. flatted's
+# Go example) that are not part of the build and trigger spurious
+# findings under default analyzers.
+run:
+  timeout: 5m
+
+linters:
+  exclusions:
+    paths:
+      - web/app/node_modules
+      - node_modules
