@@ -161,6 +161,94 @@ func TestInternalDispatchCardCommentRoutesThroughApplyToolCall(t *testing.T) {
 	}
 }
 
+// TestInternalDispatchRunsStartQueuesConfirmation asserts that an MCP-shaped
+// runs.start payload routes through assign_ticket_to_agent (medium-risk) and
+// returns a Trust Ceremony confirmation envelope rather than starting
+// immediately. This is the canonical safety behavior — the MCP caller must
+// either prompt the operator or wait for the pending action queue.
+func TestInternalDispatchRunsStartQueuesConfirmation(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	apiToken = "internal-dispatch-secret"
+	appAuthMode = "token"
+	appRoomID = "kanban-meeting"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+
+	// Seed a card so runs.start has something to attach to.
+	createBody := []byte(`{"tool":"card.create","args":{"title":"Ship MCP runs"},"dispatcher":"mcp"}`)
+	createReq := httptest.NewRequest(http.MethodPost, "/internal/tools/dispatch", bytes.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer internal-dispatch-secret")
+	createRec := httptest.NewRecorder()
+	internalToolsDispatchHandler(createRec, createReq)
+	if createRec.Code != http.StatusOK {
+		t.Fatalf("seed create status = %d", createRec.Code)
+	}
+	var createPayload struct {
+		CardID string `json:"card_id"`
+	}
+	_ = json.Unmarshal(createRec.Body.Bytes(), &createPayload)
+
+	body := []byte(`{
+		"tool":"runs.start",
+		"args":{"card_id":"` + createPayload.CardID + `","objective":"finish the loop","agent_profile":"swe-1","requested_by":"mcp"},
+		"dispatcher":"mcp"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/tools/dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer internal-dispatch-secret")
+	rec := httptest.NewRecorder()
+	internalToolsDispatchHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		RequiresConfirmation bool   `json:"requires_confirmation"`
+		ConfirmationID       string `json:"confirmation_id"`
+		RiskLevel            string `json:"risk_level"`
+		ToolName             string `json:"tool_name"`
+		CardID               string `json:"card_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v\nraw: %s", err, rec.Body.String())
+	}
+	if !payload.RequiresConfirmation {
+		t.Fatalf("expected requires_confirmation=true; body = %s", rec.Body.String())
+	}
+	if payload.ConfirmationID == "" {
+		t.Errorf("confirmation_id is empty")
+	}
+	if payload.ToolName != "assign_ticket_to_agent" {
+		t.Errorf("tool_name = %q, want assign_ticket_to_agent", payload.ToolName)
+	}
+	if payload.CardID != createPayload.CardID {
+		t.Errorf("card_id = %q, want %q", payload.CardID, createPayload.CardID)
+	}
+}
+
+// TestInternalDispatchRunsStartRejectsMissingObjective covers input
+// validation on the runs.start path.
+func TestInternalDispatchRunsStartRejectsMissingObjective(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	apiToken = "internal-dispatch-secret"
+	appAuthMode = "token"
+	appBoardID = "default"
+	authStore = newWebAuthStore(time.Hour)
+	sharedBoard = newKanbanBoard()
+
+	body := []byte(`{"tool":"runs.start","args":{"card_id":"missing-card"},"dispatcher":"mcp"}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/tools/dispatch", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer internal-dispatch-secret")
+	rec := httptest.NewRecorder()
+	internalToolsDispatchHandler(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestInternalBoardCardsListAndGet asserts the read endpoints return the
 // live snapshot and are gated by the same Bearer token.
 func TestInternalBoardCardsListAndGet(t *testing.T) {

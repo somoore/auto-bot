@@ -220,11 +220,10 @@ These directories contain only a `doc.go` documenting where the code *will* live
 | `internal/extensions` | "Owns runtime registries. Sprint 0 status: skeleton. cmd/server/extensions.go moves here once the underlying types stabilize." (`internal/extensions/doc.go`) | `cmd/server/extensions.go` |
 | `internal/http` | "Will host HTTP handlers extracted from cmd/server. Sprint 0 status: skeleton." (`internal/http/doc.go`) | `cmd/server/main.go` + per-feature `*_handler.go` files |
 | `internal/httpapi` | "Hosts shared HTTP middleware (tenant resolution, authentication, audit). Sprint 0 status: skeleton." (`internal/httpapi/doc.go`) | `cmd/server/auth.go` |
-| `internal/jira` | "Hosts the Jira projection. In Sprint 3 will implement internal/projection.Projection. Sprint 0 status: skeleton." (`internal/jira/doc.go`) | the projection itself already moved to `internal/projection/jira`; this directory is now a stale reservation |
 | `internal/tenant` | "Owns tenant identity, per-tenant secret storage. Sprint 0 status: skeleton. Default tenant ID 'default' is used everywhere until the hosted control plane lands." (`internal/tenant/doc.go`) | the `default` literal threaded through `cmd/server/board.go`, `cmd/server/tenant_settings.go`, `cmd/server/agent_runs.go` |
 | `internal/voice` | "Owns the voice-meeting runtime. Sprint 0 status: skeleton. cmd/server/nova_sonic*.go and scrum_tools.go migrate in a later sprint." (`internal/voice/doc.go`) | `cmd/server/nova_sonic*.go`, `cmd/server/kanban.go`, `cmd/server/scrum_tools.go` |
 
-Drift to know about: `internal/jira/doc.go` still says "this package will implement the projection" but the projection has *already* landed at `internal/projection/jira/projection.go`. The `internal/jira` namespace is currently unused.
+Note: the Jira projection lives at `internal/projection/jira/projection.go`. An earlier `internal/jira/` placeholder package was removed once the projection landed in its final home — there is no `internal/jira` namespace.
 
 ---
 

@@ -173,6 +173,49 @@ func (a *BoardClient) UpdateCard(_ context.Context, tenantID, boardID, cardID st
 	return board.Card{}, mcp.ErrCardNotFound
 }
 
+// StartRun is the mock equivalent of dispatching runs.start through cmd/server.
+// It returns a synthetic Run identifier without touching any RunStore — the
+// mock exists to keep the protocol layer testable when cmd/server is offline.
+// Production deployments wire HTTPBoardClient.StartRun and the real run is
+// minted by cmd/server's RunCoordinator.
+func (a *BoardClient) StartRun(_ context.Context, tenantID, boardID string, req mcp.RunStartRequest) (mcp.RunStartResult, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	snap := a.ensure(tenantID, boardID)
+	found := false
+	for i := range snap.cards {
+		if snap.cards[i].ID == req.CardID {
+			found = true
+			profile := strings.TrimSpace(req.AgentProfile)
+			if profile == "" {
+				profile = "project_manager"
+			}
+			snap.cards[i].Assignee = &board.Actor{
+				Kind:         board.ActorKindAgent,
+				ID:           "agent:" + profile + ":" + a.key(tenantID, boardID).tenant,
+				DisplayName:  profile,
+				AgentProfile: profile,
+				OwnerHumanID: req.RequestedBy,
+			}
+			break
+		}
+	}
+	if !found {
+		return mcp.RunStartResult{}, mcp.ErrCardNotFound
+	}
+	a.idSeed++
+	profile := strings.TrimSpace(req.AgentProfile)
+	if profile == "" {
+		profile = "project_manager"
+	}
+	return mcp.RunStartResult{
+		RunID:        fmt.Sprintf("%s-run-%010d", a.IDPrefix, a.idSeed),
+		Status:       "queued",
+		AgentProfile: profile,
+		CardID:       req.CardID,
+	}, nil
+}
+
 // AddComment appends a comment to the named card's thread.
 func (a *BoardClient) AddComment(_ context.Context, tenantID, boardID, cardID, body, author string) (board.Comment, error) {
 	a.mu.Lock()

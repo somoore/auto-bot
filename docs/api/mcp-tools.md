@@ -183,7 +183,8 @@ result inside `data` / the decoded `text` block.
 | `card.create`          | 2.0    | Medium  | Wired    | Create a card. Routes via `/internal/tools/dispatch`.  |
 | `card.update`          | 2.0    | Medium  | Wired    | Patch a card. Routes via `/internal/tools/dispatch`.   |
 | `card.comment`         | 2.0    | Low     | Wired    | Append a comment. Routes via `/internal/tools/dispatch`. |
-| `run.start`            | 2.1    | High    | Stub     | Kick off an agent Run on a card. 400 today.            |
+| `runs.start`           | 2.1    | Medium  | Wired    | Start an agent Run on a card. Routes via `/internal/tools/dispatch` → `assign_ticket_to_agent`. May return a Trust Ceremony confirmation envelope. |
+| `run.start`            | 2.1    | High    | Stub     | Reserved for future per-run-coordinator dispatch. 400 today. |
 | `run.checkpoint`       | 2.1    | Low     | Stub     | Append a checkpoint to a Run timeline. 400 today.      |
 | `run.ask_human`        | 2.1    | Medium  | Stub     | Pause a Run on a `RunQuestion`. 400 today.             |
 | `run.answer_question`  | 2.1    | Medium  | Stub     | Answer an open `RunQuestion` and resume the Run.       |
@@ -704,16 +705,101 @@ Response `data`:
 
 ---
 
+## `runs.start`
+
+**Risk:** Medium — mints an autonomous agent Run. Routes through the
+Trust Ceremony confirmation gate by default.
+
+**Purpose.** Start a Run against an existing card so an agent (PM,
+SWE, code-reviewer, etc.) picks up the work and posts back to the
+card's thread. The same path that voice's `assign_ticket_to_agent`
+tool exercises — ActionLedger, risk classification, and the agent
+orchestrator all apply uniformly. Source: `buildStartRunTool` in
+`internal/mcp/tools.go`.
+
+**Wire path.** `HTTPBoardClient.StartRun` posts a `runs.start`
+envelope to `/internal/tools/dispatch`. `cmd/server.dispatchRunsStart`
+(`cmd/server/internal_dispatch.go`) translates the MCP-shaped args
+to `assign_ticket_to_agent` and runs them through
+`ApplyToolCallWithMeta`. Because `assign_ticket_to_agent` is rated
+**Medium** risk (see `riskForTool` in
+`cmd/server/meeting_intelligence.go`), the default response is a
+**202 Accepted** carrying a Trust Ceremony confirmation envelope —
+the operator approves it from the Dry-Run Queue (UI) or from the
+`/admin/pending-actions` API. Approval converts the queued action
+into the real Run.
+
+### Input schema
+
+```json
+{
+  "type": "object",
+  "required": ["card_id", "objective"],
+  "properties": {
+    "card_id":             { "type": "string" },
+    "objective":           { "type": "string" },
+    "agent_profile":       { "type": "string" },
+    "request_type":        { "type": "string" },
+    "requested_by":        { "type": "string" },
+    "repo":                { "type": "string" },
+    "branch":              { "type": "string" },
+    "pull_request_number": { "type": "integer" }
+  }
+}
+```
+
+### Output schema (immediate start)
+
+```json
+{
+  "type": "object",
+  "required": ["card_id"],
+  "properties": {
+    "run_id":        { "type": "string" },
+    "status":        { "type": "string" },
+    "agent_profile": { "type": "string" },
+    "card_id":       { "type": "string" }
+  }
+}
+```
+
+### Output schema (pending confirmation, default for production)
+
+```json
+{
+  "type": "object",
+  "required": ["card_id", "requires_confirmation"],
+  "properties": {
+    "requires_confirmation": { "type": "boolean", "const": true },
+    "confirmation_id":       { "type": "string" },
+    "risk_level":            { "type": "string", "enum": ["medium"] },
+    "prompt":                { "type": "string" },
+    "card_id":               { "type": "string" }
+  }
+}
+```
+
+### Errors
+
+| Condition          | Surface                       |
+| ------------------ | ----------------------------- |
+| Missing `card_id`  | `-32602 card_id is required`  |
+| Missing `objective`| `-32602 objective is required`|
+| Unknown card       | `-32603 mcp: card not found`  |
+
+---
+
 ## Coming next (Sprint 2.1+)
 
-The Run-lifecycle and agent-control tools below are planned but not
-yet wired through the dispatch endpoint. Their shapes are illustrative;
-the canonical schemas will land alongside the implementations and will
-live next to the S2.0 tools in `internal/mcp/tools.go`.
+The remaining Run-lifecycle and agent-control tools below are planned
+but not yet wired through the dispatch endpoint. Their shapes are
+illustrative; the canonical schemas will land alongside the
+implementations and will live next to the S2.0 / runs.start tools in
+`internal/mcp/tools.go`.
 
-**Today's behavior:** the dispatch endpoint switch at
-`cmd/server/internal_dispatch.go:70`–`:79` only recognizes
-`card.create`, `card.update`, and `card.comment`. Any of the names
+**Today's behavior:** the dispatch endpoint switch in
+`cmd/server/internal_dispatch.go` recognizes `card.create`,
+`card.update`, `card.comment`, and `runs.start`. Any of the names
 below sent to `/internal/tools/dispatch` returns 400 with body
 `{"error":"unknown tool \"<name>\""}`. The MCP UI surfaces that error
 inline rather than swallowing it, so agents see the failure on their

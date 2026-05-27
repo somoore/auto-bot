@@ -376,12 +376,13 @@ paths:
         Accepts an MCP tool name + arguments and translates them to the
         cmd/server internal tool names before invoking
         `ApplyToolCallWithMeta`. Supported `tool` values today are
-        `card.create`, `card.update`, and `card.comment`; read-side tools
-        (`board.list_cards`, `board.get_card`) go through
-        `GET /internal/board/cards` instead, not through this dispatch
-        endpoint. Source: `cmd/server/internal_dispatch.go:36`
-        (`internalToolsDispatchHandler`); the dispatcher tool-name switch
-        is at `cmd/server/internal_dispatch.go:70`-`:79`. Unknown tool
+        `card.create`, `card.update`, `card.comment`, and `runs.start`;
+        read-side tools (`board.list_cards`, `board.get_card`) go
+        through `GET /internal/board/cards` instead, not through this
+        dispatch endpoint. Source:
+        `cmd/server/internal_dispatch.go:36`
+        (`internalToolsDispatchHandler`); the dispatcher tool-name
+        switch is in `cmd/server/internal_dispatch.go`. Unknown tool
         names return 400 with `{"error":"unknown tool \"<name>\""}`.
 
 
@@ -399,7 +400,7 @@ paths:
               properties:
                 tool:
                   type: string
-                  description: MCP tool name (`card.create` / `card.update` / `card.comment`).
+                  description: MCP tool name (`card.create` / `card.update` / `card.comment` / `runs.start`).
                 args:
                   description: MCP-shaped arguments for the tool. Schema varies by tool.
                   type: object
@@ -420,8 +421,10 @@ paths:
           description: >
             Tool dispatched. Body shape varies by tool: `card.create` and
             `card.update` return `{card_id?, card}`; `card.comment`
-            returns `{card_id, comment}`. When dry-run staging engages,
-            the body matches `RequiresApprovalEnvelope` (see schema).
+            returns `{card_id, comment}`; `runs.start` returns
+            `{run_id, status, agent_profile, card_id}` on immediate
+            start. When dry-run staging engages, the body matches
+            `RequiresApprovalEnvelope` (see schema).
           content:
             application/json:
               schema:
@@ -429,6 +432,17 @@ paths:
                   - $ref: "#/components/schemas/DispatchCardResult"
                   - $ref: "#/components/schemas/DispatchCommentResult"
                   - $ref: "#/components/schemas/RequiresApprovalEnvelope"
+        "202":
+          description: >
+            Medium-risk tool (e.g. `runs.start` → `assign_ticket_to_agent`)
+            queued a pending confirmation in the Trust Ceremony rather
+            than applying immediately. Body carries the confirmation
+            envelope; the operator approves it from the Dry-Run Queue
+            UI or `/admin/pending-actions`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequiresApprovalEnvelope"
         "400":
           description: Body could not be decoded, required field missing, or `tool` is unknown.
         "401":

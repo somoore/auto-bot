@@ -50,7 +50,7 @@ Two binaries; eighteen Go packages under `internal/`. The boundaries are enforce
 - `internal/intake/` — async standup intake: typed payload, Slack adapter (HMAC verification), and shared validation. Slack and the React `IntakeForm` both land here.
 - `internal/standup/` — agenda builder (pre-meeting) and post-meeting closer (creates cards + kicks Runs).
 - `internal/mcp/` — MCP protocol surface: tool registry, JSON-RPC handlers, board client. `cmd/mcpd` wires it.
-- `internal/auth/`, `internal/tenant/`, `internal/cost/`, `internal/http/`, `internal/httpapi/`, `internal/jira/`, `internal/voice/` — focused single-responsibility packages extracted from the original monolith. See `docs/codebase-map.md` for the full file-by-file map.
+- `internal/auth/`, `internal/tenant/`, `internal/cost/`, `internal/http/`, `internal/httpapi/`, `internal/voice/` — focused single-responsibility packages extracted from the original monolith. See `docs/codebase-map.md` for the full file-by-file map.
 - `internal/extensions/` — registration shims for voice providers, connectors, and model providers.
 - `internal/mocks/` — test-only fakes. The in-memory `mocks.BoardClient` doubles as `cmd/mcpd`'s offline fallback for the S2.0 foundation.
 
