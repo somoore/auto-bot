@@ -325,6 +325,19 @@ func (board *kanbanBoard) ApplyToolCallWithMeta(toolName string, rawArgs string,
 		return result, false, nil
 	}
 
+	// Sprint 4.0: dry-run staging. When the tenant has DryRunEnabled, all
+	// mutating tool calls are diverted into the pending_actions queue
+	// instead of mutating board state. Callers can still call the meta-tools
+	// that operate on the queue (confirmation/undo/audit/etc.) and the read
+	// surface (get_*, list_*) — those are not stageable. SkipConfirmation
+	// remains the escape hatch for in-process execution of approved actions.
+	if !meta.SkipConfirmation && shouldStageInDryRun(toolName) {
+		if mgr := globalTenantSettingsManager(); mgr != nil && mgr.DryRunEnabled(context.Background(), board.tenantID) {
+			result, err := board.stagePendingAction(toolName, args, rawArgs, meta)
+			return result, false, err
+		}
+	}
+
 	before := board.SnapshotState()
 	result, changed, err := board.applyToolCall(toolName, args)
 	if err == nil && changed {

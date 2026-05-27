@@ -35,6 +35,17 @@ func (orchestrator *agentRunOrchestrator) Start(ctx context.Context, req agent.R
 	if req.Objective == "" {
 		return agent.Run{}, fmt.Errorf("run request requires objective")
 	}
+	// Sprint 4.0 pause-all kill switch. When the tenant has the
+	// AgentsPaused flag set, new Run.Start calls are rejected with
+	// ErrAgentsPaused so MCP and UI surfaces can render a distinct
+	// "agents are paused" affordance instead of a generic error.
+	tenantID := req.TenantID
+	if tenantID == "" {
+		tenantID = orchestrator.board.tenantID
+	}
+	if mgr := globalTenantSettingsManager(); mgr != nil && mgr.AgentsPaused(ctx, tenantID) {
+		return agent.Run{}, agent.ErrAgentsPaused
+	}
 
 	args := map[string]any{
 		"card_id":       req.CardID,

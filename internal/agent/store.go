@@ -26,6 +26,13 @@ var ErrRunQuestionNotFound = errors.New("agent: run question not found")
 // duplicate of the already-answered case.
 var ErrRunQuestionExpired = errors.New("agent: run question expired")
 
+// ErrAgentsPaused is returned by RunCoordinator.Start when the tenant has
+// the pause-all-agents kill switch enabled. Callers branch on
+// errors.Is(err, agent.ErrAgentsPaused) to surface a distinct UI message
+// rather than treating it as a generic start failure. The Run was not
+// persisted.
+var ErrAgentsPaused = errors.New("agent: tenant has paused all agents")
+
 // ErrCheckpointAuditFailed wraps the error chain returned by
 // RunCoordinator.Checkpoint when the durable audit append could not run.
 // SE-1 F2: prior to this sentinel, a type-assertion miss against the

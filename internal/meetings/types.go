@@ -236,4 +236,9 @@ type BoardMutationView struct {
 	Sequence              int64                  `json:"sequenceNumber"`
 	Reverted              bool                   `json:"reverted,omitempty"`
 	UndoOf                string                 `json:"undoOf,omitempty"`
+	// Undoable is true when the underlying tool supports the Undo path and
+	// this specific mutation has not already been reverted. The React
+	// RecentMutations timeline renders a 1-click undo button when this is
+	// true. See cmd/server/extensions.go for the canonical capability list.
+	Undoable bool `json:"undoable,omitempty"`
 }

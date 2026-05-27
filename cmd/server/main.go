@@ -116,6 +116,11 @@ func main() {
 	if boardStore != nil {
 		defer closeBoardStore(boardStore)
 	}
+	// Sprint 4.0: wire tenant settings + pending actions stores into the
+	// process-wide dry-run registry. When BOARD_SQLITE_PATH is unset the
+	// helpers fall back to in-memory stores so the trust ceremony APIs stay
+	// callable in tests and ephemeral demo runs.
+	installDryRunRuntime(boardStore)
 	sharedBoard, err = newPersistentKanbanBoard(appBoardID, boardStore)
 	if err != nil {
 		panic(err)
@@ -127,6 +132,12 @@ func main() {
 	// The goroutine exits on appContext cancellation (deferred above) so
 	// shutdown is leak-free.
 	startRunQuestionSweeper(appContext, sharedBoard, defaultRunQuestionSweepInterval)
+	// Sprint 4.1: lightweight cron-style scheduler. Today it refreshes the
+	// pre-meeting agenda on a 15-minute cadence and sweeps expired
+	// pending_actions every minute. Future tasks (cost rollups, projection
+	// reconciliation) bolt onto the same ticker.
+	startCronScheduler(appContext, sharedBoard)
+	defer stopCronScheduler()
 	configuredJiraSync, err := setupJiraSync(appContext, sharedBoard)
 	if err != nil {
 		log.Errorf("Jira sync disabled: %v", err)
@@ -234,6 +245,12 @@ func main() {
 	// HMAC signature verification (SLACK_SIGNING_SECRET).
 	mux.HandleFunc("/intake/standup", intakeStandupHandler)
 	mux.HandleFunc("/intake/slack", intakeSlackHandler)
+
+	// Sprint 4.0: trust ceremony — dry-run queue, diff preview, kill switch.
+	mux.HandleFunc("/tenant/settings", tenantSettingsHandler)
+	mux.HandleFunc("/tenant/pending_actions", pendingActionsHandler)
+	mux.HandleFunc("/tenant/pending_actions/", pendingActionDecisionHandler)
+	mux.HandleFunc("/tenant/mutations/", undoMutationHandler)
 
 	// Serve the React SPA built by `web/app/npm run build` under /app/*.
 	// If web/app/dist does not exist (frontend not built), http.FileServer

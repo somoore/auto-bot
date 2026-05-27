@@ -4,6 +4,7 @@ import { BoardHeader } from "./components/BoardHeader"
 import { BoardSubBar } from "./components/BoardSubBar"
 import { BoardColumn } from "./components/BoardColumn"
 import { CardDrawer } from "./components/CardDrawer"
+import { DryRunQueue } from "./components/DryRunQueue"
 import { EmptyState } from "./components/EmptyState"
 import { SignInGate } from "./components/SignInGate"
 import {
@@ -86,7 +87,9 @@ function App(): JSX.Element {
         agentActive={isAgentActive(activeRun?.status)}
         agentLabel={activeRun?.agent_profile || activeRun?.specialist}
         cardCount={cards.length}
+        tenantSettings={state.tenantSettings}
       />
+      <DryRunQueue pending={state.pendingActions} />
       <main className="flex-1 overflow-x-auto px-4 py-5 sm:px-6">
         {cards.length === 0 ? (
           <>
