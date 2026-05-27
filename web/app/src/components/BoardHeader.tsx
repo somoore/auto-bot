@@ -5,10 +5,19 @@ interface Props {
   status: WsStatus
   session: SessionState
   reconnectAttempt: number
+  agentActive: boolean
+  agentLabel?: string
   onStartStandup?: () => void
 }
 
-export function BoardHeader({ status, session, reconnectAttempt, onStartStandup }: Props): JSX.Element {
+export function BoardHeader({
+  status,
+  session,
+  reconnectAttempt,
+  agentActive,
+  agentLabel,
+  onStartStandup,
+}: Props): JSX.Element {
   const presenceLabel = session.participantIdentity ?? "you"
   return (
     <header className="border-b border-edge/60 bg-sky/80 backdrop-blur">
@@ -29,6 +38,7 @@ export function BoardHeader({ status, session, reconnectAttempt, onStartStandup 
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Presence label={presenceLabel} />
+          <AgentPill active={agentActive} label={agentLabel} />
           <ConnectionPill status={status} attempt={reconnectAttempt} />
           <button
             type="button"
@@ -55,6 +65,23 @@ function BrandMark(): JSX.Element {
       </span>
       <span className="text-base font-semibold tracking-tight text-star">Observatory</span>
     </div>
+  )
+}
+
+function AgentPill({ active, label }: { active: boolean; label?: string }): JSX.Element {
+  if (active) {
+    return (
+      <span className="inline-flex items-center gap-2 rounded-full border border-edge bg-atmos px-3 py-1 text-xs text-star">
+        <span aria-hidden className="h-1.5 w-1.5 animate-pulse rounded-full bg-aurora" />
+        Agent active{label ? <span className="font-mono text-twilight"> · {label}</span> : null}
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-edge bg-atmos px-3 py-1 text-xs text-twilight">
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-farstar" />
+      Agents idle
+    </span>
   )
 }
 

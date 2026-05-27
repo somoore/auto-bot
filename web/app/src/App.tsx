@@ -228,10 +228,10 @@ function App(): JSX.Element {
         session={state.session}
         reconnectAttempt={state.reconnectAttempt}
         onStartStandup={openAgenda}
-      />
-      <BoardSubBar
         agentActive={isAgentActive(activeRun?.status)}
         agentLabel={activeRun?.agent_profile || activeRun?.specialist}
+      />
+      <BoardSubBar
         cardCount={cards.length}
         tenantSettings={state.tenantSettings}
       />

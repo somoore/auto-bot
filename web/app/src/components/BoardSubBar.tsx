@@ -3,13 +3,11 @@ import { PauseAllPill } from "./PauseAllPill"
 import type { TenantSettings } from "../types/board"
 
 interface Props {
-  agentActive: boolean
-  agentLabel?: string
   cardCount: number
   tenantSettings?: TenantSettings
 }
 
-export function BoardSubBar({ agentActive, agentLabel, cardCount, tenantSettings }: Props): JSX.Element {
+export function BoardSubBar({ cardCount, tenantSettings }: Props): JSX.Element {
   const days = useMemo(() => buildDayStrip(), [])
   return (
     <div className="border-b border-edge/60 bg-void">
@@ -19,7 +17,6 @@ export function BoardSubBar({ agentActive, agentLabel, cardCount, tenantSettings
         <FilterPills count={cardCount} />
         <div className="ml-auto" />
         <PauseAllPill settings={tenantSettings} />
-        <AgentPill active={agentActive} label={agentLabel} />
       </div>
     </div>
   )
@@ -85,19 +82,3 @@ function Pill({ children, active = false }: { children: React.ReactNode; active?
   return <button type="button" className={cls}>{children}</button>
 }
 
-function AgentPill({ active, label }: { active: boolean; label?: string }): JSX.Element {
-  if (active) {
-    return (
-      <span className="inline-flex items-center gap-2 rounded-full border border-solar/40 bg-solar/10 px-3 py-1 text-xs font-medium text-solar">
-        <span aria-hidden className="h-1.5 w-1.5 animate-pulse rounded-full bg-solar" />
-        Agent active{label ? ` · ${label}` : ""}
-      </span>
-    )
-  }
-  return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-edge bg-atmos px-3 py-1 text-xs text-twilight">
-      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-farstar" />
-      Agents idle
-    </span>
-  )
-}
