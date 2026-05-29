@@ -23,6 +23,10 @@ __pycache__/
 .venv/
 venv/
 
+# ---------- Node / web build ----------
+node_modules/
+web/app/
+
 # ---------- Browser / test artifacts ----------
 .playwright-mcp/
 playwright-report/
