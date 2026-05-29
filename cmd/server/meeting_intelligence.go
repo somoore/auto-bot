@@ -296,6 +296,16 @@ func confirmationPrompt(toolName string, args map[string]any) string {
 func (board *kanbanBoard) confirmPendingAction(args map[string]any, meta toolCallMeta) (map[string]any, bool, error) {
 	confirmationID := asString(args["confirmation_id"])
 	board.mu.Lock()
+	// Guard mixed-risk sweeps: a bare/generic affirmation ("yes", "ok") must not
+	// confirm every pending action when those actions span more than one risk
+	// level, because the host may have only intended to approve one of them. An
+	// explicit aggregate phrase ("yes to all", "both") still sweeps, and a same-
+	// risk pending set still sweeps. When blocked, leave the confirmations
+	// pending and ask the host to name which one.
+	if disambiguation := board.mixedRiskSweepDisambiguationLocked(confirmationID); disambiguation != nil {
+		board.mu.Unlock()
+		return disambiguation, false, nil
+	}
 	confirmations := board.takePendingConfirmationsLocked(confirmationID)
 	board.mu.Unlock()
 	if len(confirmations) == 0 {
@@ -446,6 +456,82 @@ func (board *kanbanBoard) takePendingConfirmationsByReferenceLocked(reference st
 	return confirmations
 }
 
+// mixedRiskSweepDisambiguationLocked returns a non-nil disambiguation response
+// when a generic affirmation would otherwise sweep a mixed-risk pending set.
+// It returns nil (allowing the normal take to proceed) for explicit-id
+// confirmations, explicit aggregate phrases ("all"/"both"), single pending
+// actions, and same-risk pending sets. Callers must hold board.mu.
+func (board *kanbanBoard) mixedRiskSweepDisambiguationLocked(confirmationID string) map[string]any {
+	// Only generic affirmations that resolve to "confirm all" are gated. An
+	// empty reference, or a reference that means-all but is not an explicit
+	// aggregate phrase, counts as generic.
+	trimmed := strings.TrimSpace(confirmationID)
+	if trimmed != "" {
+		// A specific id or a reference matching specific ids is not a generic
+		// sweep, so let the normal path handle it.
+		if _, ok := board.pendingConfirmations[trimmed]; ok {
+			return nil
+		}
+		if board.referenceMatchesSpecificConfirmationLocked(trimmed) {
+			return nil
+		}
+		if !confirmationReferenceMeansAll(trimmed) {
+			return nil
+		}
+		if confirmationReferenceIsExplicitAll(trimmed) {
+			return nil
+		}
+	}
+
+	if len(board.pendingConfirmations) <= 1 || !board.pendingConfirmationsAreMixedRiskLocked() {
+		return nil
+	}
+
+	return map[string]any{
+		"ok":                      false,
+		"requires_disambiguation": true,
+		"reason":                  "mixed_risk_pending_set",
+		// prompt is read aloud/relayed to the human. instruction is for the
+		// model: it must ask the human and must NOT self-confirm, because only
+		// live user speech may authorize these actions.
+		"prompt":                     "These pending actions are at different risk levels. Which one should I confirm? Name it, or say \"yes to all\" to confirm every pending action.",
+		"instruction":                "Ask the live user the prompt above and wait for their answer. Do NOT call confirm_action with an aggregate phrase yourself; the bare confirmation was ambiguous and only the live user may resolve a mixed-risk set.",
+		"pending_confirmations":      board.pendingConfirmationViewsLocked(),
+		"pending_confirmation_count": len(board.pendingConfirmations),
+	}
+}
+
+// referenceMatchesSpecificConfirmationLocked reports whether the reference
+// targets specific pending confirmation ids (rather than meaning "all").
+// Callers must hold board.mu.
+func (board *kanbanBoard) referenceMatchesSpecificConfirmationLocked(reference string) bool {
+	normalizedReference := strings.ToLower(strings.TrimSpace(reference))
+	for id := range board.pendingConfirmations {
+		if strings.Contains(normalizedReference, strings.ToLower(id)) {
+			return true
+		}
+	}
+	return false
+}
+
+// pendingConfirmationsAreMixedRiskLocked reports whether the pending set spans
+// more than one distinct risk level. Callers must hold board.mu.
+func (board *kanbanBoard) pendingConfirmationsAreMixedRiskLocked() bool {
+	var firstRisk toolRiskLevel
+	seenFirst := false
+	for _, confirmation := range board.pendingConfirmations {
+		if !seenFirst {
+			firstRisk = confirmation.RiskLevel
+			seenFirst = true
+			continue
+		}
+		if confirmation.RiskLevel != firstRisk {
+			return true
+		}
+	}
+	return false
+}
+
 func (board *kanbanBoard) takeAllPendingConfirmationsLocked() []pendingConfirmation {
 	confirmations := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
 	for id, confirmation := range board.pendingConfirmations {
@@ -485,6 +571,26 @@ func confirmationReferenceMeansAll(reference string) bool {
 		}
 		return hasAggregateWord || hasConfirmationWord
 	}
+}
+
+// confirmationReferenceIsExplicitAll reports whether the reference explicitly
+// asks to confirm the entire pending set ("all", "both", "yes to all",
+// "everything", "the two"), as opposed to a bare affirmation ("yes", "ok").
+// Only an explicit aggregate phrase is allowed to sweep a mixed-risk set.
+func confirmationReferenceIsExplicitAll(reference string) bool {
+	normalized := normalizeConfirmationReference(reference)
+	if normalized == "" {
+		return false
+	}
+	switch normalized {
+	case "all", "all actions", "all pending", "all pending actions",
+		"both", "both actions", "both of them", "the two", "two", "2",
+		"yes both", "yes to both", "yes all", "yes to all", "confirm both",
+		"i confirm both", "everything", "them", "these", "those":
+		return true
+	}
+	words := confirmationReferenceWords(normalized)
+	return words["all"] || words["both"] || words["everything"]
 }
 
 func normalizeConfirmationReference(reference string) string {

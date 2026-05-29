@@ -290,6 +290,64 @@ func TestRiskyVoiceToolsConfirmMultiplePendingActionsWithGenericBothID(t *testin
 	}
 }
 
+func TestGenericYesDoesNotSweepMixedRiskPendingActions(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS rollout","notes":"Contact dev team","tags":["aws"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	// set_eta is medium risk; set_sprint is high risk -> mixed-risk pending set.
+	if _, _, err := board.ApplyToolCallWithMeta("set_eta", `{"card_id":"`+card.ID+`","eta":"2026-05-28"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("set_eta returned error: %v", err)
+	}
+	if _, _, err := board.ApplyToolCallWithMeta("set_sprint", `{"card_id":"`+card.ID+`","sprint":"Sprint 7"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("set_sprint returned error: %v", err)
+	}
+	if pending := board.SnapshotState().PendingConfirmations; len(pending) != 2 {
+		t.Fatalf("pending confirmations = %d, want 2", len(pending))
+	}
+
+	// A bare affirmation must NOT sweep a mixed-risk set; it should ask the host
+	// to disambiguate and leave both actions pending.
+	result, changed, err := board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"yes"}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("bare yes must not mutate a mixed-risk pending set")
+	}
+	if ok, _ := result["requires_disambiguation"].(bool); !ok {
+		t.Fatalf("requires_disambiguation = %v, want true; result = %#v", result["requires_disambiguation"], result)
+	}
+	if got, _ := result["confirmed_count"].(int); got != 0 {
+		t.Fatalf("confirmed_count = %d, want 0", got)
+	}
+	if pending := board.SnapshotState().PendingConfirmations; len(pending) != 2 {
+		t.Fatalf("pending confirmations after bare yes = %d, want 2 (still pending)", len(pending))
+	}
+	updated := findBoardTestCard(t, board.SnapshotState().Cards, card.ID)
+	if updated.DueDate != "" {
+		t.Fatalf("DueDate = %q, want empty (not yet confirmed)", updated.DueDate)
+	}
+
+	// An explicit aggregate phrase is still allowed to sweep the mixed-risk set.
+	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"yes to all"}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("confirm_action (yes to all) returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("explicit 'yes to all' should execute the mixed-risk pending set")
+	}
+	if got, _ := result["confirmed_count"].(int); got != 2 {
+		t.Fatalf("confirmed_count = %d, want 2; result = %#v", got, result)
+	}
+	if pending := board.SnapshotState().PendingConfirmations; len(pending) != 0 {
+		t.Fatalf("pending confirmations after 'yes to all' = %d, want 0", len(pending))
+	}
+}
+
 func TestRiskyVoiceToolsCancelMultiplePendingActionsWithSingleNo(t *testing.T) {
 	board := newKanbanBoard()
 	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS pentest","notes":"Contact dev team","tags":["security"],"status":"Backlog"}`)
