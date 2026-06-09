@@ -105,6 +105,7 @@ func main() {
 	if err := configureAppSecurity(); err != nil {
 		panic(err)
 	}
+	configureALBAuth()
 
 	upgrader.CheckOrigin = makeOriginChecker(*allowedOrigins)
 
@@ -181,6 +182,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/auth/local-login", localLoginHandler)
+	mux.HandleFunc("/auth/logout", albLogoutHandler)
 	mux.HandleFunc("/auth/session", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -217,7 +219,7 @@ func main() {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
 		setNoStoreHeaders(w)
-		wsURL := baseURL
+		wsURL := normalizeWebsocketURL(baseURL)
 		if wsURL == "" {
 			scheme := "ws"
 			if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
@@ -975,6 +977,37 @@ func appendConnectSrcOrigin(connectSrc []string, rawURL string) []string {
 		}
 	}
 	return append(connectSrc, origin)
+}
+
+// normalizeWebsocketURL turns APP_BASE_URL into a browser WebSocket URL.
+// APP_BASE_URL is commonly set to the app's https origin (e.g.
+// https://meet.sc.tt); the browser needs wss://meet.sc.tt/websocket. This maps
+// http→ws and https→wss, and appends /websocket when the value is a bare origin.
+// An empty input returns "" so the caller falls back to the request scheme/host.
+// A value already using ws://wss:// is returned unchanged.
+func normalizeWebsocketURL(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	switch u.Scheme {
+	case "https":
+		u.Scheme = "wss"
+	case "http":
+		u.Scheme = "ws"
+	case "wss", "ws":
+		// already a websocket scheme
+	default:
+		return ""
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/websocket"
+	}
+	return u.String()
 }
 
 func makeOriginChecker(allowed string) func(r *http.Request) bool {

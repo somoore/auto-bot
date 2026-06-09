@@ -30,10 +30,11 @@ type novaSonicApp struct {
 	room      *lksdk.Room
 	closeOnce sync.Once
 
-	brClient    *bedrockruntime.Client
-	modelID     string
-	lastJoinErr string
-	lastJoinAt  time.Time
+	brClient     *bedrockruntime.Client
+	modelID      string
+	lastJoinErr  string
+	lastJoinAt   time.Time
+	joinInFlight bool
 
 	stream   *bedrockruntime.InvokeModelWithBidirectionalStreamEventStream
 	streamMu sync.Mutex
@@ -83,6 +84,42 @@ func newNovaSonicApp(board *kanbanBoard) *novaSonicApp {
 	}
 	app.outputPacer = newNovaSonicOutputPacer(app.writeOutputAudioFrame)
 	return app
+}
+
+// JoinInFlight reports whether a background join is currently running.
+func (app *novaSonicApp) JoinInFlight() bool {
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	return app.joinInFlight
+}
+
+// TriggerJoinAsync starts JoinConferenceRoom in the background if the agent is
+// not already connected or joining. It returns immediately so HTTP handlers
+// (e.g. the voice readiness check behind a 60s ALB idle timeout) never block on
+// the LiveKit connect, which can take tens of seconds with retries. The
+// front-end polls /voice/status to observe completion.
+func (app *novaSonicApp) TriggerJoinAsync() {
+	if app == nil || app.IsConnected() {
+		return
+	}
+	app.mu.Lock()
+	if app.joinInFlight {
+		app.mu.Unlock()
+		return
+	}
+	app.joinInFlight = true
+	app.mu.Unlock()
+
+	go func() {
+		defer func() {
+			app.mu.Lock()
+			app.joinInFlight = false
+			app.mu.Unlock()
+		}()
+		if err := app.JoinConferenceRoom(); err != nil {
+			log.Errorf("Nova Sonic background join failed: %v", err)
+		}
+	}()
 }
 
 func (app *novaSonicApp) JoinConferenceRoom() (err error) {

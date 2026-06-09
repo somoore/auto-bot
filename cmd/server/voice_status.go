@@ -162,11 +162,17 @@ func currentVoiceReadiness(ctx context.Context, ensureAgent bool) voiceReadiness
 	}
 
 	if ensureAgent && !novaSonic.IsConnected() {
-		if err := novaSonic.JoinConferenceRoom(); err != nil {
-			status.LastError = scrubStatusError(err)
-			status.Message = "AWS credentials are valid, but Nova Sonic could not join LiveKit. Check Docker logs for the app and LiveKit containers, then try Join Room again."
-			return status
+		// Kick the LiveKit join off in the background and return immediately.
+		// Joining can take tens of seconds (retries); blocking here would 504
+		// behind the ALB's idle timeout. The front-end polls /voice/status.
+		novaSonic.TriggerJoinAsync()
+		if lastErr := novaSonic.LastJoinError(); lastErr != "" {
+			status.LastError = lastErr
+			status.Message = "Nova Sonic could not join LiveKit on the last attempt; retrying. If this persists, check the app logs."
+		} else {
+			status.Message = "Nova Sonic is connecting to the meeting room…"
 		}
+		return status
 	}
 
 	status.AgentReady = novaSonic.IsConnected()
@@ -216,8 +222,12 @@ func resolveAWSRuntimeConfig(ctx context.Context) (aws.Config, string, error) {
 	region := getEnvDefault("AWS_REGION", "us-east-1")
 
 	cfgOpts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(region)}
-	if strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) == "" {
-		profile := getEnvDefault("AWS_PROFILE", "test_AccountA/AdministratorAccess")
+	// Only pin a shared-config profile when one is explicitly set (local dev).
+	// In AWS (ECS) there are no static keys and no profile — LoadDefaultConfig
+	// then resolves the ECS task role via the default credential chain. Never
+	// hardcode a profile name, or production fails with "shared config profile".
+	if profile := strings.TrimSpace(os.Getenv("AWS_PROFILE")); profile != "" &&
+		strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) == "" {
 		cfgOpts = append(cfgOpts, awsconfig.WithSharedConfigProfile(profile))
 	}
 

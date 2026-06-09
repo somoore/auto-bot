@@ -56,6 +56,21 @@
       }
 
       .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+      .user-menu { position: relative; }
+      .user-avatar { width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer;
+        background: #2f6df6; color: #fff; font-size: 12px; font-weight: 600; letter-spacing: 0.5px;
+        display: flex; align-items: center; justify-content: center; }
+      .user-avatar:hover { filter: brightness(1.1); }
+      .user-menu-dropdown { position: absolute; right: 0; top: 38px; min-width: 200px; z-index: 50;
+        background: #1b1f27; border: 1px solid #303642; border-radius: 8px; padding: 6px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+      .user-menu-dropdown[hidden] { display: none; }
+      .user-menu-info { padding: 8px 10px; border-bottom: 1px solid #303642; margin-bottom: 4px; }
+      .user-menu-name { font-size: 13px; font-weight: 600; color: #e8eaed; }
+      .user-menu-email { font-size: 11px; color: #9aa0aa; margin-top: 2px; word-break: break-all; }
+      .user-menu-logout { display: block; padding: 8px 10px; font-size: 13px; color: #e8eaed;
+        text-decoration: none; border-radius: 5px; }
+      .user-menu-logout:hover { background: #2a2f3a; }
 
       h1 { font-size: 13px; line-height: 1.2; }
       .status { color: var(--text-secondary); font-size: 13px; line-height: 1.45; }
@@ -1576,6 +1591,16 @@
             <span class="meeting-config-dot" aria-hidden="true"></span>
             <span id="meetingConfigLabel" class="meeting-config-label">Meeting Settings</span>
           </button>
+          <div class="user-menu" id="userMenu" style="display:none">
+            <button id="userMenuButton" class="user-avatar" type="button" aria-haspopup="true" aria-expanded="false" title="Account"></button>
+            <div id="userMenuDropdown" class="user-menu-dropdown" role="menu" hidden>
+              <div class="user-menu-info">
+                <div id="userMenuName" class="user-menu-name"></div>
+                <div id="userMenuEmail" class="user-menu-email"></div>
+              </div>
+              <a id="userMenuLogout" class="user-menu-logout" href="/auth/logout" role="menuitem">Sign out</a>
+            </div>
+          </div>
           <div class="layout-group" id="layoutGroup" role="radiogroup" aria-label="Video layout">
             <button class="layout-btn active" data-layout="filmstrip" title="Filmstrip" aria-label="Filmstrip layout">
               <svg viewBox="0 0 18 18"><rect x="1" y="1" width="3.5" height="3" rx="0.5"/><rect x="5.5" y="1" width="3.5" height="3" rx="0.5"/><rect x="10" y="1" width="3.5" height="3" rx="0.5"/><rect x="14.5" y="1" width="2.5" height="3" rx="0.5"/><rect x="1" y="5.5" width="16" height="11.5" rx="1" opacity="0.35"/></svg>
@@ -3886,8 +3911,11 @@
         }
         authSession = await current.json()
         localIdentity = authSession.participant_identity || cleanIdentity(identityInput.value || localIdentity)
-        identityInput.value = localIdentity
+        // Prefer the friendly display name (from the Google profile) for the
+        // Name field; fall back to the sanitized identity.
+        identityInput.value = (authSession.display_name && authSession.display_name.trim()) || localIdentity
         localStorage.setItem('kanban-livekit-identity', localIdentity)
+        renderUserMenu(authSession)
         await refreshVoiceModelOptions(true)
         renderOperatorPanels()
         return authSession
@@ -3931,6 +3959,35 @@
       function cleanIdentity(value) {
         const cleaned = String(value || 'User').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64)
         return cleaned || 'User'
+      }
+
+      // Populate the top-right avatar + dropdown from the authenticated session.
+      // Only shown when the session carries an email (i.e. behind Cognito SSO).
+      function renderUserMenu(session) {
+        const menu = document.getElementById('userMenu')
+        if (!menu) return
+        const email = session && session.email
+        const name = (session && session.display_name) || (session && session.participant_identity) || email || ''
+        if (!email) { menu.style.display = 'none'; return }
+        menu.style.display = ''
+        const initials = String(name).trim().split(/[\s._-]+/).filter(Boolean).slice(0, 2)
+          .map(s => s[0].toUpperCase()).join('') || email[0].toUpperCase()
+        const btn = document.getElementById('userMenuButton')
+        btn.textContent = initials
+        document.getElementById('userMenuName').textContent = name
+        document.getElementById('userMenuEmail').textContent = email
+        const dropdown = document.getElementById('userMenuDropdown')
+        if (!btn.dataset.wired) {
+          btn.dataset.wired = '1'
+          btn.addEventListener('click', () => {
+            const open = !dropdown.hasAttribute('hidden')
+            if (open) { dropdown.setAttribute('hidden', ''); btn.setAttribute('aria-expanded', 'false') }
+            else { dropdown.removeAttribute('hidden'); btn.setAttribute('aria-expanded', 'true') }
+          })
+          document.addEventListener('click', (e) => {
+            if (!menu.contains(e.target)) { dropdown.setAttribute('hidden', ''); btn.setAttribute('aria-expanded', 'false') }
+          })
+        }
       }
 
       function addRemoteParticipantTile(participant) {

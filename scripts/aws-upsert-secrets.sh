@@ -40,37 +40,39 @@ upsert_secret() {
 }
 
 APP_API_TOKEN_VALUE="${APP_API_TOKEN:-$(random_hex 32)}"
-LIVEKIT_API_KEY_VALUE="${LIVEKIT_API_KEY:-lk_$(random_hex 8)}"
-LIVEKIT_API_SECRET_VALUE="${LIVEKIT_API_SECRET:-$(random_hex 32)}"
-LIVEKIT_SIGNAL_PORT="${LIVEKIT_SIGNAL_PORT:-7880}"
-LIVEKIT_TCP_PORT="${LIVEKIT_TCP_PORT:-7881}"
-LIVEKIT_UDP_PORT="${LIVEKIT_UDP_PORT:-7882}"
-FCK_NAT_AMI_ID_VALUE="${FCK_NAT_AMI_ID:-}"
-LIVEKIT_DEPLOYMENT_MODE_VALUE="${LIVEKIT_DEPLOYMENT_MODE:-self-hosted}"
+
+# LiveKit Cloud project credentials. These must match the real LiveKit Cloud
+# project, so we do NOT auto-generate them. Fall back to a clear placeholder if
+# unset (keeping the script non-fatal) and warn the user.
+if [ "${LIVEKIT_API_KEY:-}" = "" ]; then
+  printf 'WARNING: LIVEKIT_API_KEY is unset. Using a placeholder.\n' >&2
+  printf '         Set it to your LiveKit Cloud project API key before deploy.\n' >&2
+  LIVEKIT_API_KEY_VALUE="REPLACE_WITH_LIVEKIT_CLOUD_API_KEY"
+else
+  LIVEKIT_API_KEY_VALUE="$LIVEKIT_API_KEY"
+fi
+
+if [ "${LIVEKIT_API_SECRET:-}" = "" ]; then
+  printf 'WARNING: LIVEKIT_API_SECRET is unset. Using a placeholder.\n' >&2
+  printf '         Set it to your LiveKit Cloud project API secret before deploy.\n' >&2
+  LIVEKIT_API_SECRET_VALUE="REPLACE_WITH_LIVEKIT_CLOUD_API_SECRET"
+else
+  LIVEKIT_API_SECRET_VALUE="$LIVEKIT_API_SECRET"
+fi
+
 LIVEKIT_CLOUD_URL_VALUE="${LIVEKIT_CLOUD_URL:-}"
-LIVEKIT_DOMAIN_NAME_VALUE="${LIVEKIT_DOMAIN_NAME:-}"
-LIVEKIT_TURN_DOMAIN_NAME_VALUE="${LIVEKIT_TURN_DOMAIN_NAME:-}"
+if [ "$LIVEKIT_CLOUD_URL_VALUE" = "" ]; then
+  printf 'WARNING: LIVEKIT_CLOUD_URL is unset. LiveKit Cloud mode requires it\n' >&2
+  printf '         (e.g. wss://your-project.livekit.cloud) before deploy.\n' >&2
+fi
+
 HOSTED_ZONE_ID_VALUE="${HOSTED_ZONE_ID:-}"
 APP_DOMAIN_NAME_VALUE="${APP_DOMAIN_NAME:-}"
 APP_CERTIFICATE_ARN_VALUE="${APP_CERTIFICATE_ARN:-}"
-LIVEKIT_CERTIFICATE_ARN_VALUE="${LIVEKIT_CERTIFICATE_ARN:-}"
-LIVEKIT_TURN_CERTIFICATE_ARN_VALUE="${LIVEKIT_TURN_CERTIFICATE_ARN:-}"
-LIVEKIT_KEYS_VALUE="${LIVEKIT_API_KEY_VALUE}: ${LIVEKIT_API_SECRET_VALUE}"
 
 APP_API_TOKEN_SECRET_ARN="$(upsert_secret "${NAME_PREFIX}/app-api-token" "$APP_API_TOKEN_VALUE")"
 LIVEKIT_API_KEY_SECRET_ARN="$(upsert_secret "${NAME_PREFIX}/livekit-api-key" "$LIVEKIT_API_KEY_VALUE")"
 LIVEKIT_API_SECRET_SECRET_ARN="$(upsert_secret "${NAME_PREFIX}/livekit-api-secret" "$LIVEKIT_API_SECRET_VALUE")"
-LIVEKIT_KEYS_SECRET_ARN="$(upsert_secret "${NAME_PREFIX}/livekit-keys" "$LIVEKIT_KEYS_VALUE")"
-
-LIVEKIT_CONFIG_VALUE="${LIVEKIT_CONFIG:-}"
-if [ "${LIVEKIT_CONFIG_FILE:-}" != "" ]; then
-  LIVEKIT_CONFIG_VALUE="$(cat "$LIVEKIT_CONFIG_FILE")"
-fi
-
-LIVEKIT_CONFIG_SECRET_ARN=""
-if [ "$LIVEKIT_CONFIG_VALUE" != "" ]; then
-  LIVEKIT_CONFIG_SECRET_ARN="$(upsert_secret "${NAME_PREFIX}/livekit-config" "$LIVEKIT_CONFIG_VALUE")"
-fi
 
 OPENAI_API_KEY_SECRET_ARN=""
 if [ "${OPENAI_API_KEY:-}" != "" ]; then
@@ -117,8 +119,6 @@ fi
   write_export APP_API_TOKEN_SECRET_ARN "$APP_API_TOKEN_SECRET_ARN"
   write_export LIVEKIT_API_KEY_SECRET_ARN "$LIVEKIT_API_KEY_SECRET_ARN"
   write_export LIVEKIT_API_SECRET_SECRET_ARN "$LIVEKIT_API_SECRET_SECRET_ARN"
-  write_export LIVEKIT_KEYS_SECRET_ARN "$LIVEKIT_KEYS_SECRET_ARN"
-  write_export LIVEKIT_CONFIG_SECRET_ARN "$LIVEKIT_CONFIG_SECRET_ARN"
   write_export OPENAI_API_KEY_SECRET_ARN "$OPENAI_API_KEY_SECRET_ARN"
   write_export JIRA_API_TOKEN_SECRET_ARN "$JIRA_API_TOKEN_SECRET_ARN"
   write_export JIRA_CONFIG_JSON_SECRET_ARN "$JIRA_CONFIG_JSON_SECRET_ARN"
@@ -131,16 +131,10 @@ fi
   write_export GITHUB_PR_COMMENTS_ENABLED "${GITHUB_PR_COMMENTS_ENABLED:-false}"
   write_export AGENT_PM_MODEL "${AGENT_PM_MODEL:-us.anthropic.claude-haiku-4-5-20251001-v1:0}"
   write_export AGENT_REVIEW_MODEL "${AGENT_REVIEW_MODEL:-us.anthropic.claude-sonnet-4-6}"
-  write_export FCK_NAT_AMI_ID "$FCK_NAT_AMI_ID_VALUE"
-  write_export LIVEKIT_DEPLOYMENT_MODE "$LIVEKIT_DEPLOYMENT_MODE_VALUE"
   write_export LIVEKIT_CLOUD_URL "$LIVEKIT_CLOUD_URL_VALUE"
-  write_export LIVEKIT_DOMAIN_NAME "$LIVEKIT_DOMAIN_NAME_VALUE"
-  write_export LIVEKIT_TURN_DOMAIN_NAME "$LIVEKIT_TURN_DOMAIN_NAME_VALUE"
   write_export HOSTED_ZONE_ID "$HOSTED_ZONE_ID_VALUE"
   write_export APP_DOMAIN_NAME "$APP_DOMAIN_NAME_VALUE"
   write_export APP_CERTIFICATE_ARN "$APP_CERTIFICATE_ARN_VALUE"
-  write_export LIVEKIT_CERTIFICATE_ARN "$LIVEKIT_CERTIFICATE_ARN_VALUE"
-  write_export LIVEKIT_TURN_CERTIFICATE_ARN "$LIVEKIT_TURN_CERTIFICATE_ARN_VALUE"
 } > "$ENV_FILE"
 
 printf 'Wrote Terraform/Terragrunt secret environment exports to %s\n' "$ENV_FILE"

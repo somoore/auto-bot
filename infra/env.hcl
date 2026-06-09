@@ -2,19 +2,33 @@ locals {
   name_prefix = "auto-bot-dev"
 
   inputs = {
-    aws_region               = "us-east-1"
-    name_prefix              = local.name_prefix
-    vpc_cidr                 = "10.20.0.0/16"
-    voice_provider           = "nova-sonic"
-    app_desired_count        = 1
-    livekit_desired_count    = 2
-    livekit_deployment_mode  = "self-hosted"
-    allowed_ingress_cidrs    = ["0.0.0.0/0"]
-    livekit_udp_port         = 7882
-    livekit_turn_enabled     = true
-    livekit_turn_udp_enabled = true
-    livekit_turn_tls_enabled = false
-    log_retention_days       = 14
-    bedrock_model_arns       = ["arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-sonic-v1:0"]
+    aws_region  = "us-east-1"
+    name_prefix = local.name_prefix
+
+    # Dedicated auto-bot VPC (created by the module) — public subnets only, no
+    # NAT. Kept separate from any other project's VPC to avoid coupling/drift.
+    vpc_cidr = "10.40.0.0/16"
+
+    voice_provider = "nova-sonic"
+
+    # Scale-to-zero by default: a fresh apply creates the stack with no running
+    # task (≈$0 compute idle). scripts/aws-app.sh up scales to 1 on demand.
+    app_desired_count = 0
+
+    allowed_ingress_cidrs = ["0.0.0.0/0"]
+
+    log_retention_days = 14
+
+    bedrock_model_arns = ["arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-sonic-v1:0"]
+
+    # Edge auth: Cognito Hosted UI + Google federation in front of the app.
+    auth_domain_name      = "meet.sc.tt"
+    cognito_domain_prefix = "auto-bot-dev-meet"
+    # Emails granted the meeting host role after login; everyone else is a participant.
+    host_emails = "scott@moore.cloud,somoore2025@gmail.com"
+    # Access gate: only these emails/domains may use the app after Google login.
+    # Authenticated users outside the allowlist are denied by the app.
+    allowed_emails        = "scott@moore.cloud,somoore2025@gmail.com"
+    allowed_email_domains = "moore.cloud"
   }
 }

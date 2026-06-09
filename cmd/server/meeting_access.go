@@ -444,6 +444,16 @@ func (m *meetingAccessManager) authorize(ctx requestAuthContext) (requestAuthCon
 	ctx.MeetingID = m.meetingID
 	ctx.MeetingType = m.meetingType
 
+	// Under ALB OIDC auth, identity is sessionless and the role is already
+	// resolved from the email allowlist (alb_oidc.go). Trust that role rather
+	// than promoting every sessionless request to host.
+	if albAuthEnabled && ctx.SessionID == "" {
+		if ctx.Role == "" {
+			ctx.Role = meetingRoleParticipant
+		}
+		return ctx, true
+	}
+
 	if appAuthMode == "disabled" || ctx.SessionID == "" {
 		ctx.Role = meetingRoleHost
 		return ctx, true
@@ -458,6 +468,11 @@ func (m *meetingAccessManager) authorize(ctx requestAuthContext) (requestAuthCon
 }
 
 func (m *meetingAccessManager) isHost(ctx requestAuthContext) bool {
+	// Under ALB OIDC auth the request is sessionless; the host decision rests
+	// solely on the role resolved from the email allowlist.
+	if albAuthEnabled && ctx.SessionID == "" {
+		return ctx.Role == meetingRoleHost
+	}
 	if appAuthMode == "disabled" || ctx.SessionID == "" || ctx.Role == meetingRoleHost {
 		return true
 	}

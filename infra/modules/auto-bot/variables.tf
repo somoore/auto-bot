@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "AWS region for ECS, load balancers, CloudWatch, and Bedrock runtime access."
+  description = "AWS region for ECS, load balancer, CloudWatch, and Bedrock runtime access."
   type        = string
   default     = "us-east-1"
 }
@@ -10,19 +10,24 @@ variable "name_prefix" {
 }
 
 variable "vpc_cidr" {
-  description = "Canonical VPC CIDR block for the requested 10.20.21.0/16 range. AWS canonicalizes that non-network address to 10.20.0.0/16."
+  description = "CIDR block for the dedicated auto-bot VPC this module creates. Two /24 public subnets are carved from it across two AZs."
   type        = string
-  default     = "10.20.0.0/16"
+  default     = "10.40.0.0/16"
+
+  validation {
+    condition     = can(cidrhost(var.vpc_cidr, 0))
+    error_message = "vpc_cidr must be a valid IPv4 CIDR block such as 10.40.0.0/16."
+  }
 }
 
 variable "allowed_ingress_cidrs" {
-  description = "CIDR blocks allowed to reach the public app and LiveKit endpoints."
+  description = "CIDR blocks allowed to reach the public app ALB."
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
 
 variable "app_image" {
-  description = "Fully qualified container image URI for the Go app. Leave empty only during the initial ECR bootstrap; full deploys should pass an immutable tag or digest."
+  description = "Fully qualified container image URI for the Go app. Leave empty only during the initial ECR bootstrap; deploys that scale the service above 0 must pass an immutable tag or digest."
   type        = string
   default     = ""
 
@@ -33,9 +38,9 @@ variable "app_image" {
 }
 
 variable "app_desired_count" {
-  description = "Number of app tasks to run."
+  description = "Number of app tasks to run. Default 0 for scale-to-zero; the fast-iteration helper scales 0<->1."
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "app_cpu" {
@@ -74,7 +79,7 @@ variable "openai_realtime_transcription_model" {
 }
 
 variable "openai_realtime_translation_model" {
-  description = "OpenAI dedicated live-translation model profile. This is registered for capability discovery but is not granted Jira/GitHub tools."
+  description = "OpenAI dedicated live-translation model profile. Registered for capability discovery but not granted Jira/GitHub tools."
   type        = string
   default     = "gpt-realtime-translate"
 }
@@ -121,126 +126,18 @@ variable "app_board_id" {
   default     = "default"
 }
 
-variable "livekit_image" {
-  description = "LiveKit server container image."
-  type        = string
-  default     = "livekit/livekit-server:v1.9.1@sha256:c039a1bfa154c8479ac369c380665638e92a7e9531e69664549c0c0d3eb65e63"
-
-  validation {
-    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.livekit_image)) && !can(regex("(^|:)latest($|@)", var.livekit_image))
-    error_message = "livekit_image must be pinned to a sha256 digest and must not use the latest tag."
-  }
-}
-
-variable "livekit_deployment_mode" {
-  description = "LiveKit media plane mode: self-hosted deploys LiveKit in this stack; cloud uses LiveKit Cloud with the provided URL and secrets."
-  type        = string
-  default     = "self-hosted"
-
-  validation {
-    condition     = contains(["self-hosted", "cloud"], var.livekit_deployment_mode)
-    error_message = "livekit_deployment_mode must be self-hosted or cloud."
-  }
-}
-
 variable "livekit_cloud_url" {
-  description = "LiveKit Cloud WebSocket URL, for example wss://project.livekit.cloud. Required when livekit_deployment_mode is cloud."
+  description = "LiveKit Cloud WebSocket URL, for example wss://project.livekit.cloud. Required: this module always uses LiveKit Cloud for the media plane."
   type        = string
-  default     = ""
-}
 
-variable "livekit_desired_count" {
-  description = "Number of self-hosted LiveKit tasks. Redis-backed distributed mode supports multiple tasks; a single room still fits on one node."
-  type        = number
-  default     = 2
-}
-
-variable "livekit_cpu" {
-  description = "Fargate CPU units for the LiveKit task."
-  type        = number
-  default     = 1024
-}
-
-variable "livekit_memory" {
-  description = "Fargate memory MiB for the LiveKit task."
-  type        = number
-  default     = 2048
-}
-
-variable "livekit_signal_port" {
-  description = "LiveKit HTTP/WebSocket signaling port."
-  type        = number
-  default     = 7880
-}
-
-variable "livekit_public_signal_port" {
-  description = "Public NLB listener port for LiveKit signaling. Use 0 to default to 443 when TLS is enabled, otherwise livekit_signal_port."
-  type        = number
-  default     = 0
-}
-
-variable "livekit_tcp_port" {
-  description = "LiveKit TCP fallback port for RTC."
-  type        = number
-  default     = 7881
-}
-
-variable "livekit_udp_port" {
-  description = "Muxed UDP RTC media port exposed by the LiveKit task."
-  type        = number
-  default     = 7882
-}
-
-variable "livekit_prometheus_port" {
-  description = "Private LiveKit Prometheus metrics port exposed inside the task."
-  type        = number
-  default     = 6789
-}
-
-variable "livekit_turn_enabled" {
-  description = "Enable embedded LiveKit TURN for self-hosted deployments."
-  type        = bool
-  default     = true
-}
-
-variable "livekit_turn_udp_enabled" {
-  description = "Expose embedded TURN over UDP through the LiveKit NLB."
-  type        = bool
-  default     = true
-}
-
-variable "livekit_turn_tls_enabled" {
-  description = "Expose embedded TURN/TLS through the LiveKit NLB. Requires livekit_turn_certificate_arn and livekit_turn_domain_name."
-  type        = bool
-  default     = false
-}
-
-variable "livekit_turn_udp_port" {
-  description = "Public and target UDP port for embedded TURN/UDP."
-  type        = number
-  default     = 443
-}
-
-variable "livekit_turn_tls_port" {
-  description = "Public and target TCP/TLS port for embedded TURN/TLS."
-  type        = number
-  default     = 5349
-}
-
-variable "livekit_turn_domain_name" {
-  description = "DNS name advertised for embedded TURN, such as turn.example.com."
-  type        = string
-  default     = ""
-}
-
-variable "livekit_url_override" {
-  description = "Optional browser-facing LiveKit URL, such as wss://livekit.example.com. Defaults to ws://<nlb-dns>:7880."
-  type        = string
-  default     = ""
+  validation {
+    condition     = can(regex("^wss?://", var.livekit_cloud_url))
+    error_message = "livekit_cloud_url must be a ws:// or wss:// URL."
+  }
 }
 
 variable "hosted_zone_id" {
-  description = "Optional Route53 hosted zone ID for app, LiveKit, and TURN alias records."
+  description = "Optional Route53 hosted zone ID for an app alias record."
   type        = string
   default     = ""
 }
@@ -251,28 +148,85 @@ variable "app_domain_name" {
   default     = ""
 }
 
-variable "livekit_domain_name" {
-  description = "Optional DNS name for the self-hosted LiveKit NLB, such as livekit.example.com."
-  type        = string
-  default     = ""
-}
-
 variable "app_certificate_arn" {
-  description = "Optional ACM certificate ARN for HTTPS on the app ALB."
+  description = "Optional pre-existing ACM certificate ARN for HTTPS on the app ALB. Leave empty when using auth_domain_name (the module then provisions its own cert). When both are empty the ALB serves plain HTTP (dev)."
   type        = string
   default     = ""
 }
 
-variable "livekit_certificate_arn" {
-  description = "Optional ACM certificate ARN for TLS on the LiveKit NLB."
+# --- Edge authentication (ALB + Cognito + Google) ---
+
+variable "auth_domain_name" {
+  description = "Public hostname for the app behind Cognito auth, e.g. meet.sc.tt. When set, the module provisions an ACM cert, a Cognito user pool with Google federation, and an ALB authenticate-cognito HTTPS listener. Empty disables edge auth (plain HTTP)."
   type        = string
   default     = ""
 }
 
-variable "livekit_turn_certificate_arn" {
-  description = "Optional ACM certificate ARN for TURN/TLS on the LiveKit NLB. The certificate must match livekit_turn_domain_name."
+variable "cognito_domain_prefix" {
+  description = "Prefix for the Cognito Hosted UI domain (<prefix>.auth.<region>.amazoncognito.com). Must be globally unique within the region."
   type        = string
   default     = ""
+}
+
+variable "google_client_id" {
+  description = "Google OAuth 2.0 client ID for Cognito Google federation. Empty disables the Google IdP (only matters when auth_domain_name is set)."
+  type        = string
+  default     = ""
+}
+
+variable "google_client_secret" {
+  description = "Google OAuth 2.0 client secret for Cognito Google federation. Sourced from Secrets Manager/env, never committed."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "host_emails" {
+  description = "Comma-separated allowlist of email addresses granted the meeting host role after Cognito login. Everyone else who logs in is a participant."
+  type        = string
+  default     = ""
+}
+
+variable "allowed_emails" {
+  description = "Comma-separated allowlist of exact email addresses permitted to access the app after Cognito login. Combined with allowed_email_domains. When both are empty, any authenticated Google user is allowed."
+  type        = string
+  default     = ""
+}
+
+variable "allowed_email_domains" {
+  description = "Comma-separated allowlist of email domains (e.g. moore.cloud) permitted to access the app after Cognito login. Authenticated users outside the allowlist are denied by the app."
+  type        = string
+  default     = ""
+}
+
+variable "auth_bypass_path_patterns" {
+  description = "ALB path patterns exempted from Cognito auth (machine callbacks that cannot do an OIDC browser login, e.g. webhooks). They rely on in-app signature/secret validation."
+  type        = list(string)
+  default     = ["/jira/webhook", "/healthz"]
+}
+
+variable "verbose_logging" {
+  description = "Enable pion Info-level logging (PION_LOG_INFO=all) for debugging the voice agent lifecycle. Turn off in steady state."
+  type        = bool
+  default     = false
+}
+
+variable "enable_alb_access_logs" {
+  description = "Enable ALB access logs to an S3 bucket for debugging authenticate-cognito failures (exposes the error_reason field). Turn off when not debugging."
+  type        = bool
+  default     = false
+}
+
+variable "acm_wait_for_validation" {
+  description = "When true, terraform waits for the ACM DNS validation record to be live before completing. Set false on the first apply (before the CNAME is added to DNS), then true once the record is in place."
+  type        = bool
+  default     = false
+}
+
+variable "waf_rate_limit" {
+  description = "Per-IP five-minute request rate limit enforced by AWS WAF on the app ALB."
+  type        = number
+  default     = 2000
 }
 
 variable "app_api_token_secret_arn" {
@@ -286,7 +240,7 @@ variable "app_api_token_secret_arn" {
 }
 
 variable "livekit_api_key_secret_arn" {
-  description = "Secrets Manager ARN containing LIVEKIT_API_KEY."
+  description = "Secrets Manager ARN containing the LiveKit Cloud LIVEKIT_API_KEY."
   type        = string
 
   validation {
@@ -296,61 +250,13 @@ variable "livekit_api_key_secret_arn" {
 }
 
 variable "livekit_api_secret_secret_arn" {
-  description = "Secrets Manager ARN containing LIVEKIT_API_SECRET."
+  description = "Secrets Manager ARN containing the LiveKit Cloud LIVEKIT_API_SECRET."
   type        = string
 
   validation {
     condition     = var.livekit_api_secret_secret_arn != ""
     error_message = "livekit_api_secret_secret_arn is required."
   }
-}
-
-variable "livekit_config_secret_arn" {
-  description = "Deprecated optional Secrets Manager ARN for a custom LIVEKIT_CONFIG override. The module now builds non-secret LiveKit config from Terraform inputs."
-  type        = string
-  default     = ""
-}
-
-variable "livekit_keys_secret_arn" {
-  description = "Secrets Manager ARN containing LIVEKIT_KEYS in '<api-key>: <api-secret>' format for self-hosted LiveKit."
-  type        = string
-  default     = ""
-}
-
-variable "livekit_redis_engine_version" {
-  description = "Pinned ElastiCache Redis engine version for LiveKit distributed routing."
-  type        = string
-  default     = "7.1"
-}
-
-variable "livekit_redis_node_type" {
-  description = "ElastiCache node type for LiveKit Redis."
-  type        = string
-  default     = "cache.t4g.micro"
-}
-
-variable "livekit_redis_node_count" {
-  description = "Number of ElastiCache nodes for LiveKit Redis. Use at least 2 for automatic failover."
-  type        = number
-  default     = 2
-}
-
-variable "fck_nat_ami_id" {
-  description = "Pinned fck-nat AMI ID for us-east-1. Required for full deploys so the NAT instance never follows a latest AMI lookup."
-  type        = string
-  default     = ""
-}
-
-variable "fck_nat_instance_type" {
-  description = "Instance type for the fck-nat NAT instance."
-  type        = string
-  default     = "t4g.micro"
-}
-
-variable "waf_rate_limit" {
-  description = "Per-IP five-minute request rate limit enforced by AWS WAF on the app ALB."
-  type        = number
-  default     = 2000
 }
 
 variable "openai_api_key_secret_arn" {

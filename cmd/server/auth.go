@@ -36,6 +36,8 @@ var (
 type requestAuthContext struct {
 	SessionID   string `json:"-"`
 	Identity    string `json:"participant_identity"`
+	DisplayName string `json:"display_name,omitempty"`
+	Email       string `json:"email,omitempty"`
 	RoomID      string `json:"room_id"`
 	BoardID     string `json:"board_id"`
 	AuthMode    string `json:"auth_mode,omitempty"`
@@ -181,6 +183,15 @@ func authorizeBaseRequest(r *http.Request) (requestAuthContext, bool) {
 	if appAuthMode == "disabled" {
 		ctx := defaultAuthContext("local-user")
 		return ctx, requestMatchesAuthorizedRoomBoard(r, ctx)
+	}
+
+	// ALB-level Cognito auth: when enabled, identity comes from the ALB's
+	// signature-verified X-Amzn-Oidc-Data header (see alb_oidc.go). This is
+	// resolved per-request and stateless — no session cookie is minted.
+	if albAuthEnabled {
+		if ctx, ok := albOIDCContext(r); ok {
+			return ctx, requestMatchesAuthorizedRoomBoard(r, ctx)
+		}
 	}
 
 	if bearerToken(r) != "" && secureTokenEqual(bearerToken(r), apiToken) {
@@ -348,6 +359,12 @@ func writeSessionResponse(w http.ResponseWriter, ctx requestAuthContext, expires
 		"participant_identity": ctx.Identity,
 		"room_id":              ctx.RoomID,
 		"board_id":             ctx.BoardID,
+	}
+	if ctx.DisplayName != "" {
+		response["display_name"] = ctx.DisplayName
+	}
+	if ctx.Email != "" {
+		response["email"] = ctx.Email
 	}
 	if ctx.Role != "" {
 		response["role"] = ctx.Role
