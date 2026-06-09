@@ -181,24 +181,6 @@ variable "google_client_secret" {
   sensitive   = true
 }
 
-variable "microsoft_client_id" {
-  description = "Azure AD app (client) ID for Cognito Microsoft federation. Empty disables the Microsoft IdP."
-  type        = string
-  default     = ""
-}
-
-variable "microsoft_client_secret" {
-  description = "Azure AD client secret for Cognito Microsoft federation. Sourced from env, never committed."
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "microsoft_tenant_id" {
-  description = "Azure AD tenant ID (or 'common'/'organizations') for the OIDC issuer. Use a specific tenant GUID to restrict to your org."
-  type        = string
-  default     = "common"
-}
 
 variable "allowed_emails" {
   description = "Comma-separated allowlist of exact email addresses permitted to access the app after Cognito login. Combined with allowed_email_domains. When both are empty, any authenticated Google user is allowed."

@@ -21,7 +21,8 @@ locals {
 
     bedrock_model_arns = ["arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-sonic-v1:0"]
 
-    # Edge auth: Cognito Hosted UI + Google/Microsoft federation in front of the app.
+    # Edge auth: Cognito Hosted UI — Google federation + admin-created native
+    # accounts — in front of the app.
     auth_domain_name      = "meet.sc.tt"
     cognito_domain_prefix = "auto-bot-dev-meet"
     # Access gate: only these emails/domains may use the app after login. Any

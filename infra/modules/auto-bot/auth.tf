@@ -41,8 +41,10 @@ resource "aws_cognito_user_pool" "this" {
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
 
+  # Admin-created native users only — no public self-signup. Operators create
+  # accounts in the Cognito console; the email allowlist still gates app access.
   admin_create_user_config {
-    allow_admin_create_user_only = false
+    allow_admin_create_user_only = true
   }
 
   account_recovery_setting {
@@ -85,33 +87,6 @@ resource "aws_cognito_identity_provider" "google" {
   }
 }
 
-# Microsoft (Azure AD) federation via a generic OIDC provider against the Azure
-# AD v2 endpoints. provider_name "Microsoft" is referenced by the client below.
-# Created only when client id/secret + tenant are provided.
-resource "aws_cognito_identity_provider" "microsoft" {
-  count = local.auth_enabled && var.microsoft_client_id != "" ? 1 : 0
-
-  user_pool_id  = aws_cognito_user_pool.this[0].id
-  provider_name = "Microsoft"
-  provider_type = "OIDC"
-
-  provider_details = {
-    client_id                 = var.microsoft_client_id
-    client_secret             = var.microsoft_client_secret
-    authorize_scopes          = "openid email profile"
-    oidc_issuer               = "https://login.microsoftonline.com/${var.microsoft_tenant_id}/v2.0"
-    attributes_request_method = "GET"
-    # Azure AD v2 publishes a discovery document at the issuer; Cognito reads the
-    # authorize/token/jwks/userinfo endpoints from it.
-  }
-
-  attribute_mapping = {
-    email    = "email"
-    username = "sub"
-    name     = "name"
-  }
-}
-
 resource "aws_cognito_user_pool_client" "this" {
   count = local.auth_enabled ? 1 : 0
 
@@ -123,13 +98,11 @@ resource "aws_cognito_user_pool_client" "this" {
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
 
-  # Google + Microsoft when configured. COGNITO is always included so the client
-  # never has an empty provider list (Cognito rejects that) and stays valid
-  # during the bootstrap window before federated credentials are applied. The
-  # app's email allowlist gates access regardless of provider.
+  # Google federation + COGNITO native (admin-created email/password accounts).
+  # The Hosted UI offers both; the app's email allowlist gates access regardless
+  # of provider.
   supported_identity_providers = compact([
     var.google_client_id != "" ? "Google" : "",
-    var.microsoft_client_id != "" ? "Microsoft" : "",
     "COGNITO",
   ])
 
@@ -137,8 +110,5 @@ resource "aws_cognito_user_pool_client" "this" {
   callback_urls = ["https://${var.auth_domain_name}/oauth2/idpresponse"]
   logout_urls   = ["https://${var.auth_domain_name}/"]
 
-  depends_on = [
-    aws_cognito_identity_provider.google,
-    aws_cognito_identity_provider.microsoft,
-  ]
+  depends_on = [aws_cognito_identity_provider.google]
 }
