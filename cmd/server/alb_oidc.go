@@ -52,10 +52,7 @@ const albOIDCDataHeader = "X-Amzn-Oidc-Data"
 var (
 	// albAuthEnabled is set from APP_ALB_OIDC_AUTH=1 (production behind the ALB).
 	albAuthEnabled bool
-	// hostEmails is the allowlist of email claims granted the host role. Everyone
-	// else who authenticates (and is allowed in) becomes a participant.
-	hostEmails = map[string]struct{}{}
-	// allowedEmails / allowedDomains gate ACCESS: an authenticated Google user
+	// allowedEmails / allowedDomains gate ACCESS: an authenticated federated user
 	// whose email is not allowed is denied by the app even though the ALB let
 	// them log in. When BOTH are empty, access is open to any authenticated user
 	// (set at least one for a non-public deployment).
@@ -78,7 +75,6 @@ func configureALBAuth() error {
 	albAuthEnabled = strings.TrimSpace(os.Getenv("APP_ALB_OIDC_AUTH")) == "1"
 	cognitoLogoutURL = strings.TrimSpace(os.Getenv("COGNITO_LOGOUT_URL"))
 	expectedSignerARN = strings.TrimSpace(os.Getenv("APP_ALB_ARN"))
-	hostEmails = parseEmailSet(os.Getenv("HOST_EMAILS"))
 	allowedEmails = parseEmailSet(os.Getenv("ALLOWED_EMAILS"))
 	allowedDomains = map[string]struct{}{}
 	for _, raw := range strings.Split(os.Getenv("ALLOWED_EMAIL_DOMAINS"), ",") {
@@ -173,7 +169,8 @@ type albOIDCClaims struct {
 
 // albOIDCContext resolves an authenticated request from the ALB OIDC headers.
 // Returns (ctx, true) only when a valid, signature-verified X-Amzn-Oidc-Data is
-// present. role is host when the verified email is in HOST_EMAILS.
+// present. Role is left unset here — it is decided by meeting action (the
+// /meeting/setup creator becomes host).
 func albOIDCContext(r *http.Request) (requestAuthContext, bool) {
 	if !albAuthEnabled {
 		return requestAuthContext{}, false
@@ -197,13 +194,12 @@ func albOIDCContext(r *http.Request) (requestAuthContext, bool) {
 	}
 
 	identity := identityFromEmail(email, claims)
-	role := meetingRoleParticipant
-	if _, ok := hostEmails[email]; ok && email != "" {
-		role = meetingRoleHost
-	}
 
+	// Role is NOT pre-assigned by identity. Any allowlisted user may host or
+	// join; whoever creates the meeting (/meeting/setup) becomes its host and is
+	// recorded as such by the meeting-access layer. The email allowlist above is
+	// the access gate; role is a runtime choice.
 	ctx := defaultAuthContext(identity)
-	ctx.Role = role
 	ctx.Email = email
 	ctx.DisplayName = strings.TrimSpace(claims.Name)
 	if ctx.DisplayName == "" {

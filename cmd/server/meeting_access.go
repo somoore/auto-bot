@@ -247,9 +247,11 @@ func leaveMeetingHandler(w http.ResponseWriter, r *http.Request) {
 	if authCtx.SessionID != "" {
 		result, err = meetingAccess.leaveSession(authCtx.SessionID)
 	} else {
-		// Stateless ALB OIDC caller: key the leave on the authenticated identity
-		// and host role (resolved from the HOST_EMAILS allowlist), since there is
-		// no session cookie to match.
+		// Stateless ALB OIDC caller: key the leave on the authenticated identity.
+		// leaveByIdentity treats the caller as host when their identity matches
+		// the meeting's recorded hostIdentity (the meeting creator), so host-vs-
+		// participant leave semantics work without a session cookie or a
+		// pre-assigned role.
 		result, err = meetingAccess.leaveByIdentity(authCtx.Identity, authCtx.Role == meetingRoleHost)
 	}
 	if err != nil {
@@ -478,11 +480,14 @@ func (m *meetingAccessManager) authorize(ctx requestAuthContext) (requestAuthCon
 	ctx.MeetingID = m.meetingID
 	ctx.MeetingType = m.meetingType
 
-	// Under ALB OIDC auth, identity is sessionless and the role is already
-	// resolved from the email allowlist (alb_oidc.go). Trust that role rather
-	// than promoting every sessionless request to host.
+	// Under ALB OIDC auth the request is sessionless: role is NOT carried on the
+	// context, so derive it from whether this identity is the meeting's recorded
+	// host (the creator). Everyone else is a participant. Identity is server-
+	// minted (post-C1), so this is safe.
 	if albAuthEnabled && ctx.SessionID == "" {
-		if ctx.Role == "" {
+		if identityEqual(ctx.Identity, m.hostIdentity) {
+			ctx.Role = meetingRoleHost
+		} else {
 			ctx.Role = meetingRoleParticipant
 		}
 		return ctx, true
@@ -502,10 +507,12 @@ func (m *meetingAccessManager) authorize(ctx requestAuthContext) (requestAuthCon
 }
 
 func (m *meetingAccessManager) isHost(ctx requestAuthContext) bool {
-	// Under ALB OIDC auth the request is sessionless; the host decision rests
-	// solely on the role resolved from the email allowlist.
+	// Under ALB OIDC auth the request is sessionless; host is the identity that
+	// created the meeting (recorded as m.hostIdentity), not a pre-assigned role.
 	if albAuthEnabled && ctx.SessionID == "" {
-		return ctx.Role == meetingRoleHost
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.active && identityEqual(ctx.Identity, m.hostIdentity)
 	}
 	if appAuthMode == "disabled" || ctx.SessionID == "" || ctx.Role == meetingRoleHost {
 		return true

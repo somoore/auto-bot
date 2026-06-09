@@ -1166,6 +1166,173 @@
         min-height: auto;
       }
 
+      /* ── Post-login meeting-choice gate ── */
+      .workspace-area.meeting-choice-blurred {
+        filter: blur(4px);
+        pointer-events: none;
+        user-select: none;
+      }
+
+      .meeting-choice-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 1390;
+        background: rgba(0, 0, 0, 0.55);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+      }
+
+      .meeting-choice-scrim.visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .meeting-choice-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 1400;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+
+      .meeting-choice-modal.visible {
+        display: flex;
+      }
+
+      .meeting-choice-card {
+        width: min(640px, calc(100vw - 32px));
+        max-height: calc(100dvh - 48px);
+        overflow-y: auto;
+        background: #0f1216;
+        border: 1px solid var(--border-strong);
+        border-radius: 14px;
+        box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
+        padding: 24px;
+        display: grid;
+        gap: 18px;
+        outline: none;
+      }
+
+      .meeting-choice-card .operator-eyebrow {
+        margin-bottom: 4px;
+      }
+
+      .meeting-choice-title {
+        margin: 0;
+        font-size: 20px;
+        line-height: 1.25;
+      }
+
+      .meeting-choice-subtitle {
+        margin: 4px 0 0;
+        font-size: 13px;
+        color: var(--text-secondary, rgba(255, 255, 255, 0.66));
+      }
+
+      .meeting-choice-options {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      @media (max-width: 560px) {
+        .meeting-choice-options { grid-template-columns: 1fr; }
+      }
+
+      .meeting-choice-option {
+        display: grid;
+        gap: 10px;
+        align-content: start;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #14181d;
+        padding: 16px;
+      }
+
+      .meeting-choice-option.deemphasized {
+        opacity: 0.55;
+      }
+
+      .meeting-choice-option h3 {
+        margin: 0;
+        font-size: 15px;
+      }
+
+      .meeting-choice-option p {
+        margin: 0;
+        font-size: 12px;
+        color: var(--text-secondary, rgba(255, 255, 255, 0.6));
+      }
+
+      .meeting-choice-option .field {
+        margin: 0;
+      }
+
+      .meeting-choice-option button.primary {
+        width: 100%;
+      }
+
+      .meeting-choice-active {
+        display: grid;
+        gap: 12px;
+        border: 1px solid var(--accent-soft);
+        border-radius: 10px;
+        background: #14181d;
+        padding: 18px;
+        text-align: center;
+      }
+
+      .meeting-choice-code-reveal {
+        display: grid;
+        gap: 12px;
+      }
+
+      .meeting-choice-code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 26px;
+        letter-spacing: 3px;
+        text-align: center;
+        padding: 14px;
+        border-radius: 10px;
+        background: #14181d;
+        border: 1px solid var(--border-strong);
+      }
+
+      .meeting-choice-footer {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .meeting-choice-dismiss {
+        background: none;
+        border: none;
+        color: var(--text-secondary, rgba(255, 255, 255, 0.66));
+        font-size: 13px;
+        cursor: pointer;
+        text-decoration: underline;
+        padding: 4px;
+      }
+
+      .meeting-choice-dismiss:hover { color: var(--text-primary, #fff); }
+
+      .meeting-choice-error {
+        color: #f28b82;
+        font-size: 12px;
+        min-height: 0;
+      }
+
+      .meeting-choice-copied {
+        color: #81c995;
+        font-size: 12px;
+        min-height: 0;
+        text-align: center;
+      }
+
       .operator-section {
         display: grid;
         gap: 10px;
@@ -1878,6 +2045,57 @@
       </footer>
     </main>
 
+    <div id="meetingChoiceScrim" class="meeting-choice-scrim"></div>
+    <div id="meetingChoiceModal" class="meeting-choice-modal" role="dialog" aria-modal="true" aria-labelledby="meetingChoiceTitle" aria-hidden="true">
+      <div id="meetingChoiceCard" class="meeting-choice-card" tabindex="-1">
+        <div>
+          <div class="operator-eyebrow">Welcome back</div>
+          <h2 id="meetingChoiceTitle" class="meeting-choice-title">Start or join a meeting</h2>
+          <p id="meetingChoiceSubtitle" class="meeting-choice-subtitle">Choose how you want to use the board.</p>
+        </div>
+
+        <!-- Default Host | Join choice -->
+        <div id="meetingChoiceOptions" class="meeting-choice-options">
+          <div id="meetingChoiceHostOption" class="meeting-choice-option">
+            <h3>Host a meeting</h3>
+            <p>Create a meeting code participants can use to join.</p>
+            <button id="meetingChoiceHostBtn" class="primary" type="button">Host a meeting</button>
+          </div>
+          <div id="meetingChoiceJoinOption" class="meeting-choice-option">
+            <h3 id="meetingChoiceJoinHeading">Join a meeting</h3>
+            <p id="meetingChoiceJoinHelp">Enter the code shared by the host.</p>
+            <label id="meetingChoiceCodeField" class="field">
+              Meeting code
+              <input id="meetingChoiceCodeInput" autocomplete="off" inputmode="text" maxlength="24" placeholder="ABC-123">
+            </label>
+            <button id="meetingChoiceJoinBtn" class="primary" type="button">Join</button>
+          </div>
+        </div>
+
+        <!-- Active-meeting awareness panel (host resume / participant join) -->
+        <div id="meetingChoiceActive" class="meeting-choice-active" style="display:none">
+          <p id="meetingChoiceActiveTitle" class="meeting-choice-title"></p>
+          <p id="meetingChoiceActiveSubtitle" class="meeting-choice-subtitle"></p>
+          <button id="meetingChoiceActiveBtn" class="primary" type="button"></button>
+        </div>
+
+        <!-- Host code reveal sub-state -->
+        <div id="meetingChoiceCodeReveal" class="meeting-choice-code-reveal" style="display:none">
+          <p class="meeting-choice-subtitle">Share this code with participants:</p>
+          <div id="meetingChoiceCodeValue" class="meeting-choice-code">------</div>
+          <button id="meetingChoiceCopyBtn" class="primary" type="button">Copy code</button>
+          <div id="meetingChoiceCopied" class="meeting-choice-copied" aria-live="polite"></div>
+          <button id="meetingChoiceContinueBtn" class="compact-btn" type="button">Continue to board</button>
+        </div>
+
+        <div id="meetingChoiceError" class="meeting-choice-error" aria-live="polite"></div>
+
+        <div class="meeting-choice-footer">
+          <button id="meetingChoiceViewBtn" class="meeting-choice-dismiss" type="button">Just view the board</button>
+        </div>
+      </div>
+    </div>
+
     <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
     <div id="commentPreviewRegion" class="comment-preview-region" aria-live="polite" aria-atomic="true"></div>
     <div id="cardDetailRegion" class="card-detail-region"></div>
@@ -1945,6 +2163,28 @@
       const copyJoinCodeButton = document.getElementById('copyJoinCode')
       const copyRecapButton = document.getElementById('copyRecap')
       const joinCodeInput = document.getElementById('joinCodeInput')
+      const meetingChoiceScrim = document.getElementById('meetingChoiceScrim')
+      const meetingChoiceModal = document.getElementById('meetingChoiceModal')
+      const meetingChoiceCard = document.getElementById('meetingChoiceCard')
+      const meetingChoiceTitle = document.getElementById('meetingChoiceTitle')
+      const meetingChoiceSubtitle = document.getElementById('meetingChoiceSubtitle')
+      const meetingChoiceOptions = document.getElementById('meetingChoiceOptions')
+      const meetingChoiceHostOption = document.getElementById('meetingChoiceHostOption')
+      const meetingChoiceJoinOption = document.getElementById('meetingChoiceJoinOption')
+      const meetingChoiceHostBtn = document.getElementById('meetingChoiceHostBtn')
+      const meetingChoiceJoinBtn = document.getElementById('meetingChoiceJoinBtn')
+      const meetingChoiceCodeInput = document.getElementById('meetingChoiceCodeInput')
+      const meetingChoiceActive = document.getElementById('meetingChoiceActive')
+      const meetingChoiceActiveTitle = document.getElementById('meetingChoiceActiveTitle')
+      const meetingChoiceActiveSubtitle = document.getElementById('meetingChoiceActiveSubtitle')
+      const meetingChoiceActiveBtn = document.getElementById('meetingChoiceActiveBtn')
+      const meetingChoiceCodeReveal = document.getElementById('meetingChoiceCodeReveal')
+      const meetingChoiceCodeValue = document.getElementById('meetingChoiceCodeValue')
+      const meetingChoiceCopyBtn = document.getElementById('meetingChoiceCopyBtn')
+      const meetingChoiceCopied = document.getElementById('meetingChoiceCopied')
+      const meetingChoiceContinueBtn = document.getElementById('meetingChoiceContinueBtn')
+      const meetingChoiceError = document.getElementById('meetingChoiceError')
+      const meetingChoiceViewBtn = document.getElementById('meetingChoiceViewBtn')
       const meetingCodeText = document.getElementById('meetingCodeText')
       const meetingCodeMeta = document.getElementById('meetingCodeMeta')
       const meetingAccessState = document.getElementById('meetingAccessState')
@@ -1998,6 +2238,9 @@
       let currentMeetingType = localStorage.getItem('kanban-meeting-type') || 'standup'
       let meetingSession = loadStoredMeetingSession()
       let meetingAccessDrawerOpen = false
+      let meetingChoiceShown = false
+      let meetingChoiceDismissed = false
+      let meetingChoicePreviousFocus = null
       let meetingStartedAt = 0
       let meetingJoined = false
       let meetingLeaveNotified = false
@@ -2153,7 +2396,9 @@
       renderOperatorPanels()
       refreshValidationPanel()
       refreshVoiceHealthPanel()
-      hydrateExistingAuthSession().catch(err => console.warn('Session hydration failed', err))
+      hydrateExistingAuthSession()
+        .then(session => { if (session) maybeShowMeetingChoiceModal() })
+        .catch(err => console.warn('Session hydration failed', err))
       startOperatorTimers()
 
       function avatarColor(name) {
@@ -2206,11 +2451,7 @@
         createMeetingButton.addEventListener('click', async () => {
           try {
             createMeetingButton.disabled = true
-            localIdentity = cleanIdentity(identityInput.value)
-            authSession = authSession || await ensureAuthenticated(localIdentity)
-            await refreshVoiceModelOptions(true)
-            meetingSession = await setupHostMeeting(authSession)
-            showToast(`Meeting code ${meetingSession.code} is ready`)
+            await hostCreateMeeting()
             hideFailureState()
           } catch (error) {
             showFailureFromError(error)
@@ -2222,10 +2463,7 @@
         prepareParticipantButton.addEventListener('click', async () => {
           try {
             prepareParticipantButton.disabled = true
-            localIdentity = cleanIdentity(identityInput.value)
-            meetingSession = await joinParticipantMeeting(authSession)
-            authSession = authSessionFromMeetingAccess(meetingSession)
-            showToast(`Meeting code ${meetingSession.code} accepted`)
+            await participantUseCode()
             hideFailureState()
           } catch (error) {
             showFailureFromError(error)
@@ -2237,6 +2475,8 @@
         copyJoinLinkButton.addEventListener('click', () => copyMeetingLink())
         copyJoinCodeButton.addEventListener('click', () => copyText(activeMeetingSession()?.code || ''))
         copyRecapButton.addEventListener('click', () => copyText(executiveRecap.textContent || ''))
+
+        wireMeetingChoiceModal()
 
         setMeetingRole(meetingRole, { silent: true })
         setMeetingJoinMode(meetingJoinMode, { silent: true })
@@ -2575,6 +2815,235 @@
           room_id: access.room_id,
           board_id: access.board_id,
           expires_at: access.expires_at,
+        }
+      }
+
+      // Shared host-create flow used by both the settings drawer "Create
+      // meeting code" button and the post-login meeting-choice modal.
+      async function hostCreateMeeting() {
+        localIdentity = cleanIdentity(identityInput.value)
+        authSession = authSession || await ensureAuthenticated(localIdentity)
+        await refreshVoiceModelOptions(true)
+        meetingSession = await setupHostMeeting(authSession)
+        showToast(`Meeting code ${meetingSession.code} is ready`)
+        return meetingSession
+      }
+
+      // Shared participant join flow (reads the active meeting code input).
+      async function participantUseCode() {
+        localIdentity = cleanIdentity(identityInput.value)
+        meetingSession = await joinParticipantMeeting(authSession)
+        authSession = authSessionFromMeetingAccess(meetingSession)
+        showToast(`Meeting code ${meetingSession.code} accepted`)
+        return meetingSession
+      }
+
+      /* ── Post-login meeting-choice modal ── */
+
+      function wireMeetingChoiceModal() {
+        meetingChoiceHostBtn.addEventListener('click', () => handleMeetingChoiceHost())
+        meetingChoiceJoinBtn.addEventListener('click', () => handleMeetingChoiceJoin())
+        meetingChoiceViewBtn.addEventListener('click', () => dismissMeetingChoiceModal())
+        meetingChoiceContinueBtn.addEventListener('click', () => dismissMeetingChoiceModal())
+        meetingChoiceCopyBtn.addEventListener('click', () => copyMeetingChoiceCode())
+        meetingChoiceCodeInput.addEventListener('input', () => {
+          meetingChoiceCodeInput.value = formatMeetingCode(meetingChoiceCodeInput.value)
+        })
+        meetingChoiceCodeInput.addEventListener('keydown', e => {
+          if (e.key === 'Enter') { e.preventDefault(); handleMeetingChoiceJoin() }
+        })
+        meetingChoiceCard.addEventListener('keydown', handleMeetingChoiceKeydown)
+      }
+
+      // Entry point gated on an authenticated session existing. Shows once per
+      // page load, and not again after "Just view the board" is chosen.
+      async function maybeShowMeetingChoiceModal() {
+        if (meetingChoiceShown || meetingChoiceDismissed || !authSession) return
+        meetingChoiceShown = true
+        let status = null
+        try {
+          status = await callMeetingEndpoint('/meeting/status', { credentials: 'same-origin' })
+        } catch (err) {
+          console.warn('Meeting status lookup failed', err)
+        }
+        // Reset to default state, then specialise based on active-meeting awareness.
+        meetingChoiceError.textContent = ''
+        meetingChoiceCopied.textContent = ''
+        meetingChoiceCodeReveal.style.display = 'none'
+        meetingChoiceActive.style.display = 'none'
+        meetingChoiceOptions.style.display = ''
+        meetingChoiceHostOption.classList.remove('deemphasized')
+
+        const meeting = status?.meeting || {}
+        const role = status?.role || ''
+        if (meeting.active && role === 'host') {
+          showMeetingChoiceActiveHost()
+        } else if (meeting.active && role !== 'host') {
+          showMeetingChoiceActiveParticipant()
+        } else {
+          showMeetingChoiceDefault()
+        }
+        openMeetingChoiceModal()
+      }
+
+      function showMeetingChoiceDefault() {
+        meetingChoiceTitle.textContent = 'Start or join a meeting'
+        meetingChoiceSubtitle.textContent = 'Choose how you want to use the board.'
+        meetingChoiceOptions.style.display = ''
+        meetingChoiceActive.style.display = 'none'
+      }
+
+      function showMeetingChoiceActiveHost() {
+        setMeetingRole('host', { silent: true })
+        meetingChoiceTitle.textContent = "You're hosting a meeting in progress"
+        meetingChoiceSubtitle.textContent = 'Pick up where you left off.'
+        meetingChoiceOptions.style.display = 'none'
+        meetingChoiceActive.style.display = ''
+        meetingChoiceActiveTitle.textContent = 'Meeting in progress'
+        meetingChoiceActiveSubtitle.textContent = "You're the host of this meeting."
+        meetingChoiceActiveBtn.textContent = 'Resume meeting'
+        meetingChoiceActiveBtn.onclick = () => dismissMeetingChoiceModal()
+      }
+
+      function showMeetingChoiceActiveParticipant() {
+        // Authenticated participants are already access-granted server-side for an
+        // active meeting (no join code required), so Join just dismisses into the
+        // participant flow; the existing "Join room" control performs the connect.
+        setMeetingRole('participant', { silent: true })
+        meetingChoiceTitle.textContent = 'A meeting is in progress'
+        meetingChoiceSubtitle.textContent = 'Join the meeting already underway.'
+        meetingChoiceOptions.style.display = 'none'
+        meetingChoiceActive.style.display = ''
+        meetingChoiceActiveTitle.textContent = 'A meeting is in progress'
+        meetingChoiceActiveSubtitle.textContent = 'Join it?'
+        meetingChoiceActiveBtn.textContent = 'Join'
+        meetingChoiceActiveBtn.onclick = () => dismissMeetingChoiceModal()
+      }
+
+      async function handleMeetingChoiceHost() {
+        meetingChoiceError.textContent = ''
+        try {
+          meetingChoiceHostBtn.disabled = true
+          setMeetingRole('host', { silent: true })
+          const session = await hostCreateMeeting()
+          hideFailureState()
+          renderOperatorPanels()
+          // Host path is two-step: reveal the code (board stays blurred), then
+          // the explicit Continue button dismisses.
+          meetingChoiceOptions.style.display = 'none'
+          meetingChoiceActive.style.display = 'none'
+          meetingChoiceCodeReveal.style.display = ''
+          meetingChoiceTitle.textContent = 'Meeting created'
+          meetingChoiceSubtitle.textContent = 'Your meeting code is ready.'
+          meetingChoiceCodeValue.textContent = session?.code || '------'
+          meetingChoiceCopied.textContent = ''
+          setTimeout(() => meetingChoiceContinueBtn.focus(), 0)
+        } catch (error) {
+          meetingChoiceError.textContent = error?.message || 'Could not create the meeting.'
+        } finally {
+          meetingChoiceHostBtn.disabled = false
+        }
+      }
+
+      async function handleMeetingChoiceJoin() {
+        meetingChoiceError.textContent = ''
+        const code = formatMeetingCode(meetingChoiceCodeInput.value)
+        if (!code) {
+          meetingChoiceError.textContent = 'Enter a meeting code to join.'
+          meetingChoiceCodeInput.focus()
+          return
+        }
+        try {
+          meetingChoiceJoinBtn.disabled = true
+          setMeetingRole('participant', { silent: true })
+          // joinParticipantMeeting reads joinCodeInput; mirror the entered code.
+          joinCodeInput.value = code
+          await participantUseCode()
+          hideFailureState()
+          renderOperatorPanels()
+          dismissMeetingChoiceModal()
+        } catch (error) {
+          meetingChoiceError.textContent = error?.message || 'Could not join the meeting.'
+        } finally {
+          meetingChoiceJoinBtn.disabled = false
+        }
+      }
+
+      async function copyMeetingChoiceCode() {
+        const code = meetingChoiceCodeValue.textContent || ''
+        if (!code || code === '------') return
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(code)
+            meetingChoiceCopied.textContent = 'Copied!'
+          } else {
+            window.prompt('Copy this code', code)
+            meetingChoiceCopied.textContent = 'Copy the highlighted code.'
+          }
+        } catch (_) {
+          window.prompt('Copy this code', code)
+          meetingChoiceCopied.textContent = 'Copy the highlighted code.'
+        }
+      }
+
+      function openMeetingChoiceModal() {
+        meetingChoicePreviousFocus = document.activeElement
+        meetingChoiceModal.classList.add('visible')
+        meetingChoiceScrim.classList.add('visible')
+        meetingChoiceModal.setAttribute('aria-hidden', 'false')
+        const ws = document.querySelector('.workspace-area')
+        if (ws) ws.classList.add('meeting-choice-blurred')
+        // Inert the rest of the page so Tab cannot escape the dialog.
+        Array.from(document.body.children).forEach(child => {
+          if (child === meetingChoiceModal || child === meetingChoiceScrim) return
+          if ('inert' in child) child.inert = true
+        })
+        setTimeout(() => {
+          const first = firstFocusableMeetingChoice()
+          ;(first || meetingChoiceCard).focus()
+        }, 0)
+      }
+
+      function dismissMeetingChoiceModal() {
+        meetingChoiceDismissed = true
+        meetingChoiceModal.classList.remove('visible')
+        meetingChoiceScrim.classList.remove('visible')
+        meetingChoiceModal.setAttribute('aria-hidden', 'true')
+        const ws = document.querySelector('.workspace-area')
+        if (ws) ws.classList.remove('meeting-choice-blurred')
+        Array.from(document.body.children).forEach(child => {
+          if ('inert' in child) child.inert = false
+        })
+        if (meetingChoicePreviousFocus && typeof meetingChoicePreviousFocus.focus === 'function') {
+          meetingChoicePreviousFocus.focus()
+        }
+      }
+
+      function meetingChoiceFocusable() {
+        return Array.from(meetingChoiceCard.querySelectorAll(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )).filter(el => !el.disabled && el.offsetParent !== null)
+      }
+
+      function firstFocusableMeetingChoice() {
+        return meetingChoiceFocusable()[0] || null
+      }
+
+      // Escape does NOT close the modal (only explicit buttons do); Tab/Shift-Tab
+      // cycle within the dialog.
+      function handleMeetingChoiceKeydown(e) {
+        if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); return }
+        if (e.key !== 'Tab') return
+        const focusable = meetingChoiceFocusable()
+        if (focusable.length === 0) { e.preventDefault(); return }
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
         }
       }
 

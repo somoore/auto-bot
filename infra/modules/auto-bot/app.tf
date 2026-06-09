@@ -33,7 +33,6 @@ locals {
     local.auth_enabled ? "APP_ALB_ARN=${aws_lb.app.arn}" : "",
     local.auth_enabled ? "COGNITO_LOGOUT_URL=https://${aws_cognito_user_pool_domain.this[0].domain}.auth.${var.aws_region}.amazoncognito.com/logout?client_id=${aws_cognito_user_pool_client.this[0].id}&logout_uri=https://${var.auth_domain_name}/" : "",
     var.verbose_logging ? "PION_LOG_INFO=all" : "",
-    var.host_emails != "" ? "HOST_EMAILS=${var.host_emails}" : "",
     var.allowed_emails != "" ? "ALLOWED_EMAILS=${var.allowed_emails}" : "",
     var.allowed_email_domains != "" ? "ALLOWED_EMAIL_DOMAINS=${var.allowed_email_domains}" : "",
     local.auth_enabled ? "APP_BASE_URL=https://${var.auth_domain_name}" : "",

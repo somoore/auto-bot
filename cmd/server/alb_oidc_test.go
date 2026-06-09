@@ -99,34 +99,29 @@ func TestIdentityFromEmail(t *testing.T) {
 	}
 }
 
-func TestHostAllowlistRole(t *testing.T) {
+func TestConfigureALBAuthAccessAllowlist(t *testing.T) {
 	prevEnabled := albAuthEnabled
-	prevHosts := hostEmails
-	t.Cleanup(func() {
-		albAuthEnabled = prevEnabled
-		hostEmails = prevHosts
-	})
+	t.Cleanup(func() { albAuthEnabled = prevEnabled })
 
 	t.Setenv("APP_ALB_OIDC_AUTH", "1")
 	t.Setenv("APP_ALB_ARN", "arn:aws:elasticloadbalancing:us-east-1:111:loadbalancer/app/x/y")
 	t.Setenv("ALLOWED_EMAIL_DOMAINS", "moore.cloud")
-	t.Setenv("HOST_EMAILS", "Scott@Moore.Cloud, lead@example.com")
+	t.Setenv("ALLOWED_EMAILS", "Lead@Example.com")
 	if err := configureALBAuth(); err != nil {
 		t.Fatalf("configureALBAuth: %v", err)
 	}
-
 	if !albAuthEnabled {
 		t.Fatal("expected albAuthEnabled true")
 	}
-	// Allowlist match is case-insensitive.
-	if _, ok := hostEmails["scott@moore.cloud"]; !ok {
-		t.Error("expected scott@moore.cloud in host allowlist")
+	// Access allowlist is case-insensitive; role is NOT pre-assigned by identity.
+	if !emailAllowed("scott@moore.cloud") {
+		t.Error("expected moore.cloud domain allowed")
 	}
-	if _, ok := hostEmails["lead@example.com"]; !ok {
-		t.Error("expected lead@example.com in host allowlist")
+	if !emailAllowed("lead@example.com") {
+		t.Error("expected lead@example.com allowed")
 	}
-	if _, ok := hostEmails["stranger@example.com"]; ok {
-		t.Error("did not expect stranger in host allowlist")
+	if emailAllowed("stranger@gmail.com") {
+		t.Error("did not expect stranger allowed")
 	}
 }
 
@@ -185,7 +180,6 @@ func TestConfigureALBAuthFailsClosed(t *testing.T) {
 	t.Setenv("APP_ALB_ARN", "arn:aws:elasticloadbalancing:us-east-1:111:loadbalancer/app/x/y")
 	t.Setenv("ALLOWED_EMAILS", "")
 	t.Setenv("ALLOWED_EMAIL_DOMAINS", "")
-	t.Setenv("HOST_EMAILS", "")
 	if err := configureALBAuth(); err == nil {
 		t.Error("expected error when no allowlist is set under OIDC")
 	}

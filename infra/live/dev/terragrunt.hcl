@@ -27,7 +27,9 @@ inputs = merge(local.env.locals.inputs, {
   cognito_domain_prefix   = get_env("COGNITO_DOMAIN_PREFIX", local.env.locals.inputs.cognito_domain_prefix)
   google_client_id        = get_env("GOOGLE_CLIENT_ID", "")
   google_client_secret    = get_env("GOOGLE_CLIENT_SECRET", "")
-  host_emails             = get_env("HOST_EMAILS", local.env.locals.inputs.host_emails)
+  microsoft_client_id     = get_env("MICROSOFT_CLIENT_ID", "")
+  microsoft_client_secret = get_env("MICROSOFT_CLIENT_SECRET", "")
+  microsoft_tenant_id     = get_env("MICROSOFT_TENANT_ID", "common")
   acm_wait_for_validation = get_env("ACM_WAIT_FOR_VALIDATION", "false") == "true"
   enable_alb_access_logs  = get_env("ENABLE_ALB_ACCESS_LOGS", "false") == "true"
   enable_bot_control      = get_env("ENABLE_BOT_CONTROL", "false") == "true"

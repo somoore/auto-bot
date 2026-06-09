@@ -21,13 +21,11 @@ locals {
 
     bedrock_model_arns = ["arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-sonic-v1:0"]
 
-    # Edge auth: Cognito Hosted UI + Google federation in front of the app.
+    # Edge auth: Cognito Hosted UI + Google/Microsoft federation in front of the app.
     auth_domain_name      = "meet.sc.tt"
     cognito_domain_prefix = "auto-bot-dev-meet"
-    # Emails granted the meeting host role after login; everyone else is a participant.
-    host_emails = "scott@moore.cloud,somoore2025@gmail.com"
-    # Access gate: only these emails/domains may use the app after Google login.
-    # Authenticated users outside the allowlist are denied by the app.
+    # Access gate: only these emails/domains may use the app after login. Any
+    # allowed user can host or join; whoever creates a meeting becomes its host.
     allowed_emails        = "scott@moore.cloud,somoore2025@gmail.com"
     allowed_email_domains = "moore.cloud"
   }

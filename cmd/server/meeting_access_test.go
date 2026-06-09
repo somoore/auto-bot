@@ -539,6 +539,10 @@ func TestOIDCHostStatelessSetupLeave(t *testing.T) {
 	restore := snapshotAuthGlobals()
 	defer restore()
 
+	prevALB := albAuthEnabled
+	albAuthEnabled = true
+	defer func() { albAuthEnabled = prevALB }()
+
 	appAuthMode = "token"
 	appEnvironment = "production"
 	appRoomID = "team-room"
@@ -546,10 +550,23 @@ func TestOIDCHostStatelessSetupLeave(t *testing.T) {
 	meetingAccess = newMeetingAccessManager()
 	sharedBoard = newKanbanBoard()
 
-	// Stateless host context as albOIDCContext produces it: no SessionID.
-	hostCtx := requestAuthContext{Identity: "somoore2025", RoomID: "team-room", BoardID: "team-board", Role: meetingRoleHost}
+	// Stateless host context as albOIDCContext produces it: no SessionID and NO
+	// pre-assigned role. Host is derived from identity == creator.
+	hostCtx := requestAuthContext{Identity: "somoore2025", RoomID: "team-room", BoardID: "team-board"}
 	if _, err := meetingAccess.setup(hostCtx, "standup"); err != nil {
 		t.Fatalf("setup: %v", err)
+	}
+
+	// isHost/authorize must recognize the creator as host without a carried role.
+	if !meetingAccess.isHost(hostCtx) {
+		t.Error("creator identity should be host on a stateless context")
+	}
+	if authd, ok := meetingAccess.authorize(hostCtx); !ok || authd.Role != meetingRoleHost {
+		t.Errorf("authorize should give creator host role, got role=%q ok=%v", authd.Role, ok)
+	}
+	other := requestAuthContext{Identity: "someone-else", RoomID: "team-room", BoardID: "team-board"}
+	if meetingAccess.isHost(other) {
+		t.Error("non-creator must not be host")
 	}
 
 	// Host gate must allow even when the active-speaker label is empty.

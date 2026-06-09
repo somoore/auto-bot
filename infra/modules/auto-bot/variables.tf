@@ -181,10 +181,23 @@ variable "google_client_secret" {
   sensitive   = true
 }
 
-variable "host_emails" {
-  description = "Comma-separated allowlist of email addresses granted the meeting host role after Cognito login. Everyone else who logs in is a participant."
+variable "microsoft_client_id" {
+  description = "Azure AD app (client) ID for Cognito Microsoft federation. Empty disables the Microsoft IdP."
   type        = string
   default     = ""
+}
+
+variable "microsoft_client_secret" {
+  description = "Azure AD client secret for Cognito Microsoft federation. Sourced from env, never committed."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "microsoft_tenant_id" {
+  description = "Azure AD tenant ID (or 'common'/'organizations') for the OIDC issuer. Use a specific tenant GUID to restrict to your org."
+  type        = string
+  default     = "common"
 }
 
 variable "allowed_emails" {
