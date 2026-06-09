@@ -354,6 +354,47 @@ func (app *novaSonicApp) markDisconnected(reason string) {
 	log.Warnf("Nova Sonic: %s", reason)
 }
 
+// LeaveConferenceRoom disconnects the agent from the LiveKit room and closes
+// the Bedrock stream, resetting state so a subsequent meeting can JoinConference
+// fresh. Unlike Close(), this is repeatable (no closeOnce) — it is the
+// end-of-meeting teardown so the agent does not linger in the old room.
+func (app *novaSonicApp) LeaveConferenceRoom(reason string) {
+	if app == nil {
+		return
+	}
+	app.streamMu.Lock()
+	stream := app.stream
+	app.stream = nil
+	app.streamActive = false
+	app.streamMu.Unlock()
+	if stream != nil {
+		if err := stream.Close(); err != nil {
+			log.Warnf("Nova Sonic: leave close stream failed: %v", err)
+		}
+	}
+
+	app.mu.Lock()
+	room := app.room
+	app.room = nil
+	app.outputTrack = nil
+	app.joinInFlight = false
+	app.mu.Unlock()
+	if room != nil {
+		room.Disconnect()
+	}
+	if app.outputPacer != nil {
+		app.outputPacer.Reset()
+	}
+	app.audioMu.Lock()
+	app.activeAudioTracks = map[string]string{}
+	app.audioMu.Unlock()
+	app.speakerMu.Lock()
+	app.activeSpeakers = app.activeSpeakers[:0]
+	app.lastUserSpeaker = ""
+	app.speakerMu.Unlock()
+	log.Infof("Nova Sonic: left conference room (%s)", reason)
+}
+
 func (app *novaSonicApp) ensureBedrockStream() {
 	app.streamMu.Lock()
 	if app.streamActive {

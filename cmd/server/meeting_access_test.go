@@ -531,3 +531,47 @@ func createTestSessionCookie(t *testing.T, token string, identity string) *http.
 	}
 	return cookies[0]
 }
+
+// TestOIDCHostStatelessSetupLeave verifies the ALB OIDC path (no SessionID):
+// the host session is recorded by identity so the voice host gate authorizes
+// even with an empty speaker label, and leaveByIdentity ends the meeting.
+func TestOIDCHostStatelessSetupLeave(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	appAuthMode = "token"
+	appEnvironment = "production"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	meetingAccess = newMeetingAccessManager()
+	sharedBoard = newKanbanBoard()
+
+	// Stateless host context as albOIDCContext produces it: no SessionID.
+	hostCtx := requestAuthContext{Identity: "somoore2025", RoomID: "team-room", BoardID: "team-board", Role: meetingRoleHost}
+	if _, err := meetingAccess.setup(hostCtx, "standup"); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Host gate must allow even when the active-speaker label is empty.
+	if !meetingAccess.voiceSpeakerHasHostAccess("") {
+		t.Error("empty speaker label should authorize the sole stateless host")
+	}
+	if !meetingAccess.voiceSpeakerHasHostAccess("somoore2025") {
+		t.Error("host identity speaker should authorize")
+	}
+	if meetingAccess.voiceSpeakerHasHostAccess("intruder") {
+		t.Error("non-host speaker must not authorize")
+	}
+
+	// Host leave (by identity) ends the meeting.
+	res, err := meetingAccess.leaveByIdentity("somoore2025", true)
+	if err != nil {
+		t.Fatalf("leaveByIdentity: %v", err)
+	}
+	if !res.Ended {
+		t.Error("host leave should end the meeting")
+	}
+	if meetingAccess.isActive() {
+		t.Error("meeting should be inactive after host leave")
+	}
+}

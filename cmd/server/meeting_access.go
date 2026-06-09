@@ -242,7 +242,16 @@ func leaveMeetingHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := meetingAccess.leaveSession(authCtx.SessionID)
+	var result meetingLeaveResult
+	var err error
+	if authCtx.SessionID != "" {
+		result, err = meetingAccess.leaveSession(authCtx.SessionID)
+	} else {
+		// Stateless ALB OIDC caller: key the leave on the authenticated identity
+		// and host role (resolved from the HOST_EMAILS allowlist), since there is
+		// no session cookie to match.
+		result, err = meetingAccess.leaveByIdentity(authCtx.Identity, authCtx.Role == meetingRoleHost)
+	}
 	if err != nil {
 		if errors.Is(err, errMeetingNotActive) {
 			snapshot := meetingAccess.snapshot(false)
@@ -266,6 +275,12 @@ func leaveMeetingHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.Ended {
 		applyMeetingEndedToBoard("meeting-host-left")
+		// Tear down the LiveKit room/agent so it doesn't keep running after the
+		// host leaves (otherwise a "new" meeting rejoins the old room with the
+		// agent still talking).
+		if novaSonic != nil {
+			novaSonic.LeaveConferenceRoom("meeting ended by host")
+		}
 	}
 	broadcastKanbanEvent("meeting_access", result.Snapshot.withoutJoinCode())
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -385,13 +400,20 @@ func (m *meetingAccessManager) setup(ctx requestAuthContext, meetingType string)
 	m.createdAt = now
 	m.updatedAt = now
 	m.sessions = map[string]meetingAccessSession{}
-	if ctx.SessionID != "" {
-		m.sessions[ctx.SessionID] = meetingAccessSession{
-			SessionID: ctx.SessionID,
-			Identity:  ctx.Identity,
-			Role:      meetingRoleHost,
-			JoinedAt:  now.Format(time.RFC3339),
-		}
+	// Record the host session. Under ALB OIDC auth there is no SessionID
+	// (identity is per-request and stateless), so key the host session by
+	// identity instead — otherwise the host session map stays empty and the
+	// voice host-access gate falls through to "not host". Safe post-C1: the
+	// identity is server-minted, not client-supplied.
+	hostKey := ctx.SessionID
+	if hostKey == "" {
+		hostKey = "identity:" + ctx.Identity
+	}
+	m.sessions[hostKey] = meetingAccessSession{
+		SessionID: ctx.SessionID,
+		Identity:  ctx.Identity,
+		Role:      meetingRoleHost,
+		JoinedAt:  now.Format(time.RFC3339),
 	}
 	return m.snapshotLocked(true), nil
 }
@@ -505,13 +527,19 @@ func (m *meetingAccessManager) voiceSpeakerHasHostAccess(speakerLabel string) bo
 	}
 
 	speakers := speakerIdentitiesFromLabel(speakerLabel)
-	if len(speakers) == 1 {
-		return m.identityIsHostLocked(speakers[0])
+	var ok bool
+	switch len(speakers) {
+	case 1:
+		ok = m.identityIsHostLocked(speakers[0])
+	case 0:
+		ok = m.onlyHostSessionLocked()
+	default:
+		ok = false
 	}
-	if len(speakers) == 0 {
-		return m.onlyHostSessionLocked()
+	if !ok {
+		log.Errorf("voice host gate denied: speakerLabel=%q hostIdentity=%q sessions=%d", speakerLabel, m.hostIdentity, len(m.sessions))
 	}
-	return false
+	return ok
 }
 
 func (m *meetingAccessManager) identityIsHostLocked(identity string) bool {
@@ -620,6 +648,60 @@ func (m *meetingAccessManager) leaveSession(sessionID string) (meetingLeaveResul
 
 	delete(m.sessions, sessionID)
 	result.RevokedSessionIDs = append(result.RevokedSessionIDs, sessionID)
+	m.updatedAt = now
+	result.Snapshot = m.snapshotLocked(false)
+	return result, nil
+}
+
+// leaveByIdentity ends/leaves a meeting for a stateless (ALB OIDC) caller that
+// has no SessionID. If the identity is the host, the meeting is ended and all
+// participant sessions are revoked; otherwise any participant sessions matching
+// the identity are removed.
+func (m *meetingAccessManager) leaveByIdentity(identity string, isHost bool) (meetingLeaveResult, error) {
+	identity = strings.TrimSpace(identity)
+	now := time.Now().UTC()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.active {
+		return meetingLeaveResult{Snapshot: m.snapshotLocked(false)}, errMeetingNotActive
+	}
+
+	if isHost || identityEqual(identity, m.hostIdentity) {
+		result := meetingLeaveResult{
+			Left:     true,
+			Ended:    true,
+			Role:     meetingRoleHost,
+			Identity: identity,
+		}
+		for id, existing := range m.sessions {
+			if existing.Role == meetingRoleParticipant && existing.SessionID != "" {
+				result.RevokedSessionIDs = append(result.RevokedSessionIDs, id)
+			}
+		}
+		m.active = false
+		m.joinCode = ""
+		m.sessions = map[string]meetingAccessSession{}
+		m.hostIdentity = ""
+		m.updatedAt = now
+		result.Snapshot = m.snapshotLocked(false)
+		return result, nil
+	}
+
+	// Participant: drop any sessions for this identity.
+	result := meetingLeaveResult{
+		Left:     true,
+		Role:     meetingRoleParticipant,
+		Identity: identity,
+	}
+	for id, existing := range m.sessions {
+		if existing.Role == meetingRoleParticipant && identityEqual(existing.Identity, identity) {
+			delete(m.sessions, id)
+			if existing.SessionID != "" {
+				result.RevokedSessionIDs = append(result.RevokedSessionIDs, id)
+			}
+		}
+	}
 	m.updatedAt = now
 	result.Snapshot = m.snapshotLocked(false)
 	return result, nil
