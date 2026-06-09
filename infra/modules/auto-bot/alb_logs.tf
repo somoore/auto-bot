@@ -12,6 +12,25 @@ resource "aws_s3_bucket" "alb_logs" {
   force_destroy = true
 }
 
+resource "aws_s3_bucket_public_access_block" "alb_logs" {
+  count                   = var.enable_alb_access_logs ? 1 : 0
+  bucket                  = aws_s3_bucket.alb_logs[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
+  count  = var.enable_alb_access_logs ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 resource "aws_s3_bucket_policy" "alb_logs" {
   count  = var.enable_alb_access_logs ? 1 : 0
   bucket = aws_s3_bucket.alb_logs[0].id
@@ -20,10 +39,24 @@ resource "aws_s3_bucket_policy" "alb_logs" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid       = "ELBAccessLogsPut"
         Effect    = "Allow"
         Principal = { AWS = data.aws_elb_service_account.main[0].arn }
         Action    = "s3:PutObject"
         Resource  = "${aws_s3_bucket.alb_logs[0].arn}/*"
+      },
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.alb_logs[0].arn,
+          "${aws_s3_bucket.alb_logs[0].arn}/*",
+        ]
+        Condition = {
+          Bool = { "aws:SecureTransport" = "false" }
+        }
       }
     ]
   })

@@ -74,7 +74,7 @@ var cognitoLogoutURL string
 // not merely by some ALB key in the region.
 var expectedSignerARN string
 
-func configureALBAuth() {
+func configureALBAuth() error {
 	albAuthEnabled = strings.TrimSpace(os.Getenv("APP_ALB_OIDC_AUTH")) == "1"
 	cognitoLogoutURL = strings.TrimSpace(os.Getenv("COGNITO_LOGOUT_URL"))
 	expectedSignerARN = strings.TrimSpace(os.Getenv("APP_ALB_ARN"))
@@ -87,6 +87,18 @@ func configureALBAuth() {
 			allowedDomains[d] = struct{}{}
 		}
 	}
+	if albAuthEnabled {
+		// Bind the trusted JWS to OUR ALB, not just any ALB key in the region.
+		if expectedSignerARN == "" {
+			return fmt.Errorf("APP_ALB_ARN is required when APP_ALB_OIDC_AUTH=1 (binds the OIDC signature to this ALB)")
+		}
+		// Refuse open access: an empty allowlist behind SSO would admit any
+		// authenticated Google account on the internet.
+		if len(allowedEmails) == 0 && len(allowedDomains) == 0 {
+			return fmt.Errorf("ALLOWED_EMAILS or ALLOWED_EMAIL_DOMAINS must be set when APP_ALB_OIDC_AUTH=1")
+		}
+	}
+	return nil
 }
 
 func parseEmailSet(raw string) map[string]struct{} {

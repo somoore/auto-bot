@@ -105,7 +105,9 @@ func main() {
 	if err := configureAppSecurity(); err != nil {
 		panic(err)
 	}
-	configureALBAuth()
+	if err := configureALBAuth(); err != nil {
+		panic(err)
+	}
 
 	upgrader.CheckOrigin = makeOriginChecker(*allowedOrigins)
 
@@ -292,16 +294,23 @@ func livekitTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	identity := normalizeParticipantIdentity(r.URL.Query().Get("identity"))
-	if identity == "" {
-		identity = authCtx.Identity
+	// The authenticated identity is authoritative. A client-supplied ?identity=
+	// override is only honored in local/disabled mode (no real identity exists);
+	// for any authenticated context (token, cookie, or ALB OIDC) we mint the
+	// LiveKit token strictly with authCtx.Identity. Honoring the query param for
+	// authenticated requests would let a participant impersonate another user
+	// (incl. the host) in the LiveKit room — a privilege-escalation vector.
+	identity := authCtx.Identity
+	if appAuthMode == "disabled" {
+		if q := normalizeParticipantIdentity(r.URL.Query().Get("identity")); q != "" {
+			identity = q
+		}
+	} else if requested := normalizeParticipantIdentity(r.URL.Query().Get("identity")); requested != "" && requested != authCtx.Identity {
+		http.Error(w, "identity does not match authenticated session", http.StatusForbidden)
+		return
 	}
 	if identity == "" {
 		http.Error(w, "invalid identity: must be 1-64 alphanumeric/dash/underscore characters", http.StatusBadRequest)
-		return
-	}
-	if authCtx.SessionID != "" && identity != authCtx.Identity {
-		http.Error(w, "identity does not match authenticated session", http.StatusForbidden)
 		return
 	}
 
@@ -940,9 +949,18 @@ func setNoStoreHeaders(w http.ResponseWriter) {
 }
 
 func contentSecurityPolicy() string {
-	connectSrc := []string{"'self'", "ws:", "wss:"}
+	// connect-src is scoped to self + the configured LiveKit origins rather than
+	// the bare ws:/wss: schemes (which would allow a WebSocket to ANY origin and
+	// defeat the allowlist). LiveKit Cloud routes media to regional subdomains
+	// (e.g. wss://<proj>.ofrankfurt1b.production.livekit.cloud), so for a
+	// *.livekit.cloud host we add a scoped wildcard covering those subdomains.
+	connectSrc := []string{"'self'"}
+	wsSelf := "wss://" + appHostForCSP()
+	if wsSelf != "wss://" {
+		connectSrc = append(connectSrc, wsSelf)
+	}
 	if appEnvironment == "local" || strings.EqualFold(os.Getenv("APP_ENV"), "local") {
-		connectSrc = append(connectSrc, "http://127.0.0.1:7880", "http://localhost:7880")
+		connectSrc = append(connectSrc, "http://127.0.0.1:7880", "http://localhost:7880", "http://localhost:3000")
 	}
 	for _, rawURL := range []string{
 		os.Getenv("LIVEKIT_BROWSER_URL"),
@@ -950,8 +968,39 @@ func contentSecurityPolicy() string {
 		os.Getenv("LIVEKIT_URL"),
 	} {
 		connectSrc = appendConnectSrcOrigin(connectSrc, rawURL)
+		connectSrc = appendLiveKitWildcard(connectSrc, rawURL)
 	}
 	return "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src " + strings.Join(connectSrc, " ") + "; img-src 'self' data: blob:; media-src 'self' blob:; frame-ancestors 'none'"
+}
+
+// appHostForCSP returns the app's own host (from APP_BASE_URL) for the
+// same-origin WebSocket connect-src entry.
+func appHostForCSP() string {
+	if u, err := url.Parse(strings.TrimSpace(os.Getenv("APP_BASE_URL"))); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return ""
+}
+
+// appendLiveKitWildcard adds wss://*.<registrable-ish-domain> for LiveKit Cloud
+// hosts so the SDK can reach regional media subdomains without bare-scheme CSP.
+func appendLiveKitWildcard(connectSrc []string, rawURL string) []string {
+	rawURL = strings.TrimSpace(rawURL)
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return connectSrc
+	}
+	host := u.Hostname()
+	if !strings.HasSuffix(host, ".livekit.cloud") {
+		return connectSrc
+	}
+	wildcard := "wss://*.livekit.cloud"
+	for _, e := range connectSrc {
+		if e == wildcard {
+			return connectSrc
+		}
+	}
+	return append(connectSrc, wildcard)
 }
 
 func appendConnectSrcOrigin(connectSrc []string, rawURL string) []string {

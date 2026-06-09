@@ -123,6 +123,9 @@ func voiceModelHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, buildVoiceModelStatus(""))
 	case http.MethodPost:
+		if !enforceCSRF(w, r) {
+			return
+		}
 		handleVoiceModelUpdate(w, r)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

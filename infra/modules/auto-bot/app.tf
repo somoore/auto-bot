@@ -286,8 +286,18 @@ resource "aws_lb_listener" "app_https" {
   }
 }
 
-# Webhook / machine-callback paths bypass Cognito auth (they cannot perform an
-# OIDC browser login) and rely on their own signature/secret validation in-app.
+# Cognito-auth bypass paths. /healthz always bypasses (the ALB health check
+# cannot do OIDC and it exposes no data). /jira/webhook is exempted ONLY when a
+# webhook secret is configured, so the path is never opened to the internet
+# without the in-app HMAC validation that is then its sole gate (fail-closed:
+# the handler also 404s when the secret is unset).
+locals {
+  auth_bypass_paths = compact([
+    "/healthz",
+    var.jira_webhook_secret_secret_arn != "" ? "/jira/webhook" : "",
+  ])
+}
+
 resource "aws_lb_listener_rule" "webhook_bypass" {
   count = local.auth_enabled ? 1 : 0
 
@@ -301,7 +311,7 @@ resource "aws_lb_listener_rule" "webhook_bypass" {
 
   condition {
     path_pattern {
-      values = var.auth_bypass_path_patterns
+      values = local.auth_bypass_paths
     }
   }
 }

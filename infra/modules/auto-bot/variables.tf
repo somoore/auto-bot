@@ -224,9 +224,15 @@ variable "acm_wait_for_validation" {
 }
 
 variable "waf_rate_limit" {
-  description = "Per-IP five-minute request rate limit enforced by AWS WAF on the app ALB."
+  description = "Per-IP five-minute request rate limit enforced by AWS WAF on the app ALB. Tuned low for a small allowlisted audience."
   type        = number
-  default     = 2000
+  default     = 600
+}
+
+variable "enable_bot_control" {
+  description = "Enable the AWS WAF Bot Control managed rule group (behavioral bot detection). Adds WAF request cost; off by default."
+  type        = bool
+  default     = false
 }
 
 variable "app_api_token_secret_arn" {

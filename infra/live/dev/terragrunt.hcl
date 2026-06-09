@@ -30,6 +30,7 @@ inputs = merge(local.env.locals.inputs, {
   host_emails             = get_env("HOST_EMAILS", local.env.locals.inputs.host_emails)
   acm_wait_for_validation = get_env("ACM_WAIT_FOR_VALIDATION", "false") == "true"
   enable_alb_access_logs  = get_env("ENABLE_ALB_ACCESS_LOGS", "false") == "true"
+  enable_bot_control      = get_env("ENABLE_BOT_CONTROL", "false") == "true"
   verbose_logging         = get_env("VERBOSE_LOGGING", "false") == "true"
 
   # Secrets Manager ARNs (created by scripts/aws-upsert-secrets.sh).

@@ -67,8 +67,13 @@ func (limiter *fixedWindowRateLimiter) cleanupLocked(now time.Time) {
 func clientAddress(r *http.Request) string {
 	if osTrustProxyHeaders() {
 		if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+			// Use the RIGHTMOST entry: behind a single trusted proxy (the ALB),
+			// the last hop is the address the ALB observed and appended. The
+			// leftmost entries are client-supplied and trivially spoofable, so
+			// trusting them lets an attacker rotate fake IPs to evade per-IP
+			// rate limits.
 			parts := strings.Split(forwardedFor, ",")
-			if candidate := normalizedClientIP(parts[0]); candidate != "" {
+			if candidate := normalizedClientIP(parts[len(parts)-1]); candidate != "" {
 				return candidate
 			}
 		}

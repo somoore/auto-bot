@@ -108,8 +108,12 @@ func TestHostAllowlistRole(t *testing.T) {
 	})
 
 	t.Setenv("APP_ALB_OIDC_AUTH", "1")
+	t.Setenv("APP_ALB_ARN", "arn:aws:elasticloadbalancing:us-east-1:111:loadbalancer/app/x/y")
+	t.Setenv("ALLOWED_EMAIL_DOMAINS", "moore.cloud")
 	t.Setenv("HOST_EMAILS", "Scott@Moore.Cloud, lead@example.com")
-	configureALBAuth()
+	if err := configureALBAuth(); err != nil {
+		t.Fatalf("configureALBAuth: %v", err)
+	}
 
 	if !albAuthEnabled {
 		t.Fatal("expected albAuthEnabled true")
@@ -165,12 +169,36 @@ func TestEmailAllowed(t *testing.T) {
 	}
 }
 
+func TestConfigureALBAuthFailsClosed(t *testing.T) {
+	prev := albAuthEnabled
+	t.Cleanup(func() { albAuthEnabled = prev })
+
+	// OIDC enabled but no signer ARN -> error.
+	t.Setenv("APP_ALB_OIDC_AUTH", "1")
+	t.Setenv("APP_ALB_ARN", "")
+	t.Setenv("ALLOWED_EMAIL_DOMAINS", "moore.cloud")
+	if err := configureALBAuth(); err == nil {
+		t.Error("expected error when APP_ALB_ARN is empty under OIDC")
+	}
+
+	// OIDC enabled, signer set, but no allowlist -> error (no open access).
+	t.Setenv("APP_ALB_ARN", "arn:aws:elasticloadbalancing:us-east-1:111:loadbalancer/app/x/y")
+	t.Setenv("ALLOWED_EMAILS", "")
+	t.Setenv("ALLOWED_EMAIL_DOMAINS", "")
+	t.Setenv("HOST_EMAILS", "")
+	if err := configureALBAuth(); err == nil {
+		t.Error("expected error when no allowlist is set under OIDC")
+	}
+}
+
 func TestALBOIDCDisabledWhenFlagOff(t *testing.T) {
 	prevEnabled := albAuthEnabled
 	t.Cleanup(func() { albAuthEnabled = prevEnabled })
 
 	t.Setenv("APP_ALB_OIDC_AUTH", "")
-	configureALBAuth()
+	if err := configureALBAuth(); err != nil {
+		t.Fatalf("configureALBAuth: %v", err)
+	}
 	if albAuthEnabled {
 		t.Fatal("expected albAuthEnabled false when flag unset")
 	}

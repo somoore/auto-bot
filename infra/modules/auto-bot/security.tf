@@ -177,6 +177,40 @@ resource "aws_wafv2_web_acl" "app" {
     }
   }
 
+  # AWS Bot Control — behavioral bot detection (the user's stated concern).
+  # Toggle via var.enable_bot_control. COMMON inspection level. Note: this rule
+  # group carries additional WAF request cost, hence the toggle.
+  dynamic "rule" {
+    for_each = var.enable_bot_control ? [1] : []
+    content {
+      name     = "AWSManagedRulesBotControlRuleSet"
+      priority = 5
+
+      override_action {
+        none {}
+      }
+
+      statement {
+        managed_rule_group_statement {
+          name        = "AWSManagedRulesBotControlRuleSet"
+          vendor_name = "AWS"
+
+          managed_rule_group_configs {
+            aws_managed_rules_bot_control_rule_set {
+              inspection_level = "COMMON"
+            }
+          }
+        }
+      }
+
+      visibility_config {
+        cloudwatch_metrics_enabled = true
+        metric_name                = "${var.name_prefix}-bot-control"
+        sampled_requests_enabled   = true
+      }
+    }
+  }
+
   rule {
     name     = "RateLimit"
     priority = 40
@@ -218,8 +252,37 @@ resource "aws_kms_key" "cosign" {
   description              = "${var.name_prefix} cosign image signing key"
   customer_master_key_spec = "ECC_NIST_P256"
   key_usage                = "SIGN_VERIFY"
-  enable_key_rotation      = false
+  enable_key_rotation      = false # asymmetric keys cannot auto-rotate
   deletion_window_in_days  = 7
+
+  # Explicit key policy instead of the default account-root-full-control. Root
+  # retains administrative break-glass; signing/verification are the only crypto
+  # operations granted (to account principals with matching IAM). Tighten the
+  # Sign principal to a dedicated deploy role when one exists.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableRootAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowSignVerify"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action = [
+          "kms:Sign",
+          "kms:Verify",
+          "kms:GetPublicKey",
+          "kms:DescribeKey",
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 resource "aws_kms_alias" "cosign" {

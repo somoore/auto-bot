@@ -431,6 +431,46 @@ func requestHasLocalSessionHeader(r *http.Request) bool {
 	return value == "1" || strings.EqualFold(value, "true")
 }
 
+// requestOriginAllowed is a CSRF defense for state-changing requests. It checks
+// the Origin (falling back to Referer) host against the request's own host.
+// A cross-site form/fetch POST carries a foreign Origin, so this rejects it even
+// if the browser attaches auth cookies (the ALB/Cognito cookie SameSite is not
+// under app control). Same-origin requests and non-browser requests with a valid
+// bearer token (no Origin header) are allowed.
+func requestOriginAllowed(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		// No Origin: either a same-origin GET-style or a programmatic bearer-token
+		// caller. Bearer-token API callers are authorized by the token itself, so
+		// fall back to Referer when present, otherwise allow.
+		ref := strings.TrimSpace(r.Header.Get("Referer"))
+		if ref == "" {
+			return true
+		}
+		origin = ref
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
+}
+
+// enforceCSRF rejects state-changing (non-safe-method) requests whose Origin/
+// Referer is cross-site. Returns false and writes a 403 when blocked; the caller
+// should return immediately. Safe methods pass through.
+func enforceCSRF(w http.ResponseWriter, r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	if requestOriginAllowed(r) {
+		return true
+	}
+	http.Error(w, "cross-site request blocked", http.StatusForbidden)
+	return false
+}
+
 func requestHostIsLocalhost(r *http.Request) bool {
 	host := strings.TrimSpace(r.Host)
 	if host == "" {
@@ -443,8 +483,19 @@ func requestHostIsLocalhost(r *http.Request) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
+// secureCookies reports whether session cookies should carry the Secure flag.
+// Always true outside APP_ENV=local, so production never emits a non-Secure
+// session cookie even if a proxy-header signal is missing; local HTTP dev keeps
+// cookies usable over plain http://localhost.
+func secureCookies(r *http.Request) bool {
+	if appEnvironment != "local" {
+		return true
+	}
+	return requestIsHTTPS(r)
+}
+
 func setSessionCookie(w http.ResponseWriter, r *http.Request, session webSession) {
-	// #nosec G124 -- Secure follows the request scheme so localhost HTTP development works; production uses HTTPS.
+	// #nosec G124 -- Secure is always set outside APP_ENV=local; see secureCookies.
 	http.SetCookie(w, &http.Cookie{
 		Name:     authCookieName,
 		Value:    session.ID,
@@ -453,12 +504,12 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, session webSession
 		MaxAge:   int(authStore.ttl.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   requestIsHTTPS(r),
+		Secure:   secureCookies(r),
 	})
 }
 
 func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
-	// #nosec G124 -- Secure follows the request scheme so localhost HTTP development can clear the cookie.
+	// #nosec G124 -- Secure is always set outside APP_ENV=local; see secureCookies.
 	http.SetCookie(w, &http.Cookie{
 		Name:     authCookieName,
 		Value:    "",
@@ -466,7 +517,7 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   requestIsHTTPS(r),
+		Secure:   secureCookies(r),
 	})
 }
 
@@ -496,6 +547,9 @@ func writeCreatedSessionResponse(w http.ResponseWriter, session webSession) {
 
 func createSessionHandler(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
+	if !enforceCSRF(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -581,6 +635,9 @@ func cleanLocalLoginRedirect(next string) string {
 
 func deleteSessionHandler(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
+	if !enforceCSRF(w, r) {
+		return
+	}
 	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

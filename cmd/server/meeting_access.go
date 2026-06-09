@@ -110,6 +110,9 @@ func newMeetingAccessManager() *meetingAccessManager {
 
 func setupMeetingHandler(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
+	if !enforceCSRF(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -161,6 +164,9 @@ func setupMeetingHandler(w http.ResponseWriter, r *http.Request) {
 
 func joinMeetingHandler(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
+	if !enforceCSRF(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -223,6 +229,9 @@ func joinMeetingHandler(w http.ResponseWriter, r *http.Request) {
 
 func leaveMeetingHandler(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
+	if !enforceCSRF(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -295,6 +304,9 @@ func meetingStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 func switchMeetingTypeHandler(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
+	if !enforceCSRF(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
