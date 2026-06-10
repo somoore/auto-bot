@@ -1,0 +1,97 @@
+# auto-bot Helm chart — default values.
+# See deploy/helm/auto-bot/values-example.yaml for a filled-in example,
+# and docs/deployment.md for the full guide.
+
+image:
+  repository: ghcr.io/somoore/auto-bot
+  tag: ""              # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# Single instance only. State is a SQLite file (WAL) on a ReadWriteOnce PVC and
+# the WebRTC/SFU state is in-process, so two pods must never run at once.
+replicaCount: 1
+
+service:
+  port: 3000
+
+# Persistent board state at /srv/data (board.sqlite + WAL siblings).
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: ""     # "" = cluster default StorageClass
+  mountPath: /srv/data
+
+# -- Ingress -----------------------------------------------------------------
+# The app speaks plain HTTP on :3000. Terminate TLS at your ingress controller
+# (or a tunnel/mesh in front of it). This chart ships a generic Ingress; set the
+# host and (optionally) a TLS secret. Examples for Traefik/nginx in values-example.yaml.
+ingress:
+  enabled: true
+  className: ""        # e.g. "traefik" or "nginx"
+  host: auto-bot.example.com
+  # TLS secret name (e.g. from cert-manager). Empty = no TLS block on the Ingress
+  # (use when TLS terminates upstream, e.g. a Cloudflare Tunnel or Tailscale).
+  tlsSecret: ""
+  annotations: {}
+  # Optionally inject "Authorization: Bearer <token>" via your ingress so the app
+  # auto-authenticates and never shows its token prompt. Only safe when access is
+  # already gated upstream (SSO / private network). See docs/deployment.md.
+  # Provide the middleware/annotation yourself; this just toggles the doc pattern.
+
+# -- App configuration (non-secret) -----------------------------------------
+config:
+  APP_ENV: production
+  APP_AUTH_MODE: token        # "token" (default) or "disabled" (local only)
+  VOICE_PROVIDER: nova-sonic  # "nova-sonic" (AWS Bedrock) or "openai"
+  APP_ROOM_ID: kanban-meeting
+  APP_BOARD_ID: default
+  BOARD_SQLITE_PATH: /srv/data/board.sqlite
+  # Nova Sonic lives in us-east-1 / us-west-2 (NOT us-east-2).
+  AWS_REGION: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+  LIVEKIT_DEPLOYMENT_MODE: cloud
+  # APP_BASE_URL is derived from ingress.host automatically (drives CSP/WebSocket origin).
+
+# -- Secrets -----------------------------------------------------------------
+# The chart injects secret env vars from an existing Kubernetes Secret that YOU
+# create (never commit real secrets). See deploy/helm/auto-bot/secret.example.yaml.
+# Tools like Sealed Secrets or External Secrets are recommended for GitOps.
+existingSecret: auto-bot-secrets
+secretEnvKeys:
+  - APP_API_TOKEN
+  # nova-sonic voice path (LiveKit Cloud):
+  - LIVEKIT_URL
+  - LIVEKIT_API_KEY
+  - LIVEKIT_API_SECRET
+  - LIVEKIT_BROWSER_URL
+  # If VOICE_PROVIDER=openai, add: OPENAI_API_KEY
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# -- AWS Bedrock auth via IAM Roles Anywhere (recommended for production) -----
+# Lets the pod call Bedrock with NO long-lived AWS key: an X.509 client cert is
+# exchanged for short-lived STS credentials by a sidecar (aws_signing_helper),
+# which the AWS SDK reads via an IMDS-compatible endpoint.
+#
+# Create the AWS resources with deploy/terraform/roles-anywhere, generate a leaf
+# cert, store it in `certSecret`, and fill the ARNs below. See docs/deployment.md.
+#
+# If disabled, provide AWS credentials some other way (e.g. AWS_ACCESS_KEY_ID via
+# the Secret) — fine for testing, not recommended for production.
+awsRolesAnywhere:
+  enabled: false
+  # Sidecar image containing the AWS IAM Roles Anywhere credential helper.
+  # Build it yourself from https://github.com/aws/rolesanywhere-credential-helper
+  # (see docs/deployment.md; use GOAMD64=v1 if your nodes lack AVX2) and set this
+  # to your own registry + a pinned tag/digest.
+  image: ghcr.io/somoore/aws-signing-helper:1.8.4
+  port: 9911
+  certSecret: auto-bot-ra-cert   # Secret with keys: leaf.crt, leaf.key
+  trustAnchorArn: ""             # from the Terraform module output
+  profileArn: ""
+  roleArn: ""

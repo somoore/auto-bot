@@ -1,0 +1,90 @@
+name: release
+
+# Build and publish the auto-bot image to GHCR and Docker Hub on a version tag.
+# Images are built from the exact committed code so the community runs what we ship.
+#
+# Required repository secrets for Docker Hub:
+#   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+# GHCR uses the built-in GITHUB_TOKEN (no extra secret).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write       # create the GitHub Release
+  packages: write       # push to GHCR
+  id-token: write       # keyless cosign signing (OIDC)
+  attestations: write   # build provenance attestation
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Docker Hub is optional — only runs if DOCKERHUB_USERNAME secret is set.
+      - name: Log in to Docker Hub
+        if: ${{ vars.DOCKERHUB_ENABLED == 'true' }}
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+            ${{ vars.DOCKERHUB_ENABLED == 'true' && format('docker.io/{0}/auto-bot', secrets.DOCKERHUB_USERNAME) || '' }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true     # SLSA build provenance attestation
+          sbom: true           # generate an SBOM attestation
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+
+      - name: Sign the image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # Sign the immutable digest (not a mutable tag). Keyless: identity comes
+          # from the GitHub Actions OIDC token, recorded in the public Rekor log.
+          cosign sign --yes "ghcr.io/${{ github.repository }}@${DIGEST}"
+
+      - name: Create GitHub Release with auto-generated changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # Auto-generates notes from merged PRs (categorized via .github/release.yml).
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            --notes "Container image: \`ghcr.io/${{ github.repository }}:${TAG#v}\` (\`${DIGEST}\`), signed with cosign. See [docs/deployment.md](https://github.com/${{ github.repository }}/blob/main/docs/deployment.md#verifying-the-published-image) to verify."

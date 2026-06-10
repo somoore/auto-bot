@@ -1,0 +1,8 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+# Generated certificates (never commit private keys)
+certs/

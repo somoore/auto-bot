@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars and fill in. Never commit a filled-in copy with real ARNs.
+
+name_prefix    = "auto-bot"
+certificate_cn = "auto-bot-pod"
+
+# The CA certificate created by ./gen-certs.sh (the trust anchor).
+ca_certificate_pem = file("certs/ca.crt")
+
+# Claude agent models. For "us." inference profiles, list the profile ARN AND the
+# underlying foundation-model ARNs in every region the profile routes to. Find them with:
+#   aws bedrock get-inference-profile --inference-profile-identifier us.anthropic.claude-haiku-4-5-20251001-v1:0 --query 'models[].modelArn'
+agent_model_arns = [
+  "arn:aws:bedrock:us-east-1:111122223333:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+  "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+  "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+]
+
+# Nova Sonic voice model (defaults cover us-east-1; override for us-west-2 if needed).
+# nova_sonic_model_arns = [
+#   "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-sonic-v1:0",
+# ]

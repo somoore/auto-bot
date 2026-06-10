@@ -1,0 +1,326 @@
+openapi: 3.1.0
+info:
+  title: Auto Bot Meeting API
+  version: 0.1.0
+  description: >
+    HTTP API for the voice-first meeting assistant. Browser routes use HttpOnly
+    session cookies. Automation clients may use Bearer tokens when configured.
+servers:
+  - url: http://localhost:3001
+    description: Local Nova Sonic stack
+  - url: http://localhost:3000
+    description: Local OpenAI Realtime stack
+security:
+  - browserSession: []
+  - bearerToken: []
+paths:
+  /:
+    get:
+      summary: Main meeting application page.
+      security: []
+      responses:
+        "200":
+          description: HTML meeting UI shell. The shell contains no app token; authenticated control APIs still require a session or Bearer token.
+          content:
+            text/html: {}
+  /healthz:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: Server is running.
+  /auth/session:
+    get:
+      summary: Read browser session status.
+      responses:
+        "200":
+          description: Current session status.
+    post:
+      summary: Create a browser session from the app access token.
+      responses:
+        "200":
+          description: Session created.
+        "401":
+          description: Access token missing or invalid.
+    delete:
+      summary: Clear the browser session.
+      responses:
+        "200":
+          description: Session cleared.
+  /auth/local-login:
+    get:
+      summary: Local-only login endpoint (APP_ENV=local), for local development.
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: identity
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: next
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Local session created and browser redirected.
+        "401":
+          description: Local login token missing or invalid.
+        "404":
+          description: Disabled outside local mode.
+        "500":
+          description: Session could not be created.
+  /websocket:
+    get:
+      summary: WebSocket control channel for board, meeting, and agent events.
+      responses:
+        "101":
+          description: WebSocket upgrade accepted.
+        "401":
+          description: Session or bearer token required.
+  /livekit-token:
+    get:
+      summary: Mint a room-scoped LiveKit token after voice readiness preflight.
+      parameters:
+        - name: identity
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: room_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: board_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: LiveKit token response.
+        "400":
+          description: Identity is missing or invalid.
+        "401":
+          description: Session required.
+        "403":
+          description: Identity does not match the authenticated browser session.
+        "429":
+          description: Rate limit exceeded.
+        "500":
+          description: Token generation failed.
+        "503":
+          description: Voice provider is not ready.
+  /meeting/setup:
+    post:
+      summary: Host creates or regenerates a random meeting access code.
+      responses:
+        "200":
+          description: Meeting code created.
+        "403":
+          description: Host permission required.
+  /meeting/join:
+    post:
+      summary: Join a meeting with a generated meeting code.
+      responses:
+        "200":
+          description: Participant session created.
+        "403":
+          description: Invalid code or closed meeting.
+  /meeting/leave:
+    post:
+      summary: Leave the current meeting; host departure ends the meeting.
+      responses:
+        "200":
+          description: Leave recorded.
+  /meeting/status:
+    get:
+      summary: Get current meeting access, participants, and host state.
+      responses:
+        "200":
+          description: Meeting status.
+  /meeting/type:
+    post:
+      summary: Host switches meeting type.
+      responses:
+        "200":
+          description: Meeting type changed.
+        "403":
+          description: Host permission required.
+  /meeting/intelligence:
+    get:
+      summary: Get current or archived meeting intelligence report.
+      parameters:
+        - name: meeting_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Meeting intelligence report.
+  /meetings:
+    get:
+      summary: List archived meeting reports.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 25
+        - name: board_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Archived meeting summaries.
+  /post-meeting:
+    get:
+      summary: Post-meeting intelligence dashboard page.
+      security: []
+      responses:
+        "200":
+          description: HTML post-meeting dashboard shell. Report data is loaded from authenticated JSON endpoints.
+          content:
+            text/html: {}
+  /setup/status:
+    get:
+      summary: Deployment setup readiness status.
+      responses:
+        "200":
+          description: Setup status.
+  /setup/aws/refresh:
+    post:
+      summary: Local-only host trigger to refresh expired AWS speech credentials.
+      responses:
+        "202":
+          description: Refresh started or already running.
+        "400":
+          description: Refresh request could not be decoded or broker returned an invalid response.
+        "401":
+          description: Session required.
+        "403":
+          description: Meeting host access required.
+        "404":
+          description: Endpoint is unavailable outside local mode or from a non-localhost request.
+        "409":
+          description: Active speech provider is not AWS-based.
+        "502":
+          description: Local refresh broker returned an error.
+        "501":
+          description: Local refresh broker is not configured.
+  /observability/status:
+    get:
+      summary: Meeting observability and reliability signals.
+      responses:
+        "200":
+          description: Observability status.
+  /voice/providers:
+    get:
+      summary: Registered voice providers and active provider state.
+      responses:
+        "200":
+          description: Voice provider list.
+  /voice/model:
+    get:
+      summary: Active voice model and host-selectable full-duplex model options.
+      responses:
+        "200":
+          description: Voice model status.
+    post:
+      summary: Host-only voice model/provider selection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider:
+                  type: string
+                model:
+                  type: string
+                model_id:
+                  type: string
+                id:
+                  type: string
+      responses:
+        "200":
+          description: Voice model updated.
+        "202":
+          description: Local restart broker accepted a provider-path change.
+        "400":
+          description: Invalid model selection request.
+        "401":
+          description: Session required.
+        "403":
+          description: Meeting host access is required.
+        "409":
+          description: Selected provider path requires an app restart.
+        "502":
+          description: Local restart broker returned an error.
+  /voice/status:
+    get:
+      summary: Live voice health, including AWS, LiveKit, Bedrock, audio, and transcription state.
+      responses:
+        "200":
+          description: Voice status. Readiness failures are represented in JSON fields such as ok, ready, requires_restart, and message.
+        "401":
+          description: Session required.
+  /identity/status:
+    get:
+      summary: Authenticated identity, role, and permission state.
+      responses:
+        "200":
+          description: Identity status.
+  /workspace/status:
+    get:
+      summary: Workspace, board, room, region, identity, and connector health scope.
+      responses:
+        "200":
+          description: Workspace status.
+  /jira/webhook:
+    post:
+      summary: Jira webhook refresh endpoint.
+      security:
+        - jiraWebhookSecret: []
+        - jiraWebhookHeader: []
+      responses:
+        "200":
+          description: Webhook accepted.
+        "400":
+          description: Webhook payload is invalid.
+        "401":
+          description: Webhook secret missing or invalid.
+        "403":
+          description: Webhook payload failed project-key validation.
+        "404":
+          description: Jira sync is not configured.
+        "502":
+          description: Jira refresh failed.
+components:
+  securitySchemes:
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: auto_bot_session
+    bearerToken:
+      type: http
+      scheme: bearer
+    jiraWebhookSecret:
+      type: http
+      scheme: bearer
+    jiraWebhookHeader:
+      type: apiKey
+      in: header
+      name: X-Auto-Bot-Jira-Webhook-Secret

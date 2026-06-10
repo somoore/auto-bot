@@ -1,0 +1,43 @@
+# Example values for a real deployment. Pass with:
+#   helm install auto-bot deploy/helm/auto-bot -f my-values.yaml
+#
+# This shows a production-style setup: a published image, an nginx/Traefik Ingress
+# with a cert-manager TLS secret, and AWS Bedrock auth via IAM Roles Anywhere.
+
+image:
+  repository: ghcr.io/somoore/auto-bot
+  tag: "0.1.0"            # pin a real release tag (or a @sha256: digest)
+
+persistence:
+  size: 5Gi
+  storageClass: ""        # cluster default
+
+ingress:
+  enabled: true
+  className: nginx        # or "traefik"
+  host: auto-bot.example.com
+  tlsSecret: auto-bot-tls # e.g. issued by cert-manager
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+config:
+  VOICE_PROVIDER: nova-sonic
+  AWS_REGION: us-east-1   # Nova Sonic region (NOT us-east-2)
+
+existingSecret: auto-bot-secrets
+secretEnvKeys:
+  - APP_API_TOKEN
+  - LIVEKIT_URL
+  - LIVEKIT_API_KEY
+  - LIVEKIT_API_SECRET
+  - LIVEKIT_BROWSER_URL
+
+# Call Bedrock with no long-lived AWS key. Fill ARNs from the Terraform module
+# (deploy/terraform/roles-anywhere) and store a leaf cert in `certSecret`.
+awsRolesAnywhere:
+  enabled: true
+  image: ghcr.io/somoore/aws-signing-helper:1.8.4
+  certSecret: auto-bot-ra-cert
+  trustAnchorArn: arn:aws:rolesanywhere:us-east-1:111122223333:trust-anchor/REPLACE
+  profileArn: arn:aws:rolesanywhere:us-east-1:111122223333:profile/REPLACE
+  roleArn: arn:aws:iam::111122223333:role/auto-bot-bedrock
