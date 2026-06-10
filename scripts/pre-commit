@@ -52,6 +52,17 @@ else
   fail "go vet found issues"
 fi
 
+step "Checking for dead code (staticcheck)"
+if command -v staticcheck >/dev/null 2>&1; then
+  if staticcheck ./... 2>&1; then
+    pass "staticcheck passed (no unused funcs/types/dead code)"
+  else
+    fail "staticcheck found issues"
+  fi
+else
+  printf "${YELLOW}  ⚠ staticcheck not installed — skipping (CI enforces it). Install: go install honnef.co/go/tools/cmd/staticcheck@latest${NC}\n"
+fi
+
 step "Running Go tests"
 if go test ./... 2>&1; then
   pass "Go tests passed"
