@@ -32,11 +32,23 @@ jobs:
       - name: Verify modules
         run: go mod verify
 
+      - name: No phantom/unused dependencies
+        run: |
+          # go.mod/go.sum must already be tidy — fails if a dep is unused or missing.
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - name: Build
         run: go build ./...
 
       - name: Test
         run: go test ./...
+
+      - name: Dead-code & lint (staticcheck)
+        run: |
+          # Catches unused functions/types/fields and other issues the compiler allows.
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          "$(go env GOPATH)/bin/staticcheck" ./...
 
       - name: Vulnerability scan
         run: |
