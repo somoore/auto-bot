@@ -21,6 +21,9 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # Gated by the 'release' environment: a tag push pauses here until a required
+    # reviewer approves, so no image is built/published/signed without sign-off.
+    environment: release
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

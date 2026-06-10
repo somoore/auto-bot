@@ -81,11 +81,19 @@ kubectl create secret generic auto-bot-secrets \
   --from-literal=LIVEKIT_BROWSER_URL="wss://your-project.livekit.cloud"
 ```
 
+The container image is published — you don't need to build it. The chart defaults to
+[`ghcr.io/somoore/auto-bot`](https://github.com/somoore/auto-bot/pkgs/container/auto-bot)
+(signed with cosign; see [docs/deployment.md](docs/deployment.md#verifying-the-published-image)).
+
 For GitOps, seal this with [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets)
 or [External Secrets](https://external-secrets.io) instead. See
 [`deploy/helm/auto-bot/secret.example.yaml`](deploy/helm/auto-bot/secret.example.yaml).
 
 ### 2. Set up Bedrock access (IAM Roles Anywhere)
+
+> **Heads up:** the credential-helper **sidecar image is not published** — you build it
+> yourself (a few lines; see [docs/deployment.md](docs/deployment.md#2-build-the-sidecar-image))
+> and point `awsRolesAnywhere.image` at your own registry. The main app image *is* published.
 
 ```bash
 cd deploy/terraform/roles-anywhere
