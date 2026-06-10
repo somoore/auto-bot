@@ -95,3 +95,8 @@ $RECYCLE.BIN/
 # ignore runtime volumes and overrides
 docker-compose.override.yml
 var/
+
+# Internal/maintainer-only docs (not part of the public project)
+docs/launch-checklist.md
+docs/*.local.md
+*.scratch.md

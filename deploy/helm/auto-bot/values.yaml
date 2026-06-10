@@ -86,10 +86,10 @@ resources:
 awsRolesAnywhere:
   enabled: false
   # Sidecar image containing the AWS IAM Roles Anywhere credential helper.
-  # Build it yourself from https://github.com/aws/rolesanywhere-credential-helper
-  # (see docs/deployment.md; use GOAMD64=v1 if your nodes lack AVX2) and set this
-  # to your own registry + a pinned tag/digest.
-  image: ghcr.io/somoore/aws-signing-helper:1.8.4
+  # NOTE: this is NOT a published image — you must build it yourself from
+  # https://github.com/aws/rolesanywhere-credential-helper (see docs/deployment.md;
+  # use GOAMD64=v1 if your nodes lack AVX2) and set this to your own registry + tag.
+  image: REPLACE-ME/aws-signing-helper:1.8.4
   port: 9911
   certSecret: auto-bot-ra-cert   # Secret with keys: leaf.crt, leaf.key
   trustAnchorArn: ""             # from the Terraform module output

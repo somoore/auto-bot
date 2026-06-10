@@ -25,7 +25,18 @@ For a fast path, see the Quickstart in the [README](../README.md).
 
 ## The container image
 
-Use a published image (`image.repository` / `image.tag`) or build your own:
+Official images are published to **GitHub Container Registry** and are what the chart uses by
+default — no build required:
+
+```
+ghcr.io/somoore/auto-bot:<version>   # e.g. :0.1.2, or :latest
+```
+
+They are multi-tag (`MAJOR.MINOR.PATCH`, `MAJOR.MINOR`, `latest`, `sha-<commit>`), built by the
+release workflow from tagged commits, and **signed with cosign** (+ SBOM and provenance). See
+[Verifying the published image](#verifying-the-published-image).
+
+To build your own instead (e.g. a private registry):
 
 ```bash
 docker build -t <your-registry>/auto-bot:<tag> .
@@ -107,6 +118,9 @@ aws bedrock get-inference-profile \
 ```
 
 ### 2. Build the sidecar image
+
+> Unlike the app image, the Roles Anywhere sidecar is **not published** — build it yourself and
+> set `awsRolesAnywhere.image` to your registry. (The chart's default value is a placeholder.)
 
 The AWS-published `aws_signing_helper` binary targets a modern CPU baseline (x86-64-v3 / AVX2).
 If your nodes present a generic virtual CPU without AVX2 (common on some hypervisors), the binary
