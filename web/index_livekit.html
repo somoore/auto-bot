@@ -4274,7 +4274,7 @@
         applyVoiceStatus(status)
         if (!isAWSVoiceStatus(status)) {
           if (options.allowTextOnlyProvider) return status
-          const message = 'The meeting room is running in the unified LiveKit experience. OpenAI Realtime is selectable for configuration, but it cannot join this LiveKit room until the OpenAI-to-LiveKit bridge is enabled. Choose AWS Nova Sonic in Meeting Settings to join now.'
+          const message = 'The meeting room runs on AWS Nova Sonic over LiveKit. The active voice status is not an AWS Nova Sonic status; choose AWS Nova Sonic in Meeting Settings to join.'
           setLog(message)
           throw new Error(message)
         }

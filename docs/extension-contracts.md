@@ -22,7 +22,7 @@ Provider responsibilities:
 - Stream transcript/audio events with speaker evidence.
 - Support barge-in if the backend can handle it.
 - Avoid direct Jira/GitHub mutation.
-- Declare model capability boundaries. For example, `gpt-realtime-2` can back an OpenAI voice-to-action provider, while `gpt-realtime-whisper` and `gpt-realtime-translate` are transcription/translation profiles and must not receive Jira/GitHub tools.
+- Declare model capability boundaries. For example, a full-duplex voice-to-action model can run the meeting agent with Jira/GitHub tools, while a transcription- or translation-only profile must be registered without Jira/GitHub write authority.
 
 Current runtime limitation: the server still owns the concrete browser/media session startup path in `cmd/server/main.go`. Registering a provider in `cmd/server/extensions.go` exposes health and option metadata, but a new live provider also needs runtime selection, token/WebSocket behavior, model options, UI setup controls, and eval fixtures before it can carry a real meeting.
 

@@ -36,59 +36,6 @@ func setupExtensionRuntime(board *kanbanBoard, syncer *jiraSyncer) *extensionRun
 		enabled: voiceProvider == "nova-sonic",
 	})
 	_ = runtime.voice.Register(serverVoiceProviderDescriptor{
-		name:        "openai-realtime",
-		displayName: "OpenAI Realtime",
-		capabilities: core.VoiceCapabilities{
-			FullDuplex:      true,
-			Transport:       "WebRTC",
-			Modalities:      []string{"audio", "transcript"},
-			SupportsBargeIn: true,
-		},
-		enabled: voiceProvider == "openai",
-		details: map[string]string{
-			"model":               realtimeModel(),
-			"transcription_model": realtimeTranscriptionModel(),
-			"endpoint":            realtimeCallsURL,
-			"profile":             "voice-agent",
-		},
-	})
-	_ = runtime.voice.Register(serverVoiceProviderDescriptor{
-		name:        "openai-realtime-translate",
-		displayName: "OpenAI Realtime Translate",
-		capabilities: core.VoiceCapabilities{
-			FullDuplex:      true,
-			Transport:       "WebRTC",
-			Modalities:      []string{"audio", "translated_audio", "translated_transcript"},
-			SupportsBargeIn: false,
-		},
-		enabled: false,
-		details: map[string]string{
-			"model":           openAIRealtimeTranslationModel(),
-			"target_language": openAIRealtimeTranslationTargetLanguage(),
-			"client_secret":   realtimeTranslationClientSecretsURL,
-			"endpoint":        realtimeTranslationCallsURL,
-			"profile":         "live-translation",
-			"tool_calling":    "false",
-		},
-	})
-	_ = runtime.voice.Register(serverVoiceProviderDescriptor{
-		name:        "openai-realtime-whisper",
-		displayName: "OpenAI Realtime Whisper",
-		capabilities: core.VoiceCapabilities{
-			FullDuplex:      false,
-			Transport:       "WebRTC/WebSocket",
-			Modalities:      []string{"audio", "transcript"},
-			SupportsBargeIn: false,
-		},
-		enabled: false,
-		details: map[string]string{
-			"model":        realtimeTranscriptionModel(),
-			"endpoint":     realtimeTranscriptionSessionsURL,
-			"profile":      "streaming-transcription",
-			"tool_calling": "false",
-		},
-	})
-	_ = runtime.voice.Register(serverVoiceProviderDescriptor{
 		name:        "livekit-cloud",
 		displayName: "LiveKit Cloud",
 		capabilities: core.VoiceCapabilities{
@@ -176,14 +123,6 @@ func (provider serverVoiceProviderDescriptor) Health(context.Context) core.Voice
 	case "nova-sonic":
 		details["model"] = selectedNovaSonicModel()
 		details["profile"] = "voice-agent"
-	case "openai-realtime":
-		details["model"] = realtimeModel()
-		details["transcription_model"] = realtimeTranscriptionModel()
-	case "openai-realtime-translate":
-		details["model"] = openAIRealtimeTranslationModel()
-		details["target_language"] = openAIRealtimeTranslationTargetLanguage()
-	case "openai-realtime-whisper":
-		details["model"] = realtimeTranscriptionModel()
 	}
 	return core.VoiceHealth{
 		OK:        provider.enabled,

@@ -2,7 +2,6 @@
 # Compiled binaries
 /auto-bot
 /server
-openai-realtime-meeting-assistant
 *.exe
 *.exe~
 *.dll

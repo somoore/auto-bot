@@ -8,8 +8,6 @@ info:
 servers:
   - url: http://localhost:3001
     description: Local Nova Sonic stack
-  - url: http://localhost:3000
-    description: Local OpenAI Realtime stack
 security:
   - browserSession: []
   - bearerToken: []

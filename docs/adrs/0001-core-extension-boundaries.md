@@ -15,9 +15,6 @@ Create `internal/core` as the provider-neutral extension contract package. Voice
 Runtime code in `cmd/server` registers current adapters for:
 
 - `nova-sonic`
-- `openai-realtime`
-- `openai-realtime-translate`
-- `openai-realtime-whisper`
 - `livekit-cloud`
 - `local-board`
 - `jira`

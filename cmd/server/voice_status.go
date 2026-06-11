@@ -75,7 +75,7 @@ func voiceStatusHandler(w http.ResponseWriter, r *http.Request) {
 func currentVoiceReadiness(ctx context.Context, ensureAgent bool) voiceReadinessResponse {
 	provider := strings.TrimSpace(voiceProvider)
 	if provider == "" {
-		provider = "openai"
+		provider = "nova-sonic"
 	}
 
 	status := voiceReadinessResponse{
@@ -94,48 +94,6 @@ func currentVoiceReadiness(ctx context.Context, ensureAgent bool) voiceReadiness
 	if sharedBoard != nil {
 		status.LastTranscriptionAt = sharedBoard.LastTranscriptAt()
 		status.TranscriptionFlowing = status.LastTranscriptionAt != ""
-	}
-
-	if provider != "nova-sonic" {
-		status.TranscriptionModel = realtimeTranscriptionModel()
-		if err := validateRealtimeConversationModel(status.VoiceModel); err != nil {
-			status.OK = false
-			status.Ready = false
-			status.AgentReady = false
-			status.AgentParticipantPresent = false
-			status.LastError = err.Error()
-			status.Message = err.Error()
-			status.RequiresRestart = true
-			return status
-		}
-		if err := validateRealtimeTranscriptionModel(status.TranscriptionModel); err != nil {
-			status.OK = false
-			status.Ready = false
-			status.AgentReady = false
-			status.AgentParticipantPresent = false
-			status.LastError = err.Error()
-			status.Message = err.Error()
-			status.RequiresRestart = true
-			return status
-		}
-		if kanbanApp == nil {
-			status.Ready = false
-			status.AgentReady = false
-			status.AgentParticipantPresent = false
-			status.Message = "OpenAI Realtime is configured, but the server-side voice agent has not been initialized."
-			return status
-		}
-		if !kanbanApp.IsConnected() {
-			status.Ready = false
-			status.AgentReady = false
-			status.AgentParticipantPresent = false
-			status.LastError = kanbanApp.LastJoinError()
-			status.Message = openAIRealtimeRecoveryMessage(status.LastError)
-			return status
-		}
-		status.AgentConnectedAt = kanbanApp.AgentConnectedAt()
-		status.AgentParticipantPresent = true
-		return status
 	}
 
 	status.Ready = false
@@ -246,18 +204,6 @@ func localAWSRecoveryMessage(reason string) string {
 		reason = "AWS credentials are missing or expired."
 	}
 	return reason + " Run scripts/local-up.sh from this repo; it will run assume test_AccountA/AdministratorAccess in us-east-1, restart Docker with fresh temporary AWS credentials, and reopen the app. Then click Join Room again."
-}
-
-func openAIRealtimeRecoveryMessage(reason string) string {
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		return "OpenAI Realtime is configured, but the server-side voice agent is still connecting. Wait a moment, then click Join Room again."
-	}
-	lowerReason := strings.ToLower(reason)
-	if strings.Contains(lowerReason, "insufficient_quota") || strings.Contains(lowerReason, "exceeded your current quota") || strings.Contains(lowerReason, "429") {
-		return "OpenAI Realtime rejected the session because the configured API key has insufficient quota or billing access. Update the OpenAI account billing/quota or use another voice model, then try Join Room again."
-	}
-	return "OpenAI Realtime could not join the meeting: " + reason
 }
 
 func scrubStatusError(err error) string {

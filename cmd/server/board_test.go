@@ -134,10 +134,10 @@ func TestModelContextRedactsPromptInjectionInUntrustedBoardData(t *testing.T) {
 }
 
 func TestSessionInstructionsRequireBilingualParticipantReplies(t *testing.T) {
-	instructions := newKanbanBoard().SessionInstructions()
+	instructions := newKanbanBoard().NovaSonicSessionInstructions()
 	for _, required := range []string{"For the room:", "every assistant message", "English-only follow-up fragments", "Short yes/no confirmations", "markdown headings"} {
 		if !strings.Contains(instructions, required) {
-			t.Fatalf("SessionInstructions missing multilingual guard %q", required)
+			t.Fatalf("NovaSonicSessionInstructions missing multilingual guard %q", required)
 		}
 	}
 }
@@ -168,7 +168,7 @@ func TestRiskyVoiceToolsRequireConfirmationAndCanBeConfirmed(t *testing.T) {
 	}
 	card := result["card"].(kanbanCard)
 
-	result, changed, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`","account_id":"account-123","display_name":"Scott Moore"}`, toolCallMeta{Source: "openai-realtime"})
+	result, changed, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`","account_id":"account-123","display_name":"Scott Moore"}`, toolCallMeta{Source: "voice-agent"})
 	if err != nil {
 		t.Fatalf("assign_ticket returned error: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestRiskyVoiceToolsRequireConfirmationAndCanBeConfirmed(t *testing.T) {
 		t.Fatalf("pending confirmations = %d, want 1", len(board.SnapshotState().PendingConfirmations))
 	}
 
-	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"`+confirmationID+`"}`, toolCallMeta{Source: "openai-realtime"})
+	result, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"`+confirmationID+`"}`, toolCallMeta{Source: "voice-agent"})
 	if err != nil {
 		t.Fatalf("confirm_action returned error: %v", err)
 	}
@@ -738,7 +738,7 @@ func TestMutationReplayIncludesAPIConfirmationEvidence(t *testing.T) {
 
 func TestJiraConflictResolutionKeepsLocalOrUsesJira(t *testing.T) {
 	board := newKanbanBoard()
-	result, _, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Local title","notes":"Local notes","tags":["local"],"status":"Backlog"}`, toolCallMeta{Source: "openai-realtime"})
+	result, _, err := board.ApplyToolCallWithMeta("create_ticket", `{"title":"Local title","notes":"Local notes","tags":["local"],"status":"Backlog"}`, toolCallMeta{Source: "voice-agent"})
 	if err != nil {
 		t.Fatalf("create_ticket returned error: %v", err)
 	}

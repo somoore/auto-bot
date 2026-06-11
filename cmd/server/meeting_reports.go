@@ -563,8 +563,8 @@ func buildMeetingObservability(sequence int64, access meetingAccessSnapshot) mee
 		activeParticipants = len(access.Participants)
 	}
 	return meetingObservability{
-		VoiceProvider:             firstNonEmpty(voiceProvider, "openai"),
-		VoiceProviderReady:        status.Ready || voiceProvider == "openai",
+		VoiceProvider:             firstNonEmpty(voiceProvider, "nova-sonic"),
+		VoiceProviderReady:        status.Ready,
 		LiveKitBrowserURL:         safeLiveKitBrowserURL(),
 		LiveKitDeploymentMode:     firstNonEmpty(os.Getenv("LIVEKIT_DEPLOYMENT_MODE"), "self-hosted"),
 		JiraConfigured:            jiraSync != nil,
@@ -654,9 +654,6 @@ func voiceProviderOptions() []voiceProviderOption {
 	}
 	return []voiceProviderOption{
 		{Name: "nova-sonic", Enabled: voiceProvider == "nova-sonic", FullDuplex: true, Transport: "LiveKit", Notes: "Current AWS Bedrock Nova Sonic path."},
-		{Name: "openai-realtime", Enabled: voiceProvider == "openai", FullDuplex: true, Transport: "WebRTC", Notes: "OpenAI voice-to-action path using " + defaultRealtimeModel + " with " + defaultRealtimeTranscriptionModel + " transcripts."},
-		{Name: "openai-realtime-translate", Enabled: false, FullDuplex: true, Transport: "WebRTC", Notes: "Dedicated translation endpoint profile; no Jira/GitHub tool calling."},
-		{Name: "openai-realtime-whisper", Enabled: false, FullDuplex: false, Transport: "WebRTC/WebSocket", Notes: "Dedicated streaming transcription endpoint profile; no Jira/GitHub tool calling."},
 		{Name: "livekit-cloud", Enabled: strings.EqualFold(os.Getenv("LIVEKIT_DEPLOYMENT_MODE"), "cloud"), FullDuplex: true, Transport: "LiveKit Cloud", Notes: "Terraform switch via LIVEKIT_DEPLOYMENT_MODE=cloud."},
 	}
 }

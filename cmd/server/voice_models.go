@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	voiceProviderOpenAI    = "openai"
 	voiceProviderNovaSonic = "nova-sonic"
 )
 
@@ -79,9 +78,7 @@ type updateVoiceModelRequest struct {
 func normalizeVoiceProviderID(provider string) string {
 	value := strings.ToLower(strings.TrimSpace(provider))
 	switch value {
-	case "", "openai-realtime", "openai":
-		return voiceProviderOpenAI
-	case "nova", "nova-sonic", "aws-nova-sonic", "aws":
+	case "", "nova", "nova-sonic", "aws-nova-sonic", "aws":
 		return voiceProviderNovaSonic
 	default:
 		return value
@@ -89,7 +86,7 @@ func normalizeVoiceProviderID(provider string) string {
 }
 
 func activeVoiceProviderID() string {
-	return normalizeVoiceProviderID(firstNonEmpty(voiceProvider, voiceProviderOpenAI))
+	return normalizeVoiceProviderID(firstNonEmpty(voiceProvider, voiceProviderNovaSonic))
 }
 
 func selectedNovaSonicModel() string {
@@ -106,8 +103,6 @@ func currentVoiceModelID(provider string) string {
 			return novaSonic.CurrentModelID()
 		}
 		return selectedNovaSonicModel()
-	case voiceProviderOpenAI:
-		return realtimeModel()
 	default:
 		return ""
 	}
@@ -206,29 +201,6 @@ func handleVoiceModelUpdate(w http.ResponseWriter, r *http.Request) {
 		if novaSonic != nil {
 			streamRestarted = novaSonic.SetModel(option.Model)
 		}
-	case voiceProviderOpenAI:
-		if kanbanApp != nil {
-			status, started, err := maybeStartLocalVoiceProviderRestart(r, option)
-			if err != nil {
-				writeJSON(w, http.StatusBadGateway, map[string]any{
-					"ok":      false,
-					"message": scrubStatusError(err),
-				})
-				return
-			}
-			if started {
-				writeJSON(w, http.StatusAccepted, status)
-				return
-			}
-			status = buildVoiceModelStatus("OpenAI Realtime model changes require restarting the server because the WebRTC peer is created at process startup.")
-			status.OK = false
-			status.RequiresRestart = true
-			status.RestartProvider = option.Provider
-			status.RestartModel = option.Model
-			writeJSON(w, http.StatusConflict, status)
-			return
-		}
-		voiceModels.set(option.Provider, option.Model)
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"ok":      false,
@@ -276,9 +248,6 @@ func buildVoiceModelStatus(message string) voiceModelStatus {
 		CurrentModelID:  activeProvider + ":" + currentModel,
 		Options:         voiceModelOptions(),
 		Message:         message,
-	}
-	if activeProvider == voiceProviderOpenAI {
-		status.TranscriptionModel = realtimeTranscriptionModel()
 	}
 	for _, option := range status.Options {
 		if option.Current {
@@ -346,7 +315,6 @@ func startLocalVoiceProviderRestart(r *http.Request, option voiceModelOption) (v
 func voiceModelOptions() []voiceModelOption {
 	activeProvider := activeVoiceProviderID()
 	currentNova := selectedNovaSonicModel()
-	currentOpenAI := realtimeModel()
 
 	options := []voiceModelOption{
 		{
@@ -369,41 +337,9 @@ func voiceModelOptions() []voiceModelOption {
 			ToolCalling: true,
 			CostHint:    "AWS Bedrock pricing",
 		},
-		{
-			Provider:    voiceProviderOpenAI,
-			Model:       "gpt-realtime-2",
-			Label:       "OpenAI gpt-realtime-2",
-			Description: "Most capable OpenAI realtime voice-to-action model.",
-			Transport:   "WebRTC",
-			FullDuplex:  true,
-			ToolCalling: true,
-			Reasoning:   true,
-			CostHint:    "$4 text input / $24 text output per 1M tokens; audio billed separately",
-		},
-		{
-			Provider:    voiceProviderOpenAI,
-			Model:       "gpt-realtime-1.5",
-			Label:       "OpenAI gpt-realtime-1.5",
-			Description: "Flagship audio-in/audio-out model for voice agents.",
-			Transport:   "WebRTC",
-			FullDuplex:  true,
-			ToolCalling: true,
-			CostHint:    "$4 text input / $16 text output per 1M tokens; audio billed separately",
-		},
-		{
-			Provider:    voiceProviderOpenAI,
-			Model:       "gpt-realtime-mini",
-			Label:       "OpenAI gpt-realtime-mini",
-			Description: "Lower-cost OpenAI realtime voice model for cost-sensitive runs.",
-			Transport:   "WebRTC",
-			FullDuplex:  true,
-			ToolCalling: true,
-			CostHint:    "$0.60 text input / $2.40 text output per 1M tokens; audio billed separately",
-		},
 	}
 
 	options = appendConfiguredModelOption(options, voiceProviderNovaSonic, currentNova, "Configured AWS Nova Sonic model", "LiveKit + Bedrock")
-	options = appendConfiguredModelOption(options, voiceProviderOpenAI, currentOpenAI, "Configured OpenAI Realtime model", "WebRTC")
 
 	for i := range options {
 		options[i].Provider = normalizeVoiceProviderID(options[i].Provider)
@@ -429,11 +365,6 @@ func appendConfiguredModelOption(options []voiceModelOption, provider string, mo
 	}
 	for _, option := range options {
 		if normalizeVoiceProviderID(option.Provider) == normalizeVoiceProviderID(provider) && strings.EqualFold(option.Model, model) {
-			return options
-		}
-	}
-	if normalizeVoiceProviderID(provider) == voiceProviderOpenAI {
-		if err := validateRealtimeConversationModel(model); err != nil {
 			return options
 		}
 	}
