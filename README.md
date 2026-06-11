@@ -194,9 +194,10 @@ The stable contract package is `internal/core`; runtime implementations live out
 ## Security
 
 Browser control APIs are protected by an HttpOnly session cookie; the page never receives
-`APP_API_TOKEN`. For multi-user/public use, put SSO (e.g. an identity-aware proxy or
-Cloudflare Access) in front of the ingress. See [security.md](security.md) and
-[docs/threat-model.md](docs/threat-model.md).
+`APP_API_TOKEN`. For multi-user/public use, put SSO in front of the ingress: the app natively
+derives a distinct per-user identity from a verified email via **Cloudflare Access** or **AWS ALB
+OIDC** (see [docs/deployment.md](docs/deployment.md#access-control)). See [security.md](security.md)
+and [docs/threat-model.md](docs/threat-model.md).
 
 ## Contributing
 
