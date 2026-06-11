@@ -2230,6 +2230,9 @@
       let micEnabled = true
       let camEnabled = true
       let localIdentity = 'User'
+      // Cosmetic display label for the local participant tile (the raw typed
+      // name, e.g. "Scott Moore"). Decoupled from the server-controlled identity.
+      let localDisplayName = ''
       let intentionalLeave = false
       let currentLayout = localStorage.getItem('kanban-layout') || 'filmstrip'
       let spotlightIdentity = null
@@ -4001,6 +4004,11 @@
         joinButton.disabled = true
         setStatus('Authenticating')
         hideFailureState()
+        // Capture the raw typed display label BEFORE it gets overwritten with the
+        // sanitized identity below. This is the cosmetic LiveKit tile name (e.g.
+        // "Scott Moore"); identity is server-controlled and decoupled from it.
+        const typedDisplayName = (identityInput.value || '').trim()
+        localDisplayName = typedDisplayName
         localIdentity = cleanIdentity(identityInput.value || localStorage.getItem('kanban-livekit-identity') || 'User')
         const chatOnly = isChatOnlyJoinMode()
         intentionalLeave = false
@@ -4016,7 +4024,15 @@
             localIdentity = authSession.participant_identity || cleanIdentity(localIdentity)
             await refreshVoiceModelOptions(true)
           }
-          identityInput.value = localIdentity
+          // Keep the user's typed display label visible (don't snap the Name
+          // field back to the sanitized identity). The field is the cosmetic
+          // display name; identity is tracked separately in localIdentity.
+          if (typedDisplayName) {
+            identityInput.value = typedDisplayName
+          } else {
+            identityInput.value = localDisplayName || localIdentity
+            localDisplayName = identityInput.value
+          }
           localStorage.setItem('kanban-livekit-identity', localIdentity)
           setStatus('Preparing meeting access...')
           const access = await ensureMeetingAccess(authSession)
@@ -4041,11 +4057,10 @@
           tokenURL.searchParams.set('identity', localIdentity)
           tokenURL.searchParams.set('room_id', authSession.room_id)
           tokenURL.searchParams.set('board_id', authSession.board_id)
-          // Cosmetic display label (LiveKit tile). The raw typed name is sent
-          // separately from the sanitized identity, so users can show e.g.
-          // "Scott Moore" while the server keeps identity server-controlled.
-          const displayName = (identityInput.value || '').trim()
-          if (displayName) tokenURL.searchParams.set('name', displayName)
+          // Cosmetic display label (LiveKit tile). Use the name captured at the
+          // top of join (before the field was overwritten with the sanitized
+          // identity), so the typed "Scott Moore" survives to the token request.
+          if (typedDisplayName) tokenURL.searchParams.set('name', typedDisplayName)
           const tokenResp = await fetch(tokenURL.toString(), { credentials: 'same-origin' })
           if (!tokenResp.ok) {
             let detail = `Token request failed: ${tokenResp.status}`
@@ -4080,7 +4095,7 @@
             toggleMicBtn.disabled = false
             toggleCamBtn.disabled = false
             liveDot.classList.add('live')
-            videoStrip.appendChild(createParticipantTile(localIdentity, true, (identityInput.value || "").trim()))
+            videoStrip.appendChild(createParticipantTile(localIdentity, true, localDisplayName))
             for (const p of room.remoteParticipants.values()) addRemoteParticipantTile(p)
             setTimeout(() => {
               if (room && ![...room.remoteParticipants.keys()].some(isAgentIdentity)) {
@@ -4266,7 +4281,7 @@
         toggleMicBtn.classList.add('off')
         toggleCamBtn.classList.add('off')
         liveDot.classList.add('live')
-        videoStrip.replaceChildren(createParticipantTile(localIdentity, true, (identityInput.value || "").trim()))
+        videoStrip.replaceChildren(createParticipantTile(localIdentity, true, localDisplayName))
         updateParticipantCount()
         updateSpotlight()
         joinButton.textContent = 'Chat joined'
