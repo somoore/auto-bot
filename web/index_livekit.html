@@ -3820,18 +3820,22 @@
 
       /* ── Participant tiles ── */
 
-      function createParticipantTile(identity, isLocal) {
+      function createParticipantTile(identity, isLocal, displayName) {
         const tile = document.createElement('div')
         tile.className = 'participant-tile' + (isLocal ? ' local' : '')
         tile.id = `tile-${CSS.escape(identity)}`
         tile.dataset.identity = identity
+
+        // The label prefers the cosmetic LiveKit name (e.g. "Scott Moore") and
+        // falls back to the server identity. The tile is still keyed by identity.
+        const shown = (displayName && String(displayName).trim()) || identity
 
         const placeholder = document.createElement('div')
         placeholder.className = 'avatar-placeholder'
         const circle = document.createElement('div')
         circle.className = 'avatar-circle'
         circle.style.background = avatarColor(identity)
-        circle.textContent = avatarInitial(identity)
+        circle.textContent = avatarInitial(shown)
         placeholder.appendChild(circle)
         tile.appendChild(placeholder)
 
@@ -3839,7 +3843,7 @@
         label.className = 'participant-label'
         const nameSpan = document.createElement('span')
         nameSpan.className = 'participant-name'
-        nameSpan.textContent = isLocal ? `${identity} (you)` : identity
+        nameSpan.textContent = isLocal ? `${shown} (you)` : shown
         label.appendChild(nameSpan)
 
         const muteIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
@@ -4037,6 +4041,11 @@
           tokenURL.searchParams.set('identity', localIdentity)
           tokenURL.searchParams.set('room_id', authSession.room_id)
           tokenURL.searchParams.set('board_id', authSession.board_id)
+          // Cosmetic display label (LiveKit tile). The raw typed name is sent
+          // separately from the sanitized identity, so users can show e.g.
+          // "Scott Moore" while the server keeps identity server-controlled.
+          const displayName = (identityInput.value || '').trim()
+          if (displayName) tokenURL.searchParams.set('name', displayName)
           const tokenResp = await fetch(tokenURL.toString(), { credentials: 'same-origin' })
           if (!tokenResp.ok) {
             let detail = `Token request failed: ${tokenResp.status}`
@@ -4071,7 +4080,7 @@
             toggleMicBtn.disabled = false
             toggleCamBtn.disabled = false
             liveDot.classList.add('live')
-            videoStrip.appendChild(createParticipantTile(localIdentity, true))
+            videoStrip.appendChild(createParticipantTile(localIdentity, true, (identityInput.value || "").trim()))
             for (const p of room.remoteParticipants.values()) addRemoteParticipantTile(p)
             setTimeout(() => {
               if (room && ![...room.remoteParticipants.keys()].some(isAgentIdentity)) {
@@ -4257,7 +4266,7 @@
         toggleMicBtn.classList.add('off')
         toggleCamBtn.classList.add('off')
         liveDot.classList.add('live')
-        videoStrip.replaceChildren(createParticipantTile(localIdentity, true))
+        videoStrip.replaceChildren(createParticipantTile(localIdentity, true, (identityInput.value || "").trim()))
         updateParticipantCount()
         updateSpotlight()
         joinButton.textContent = 'Chat joined'
@@ -4462,7 +4471,7 @@
       function addRemoteParticipantTile(participant) {
         markParticipant(participant.identity, true)
         if (getTile(participant.identity)) return
-        const tile = createParticipantTile(participant.identity, false)
+        const tile = createParticipantTile(participant.identity, false, participant.name)
         videoStrip.appendChild(tile)
         for (const pub of participant.trackPublications.values()) {
           if (pub.track && pub.kind === LivekitClient.Track.Kind.Video && !pub.isMuted) attachVideoToTile(tile, pub.track)
