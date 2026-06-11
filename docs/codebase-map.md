@@ -101,7 +101,6 @@ fixtures.
 | `docs/extension-contracts.md` | Human-readable contract rules for providers, connectors, model backends, and action replay. |
 | `docs/golden-demo.md` | Narrow real-stack proof path and pass criteria. |
 | `docs/threat-model.md` | Trust boundaries, assets, threats, and mitigations. |
-| `docs/adrs/` | Architecture decision records. |
 | `docs/deployment.md` | Kubernetes deployment guide. |
 | `docs/research/` | Research notes for repository process decisions. |
 | `docs/security/` | Application security review and hardening register. |
