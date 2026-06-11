@@ -2116,7 +2116,9 @@
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M15 10l4.5-3v10L15 14M4 6h9a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2z" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Start a meeting
           </button>
-          <!-- Inline host setup (expands when Start is clicked) -->
+          <!-- Inline host setup: slides open between the Start button and the
+               divider when Start is first clicked. The Start button itself
+               becomes the confirm action — there is only ever one Start button. -->
           <div id="abSetup" class="ab-setup" hidden>
             <div class="ab-setup-row">
               <label class="ab-field">
@@ -2133,10 +2135,6 @@
                 <span>Join as</span>
                 <input id="abName" type="text" maxlength="64" autocomplete="name" placeholder="Your name">
               </label>
-            </div>
-            <div class="ab-setup-actions">
-              <button id="abStartConfirm" class="ab-start" type="button">Start meeting</button>
-              <button id="abStartCancel" class="ab-setup-cancel" type="button">Cancel</button>
             </div>
           </div>
           <div class="ab-divider"><span>or join with a code</span></div>
@@ -6593,8 +6591,8 @@
         const setupEl = document.getElementById('abSetup')
         const meetingTypeSel = document.getElementById('abMeetingType')
         const nameInput = document.getElementById('abName')
-        const startConfirmBtn = document.getElementById('abStartConfirm')
-        const startCancelBtn = document.getElementById('abStartCancel')
+        const startLabel = startBtn.lastChild // the "Start a meeting" text node
+        let setupOpen = false
         let chatOnly = false
         let resolvedName = ''
 
@@ -6636,7 +6634,14 @@
           try { meetingChoiceDismissed = true } catch (e) {}
           if (typeof dismissMeetingChoiceModal === 'function') { try { dismissMeetingChoiceModal() } catch (e) {} }
         }
-        function showLobby() { lobby.classList.remove('ab-hidden') }
+        function showLobby() {
+          lobby.classList.remove('ab-hidden')
+          // Reset the Start button back to its collapsed first-phase state.
+          if (setupEl) setupEl.hidden = true
+          setupOpen = false
+          startBtn.disabled = false
+          setStartLabel('Start a meeting')
+        }
         // Expose so leaveRoom() can return the user to the lobby.
         window.__abShowLobby = () => { startBtn.disabled = false; joinBtn.disabled = false; showLobby() }
         function applyJoinMode() { try { setMeetingJoinMode(chatOnly ? 'chat' : 'full', { broadcast: false }) } catch (e) {} }
@@ -6667,28 +6672,27 @@
           chatOnlyBtn.style.fontWeight = chatOnly ? '700' : '500'
         })
 
-        // Step 1: clicking "Start a meeting" reveals the inline host setup
-        // (meeting type + editable name) rather than starting immediately.
-        startBtn.addEventListener('click', () => {
-          // Pre-fill meeting type from the current default.
+        // Single Start button, two phases:
+        //  1st click  → slides the setup (type + name) open; button relabels to
+        //               "Start meeting".
+        //  2nd click  → commits the chosen name + type and hosts the meeting.
+        // There is never a second Start button on screen.
+        function setStartLabel(txt) { if (startLabel && startLabel.nodeType === 3) startLabel.textContent = ' ' + txt; else startBtn.lastChild && (startBtn.lastChild.textContent = ' ' + txt) }
+        function openSetup() {
           try { if (meetingTypeSel && typeof currentMeetingType === 'string') meetingTypeSel.value = currentMeetingType } catch (e) {}
           if (nameInput && !nameInput.value && resolvedName) nameInput.value = resolvedName
           setupEl.hidden = false
-          startBtn.hidden = true
+          setupOpen = true
+          setStartLabel('Start meeting')
           if (nameInput) { nameInput.focus(); nameInput.select() }
-        })
-        startCancelBtn.addEventListener('click', () => {
-          setupEl.hidden = true
-          startBtn.hidden = false
-        })
-
-        // Step 2: "Start meeting" commits the chosen name + type, then hosts.
+        }
         async function doStartMeeting() {
           const chosenName = (nameInput && nameInput.value.trim()) || resolvedName
           if (!chosenName) { if (nameInput) { nameInput.focus(); nameInput.style.borderColor = 'var(--brand-warn)' } return }
           applyName(chosenName)
           const chosenType = (meetingTypeSel && meetingTypeSel.value) || 'general'
-          startConfirmBtn.disabled = true
+          startBtn.disabled = true
+          setupEl.hidden = true
           hideLobby()
           setStatus('Preparing meeting…')
           try {
@@ -6698,12 +6702,12 @@
             await hostCreateMeeting()
             await joinRoom()
           } catch (error) {
-            startConfirmBtn.disabled = false
+            startBtn.disabled = false
             abHideConnecting()
             lobbyError(error)
           }
         }
-        startConfirmBtn.addEventListener('click', doStartMeeting)
+        startBtn.addEventListener('click', () => { if (!setupOpen) openSetup(); else doStartMeeting() })
         if (nameInput) nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') doStartMeeting() })
 
         async function doJoin() {

@@ -550,7 +550,15 @@ func (app *novaSonicApp) handleActiveSpeakersChanged(speakers []lksdk.Participan
 		if id == "nova-sonic-agent" {
 			continue
 		}
-		names = append(names, id)
+		// Label transcripts with the cosmetic display name (set from the
+		// LiveKit token's ?name=, e.g. "Scott") when present, falling back to
+		// the authorization identity. The identity stays authoritative for
+		// auth; only the human-visible label changes.
+		label := strings.TrimSpace(s.Name())
+		if label == "" {
+			label = id
+		}
+		names = append(names, label)
 	}
 
 	app.speakerMu.Lock()
