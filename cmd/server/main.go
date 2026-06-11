@@ -44,7 +44,7 @@ var (
 	peerConnections []peerConnectionState
 	trackLocals     map[string]*webrtc.TrackLocalStaticRTP
 
-	log = logging.NewDefaultLoggerFactory().NewLogger("openai-realtime-meeting-assistant")
+	log = logging.NewDefaultLoggerFactory().NewLogger("auto-bot")
 
 	sharedBoard   *kanbanBoard
 	kanbanApp     *kanbanBoardApp

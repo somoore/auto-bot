@@ -68,9 +68,6 @@ fixtures.
 | `internal/core/contracttest` | Shared contract-test helpers for extension implementations. |
 | `internal/mocks` | No-credential mock connectors, voice providers, and model providers for tests only. |
 | `cmd/server/extensions.go` | Runtime registration of current voice provider descriptors, Jira/GitHub connector descriptors, local board connector, and Bedrock model provider. |
-| `examples/connector-template` | Copyable connector implementation template and README. |
-| `examples/voice-provider-template` | Copyable voice-provider implementation template and README. |
-| `examples/model-provider-template` | Copyable model-provider implementation template and README. |
 
 ## Browser UI
 
@@ -116,5 +113,5 @@ When changing behavior, update the docs nearest to the behavior:
 1. Public setup/runtime change: `README.md`, `docs/deployment.md`, and the Helm chart values.
 2. HTTP route change: `docs/api/openapi.yaml` and the README endpoint table when user-facing.
 3. Extension contract change: `internal/core` Go docs, `docs/extension-contracts.md`, templates, and contract tests.
-4. Provider or connector behavior change: the relevant `examples/` README.
+4. Provider or connector behavior change: `cmd/server/extensions.go` and the relevant contract tests in `internal/core/contracttest`.
 5. Deployment or security posture change: `docs/deployment.md`, the Helm chart, `security.md`, and the threat model when the trust boundary changes.

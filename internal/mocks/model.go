@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/openai/openai-realtime-meeting-assistant/internal/core"
+	"github.com/somoore/auto-bot/internal/core"
 )
 
 // ModelProvider is a configurable in-memory implementation of

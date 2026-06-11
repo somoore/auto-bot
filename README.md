@@ -180,7 +180,6 @@ web/               browser UI
 deploy/helm/       Helm chart
 deploy/terraform/  IAM Roles Anywhere module (Bedrock auth)
 docs/              architecture, deployment, contracts, threat model
-examples/          starter templates for new providers/connectors
 ```
 
 ## Extending
@@ -192,7 +191,6 @@ The stable contract package is `internal/core`; runtime implementations live out
 - [docs/codebase-map.md](docs/codebase-map.md) — source → responsibility map
 - [docs/extension-contracts.md](docs/extension-contracts.md) — voice/connector/model/ledger contracts
 - [docs/api/openapi.yaml](docs/api/openapi.yaml) — HTTP control plane
-- [examples/](examples/) — connector / voice-provider / model-provider templates
 
 ## Security
 

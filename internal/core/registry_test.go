@@ -3,9 +3,9 @@ package core_test
 import (
 	"testing"
 
-	"github.com/openai/openai-realtime-meeting-assistant/internal/core"
-	"github.com/openai/openai-realtime-meeting-assistant/internal/core/contracttest"
-	"github.com/openai/openai-realtime-meeting-assistant/internal/mocks"
+	"github.com/somoore/auto-bot/internal/core"
+	"github.com/somoore/auto-bot/internal/core/contracttest"
+	"github.com/somoore/auto-bot/internal/mocks"
 )
 
 func TestConnectorRegistryRejectsDuplicatesAndListsDeterministically(t *testing.T) {

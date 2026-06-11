@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openai/openai-realtime-meeting-assistant/internal/core"
+	"github.com/somoore/auto-bot/internal/core"
 )
 
 type extensionRuntimeState struct {

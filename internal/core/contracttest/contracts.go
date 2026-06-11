@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/openai/openai-realtime-meeting-assistant/internal/core"
+	"github.com/somoore/auto-bot/internal/core"
 )
 
 // ConnectorCase describes one connector execution path for the shared contract
