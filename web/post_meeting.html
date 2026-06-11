@@ -73,6 +73,14 @@
       .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
       section { padding: 16px; min-width: 0; }
       .wide { grid-column: 1 / -1; }
+      /* Signature "What the agents did" navy highlight (echoes Paper recap). */
+      .ab-agent-section {
+        background: #0c2d48 !important; border-color: #0c2d48 !important;
+        padding: 24px !important;
+      }
+      .ab-agent-section h2 { color: #ffffff; }
+      .ab-agent-section .item { background: rgba(255,255,255,0.06) !important; border-color: rgba(255,255,255,0.08) !important; color: #cfe0ee !important; }
+      .ab-agent-section .item * { color: #cfe0ee !important; }
       .list { display: grid; gap: 8px; }
       .item {
         padding: 10px 12px;
@@ -182,8 +190,8 @@
           <h2>Jira Mutation Timeline</h2>
           <div id="timeline" class="timeline"></div>
         </section>
-        <section class="wide">
-          <h2>Agent Run Timeline</h2>
+        <section class="wide ab-agent-section">
+          <h2>What the agents did</h2>
           <div id="agentRuns" class="timeline"></div>
         </section>
         <section>
