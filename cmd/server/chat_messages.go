@@ -60,7 +60,7 @@ func handleClientChatMessage(c *threadSafeWriter, rawData string, authCtx reques
 	// then the SSO display name, then the authorization identity. This keeps the
 	// chat label consistent with the LiveKit video-tile name without weakening
 	// authorization.
-	speaker := normalizeParticipantIdentity(request.Speaker)
+	speaker := sanitizeDisplayName(request.Speaker)
 	if speaker == "" {
 		speaker = strings.TrimSpace(authCtx.DisplayName)
 	}
