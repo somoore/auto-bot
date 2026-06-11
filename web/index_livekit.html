@@ -1930,6 +1930,16 @@
         border-top: 1px solid #f0e0d6;
         color: var(--brand-ok); font-size: 12px; font-weight: 500;
       }
+
+      /* ════ Step 5 — mobile polish ════ */
+      @media (max-width: 640px) {
+        /* Host tools button stays a tidy icon chip when its label is hidden. */
+        .ab-hosttools-btn { padding: 8px; justify-content: center; }
+        /* On mobile the Host tools panel is full-width over the meeting. */
+        .meeting-access-drawer.ab-panel { width: 100vw; right: -100vw; border-left: none; }
+        .meeting-access-drawer.ab-panel.open,
+        .meeting-access-drawer.ab-panel[aria-hidden="false"] { right: 0; }
+      }
     </style>
   </head>
   <body>
