@@ -53,9 +53,10 @@ voice codecs).
 
 ### Verifying the published image
 
-Released images are **signed with cosign (keyless)** and carry **SBOM + SLSA provenance**
-attestations, all produced by the GitHub Actions release workflow. Verify the signature
-before deploying:
+Released images are **multi-arch** (`linux/amd64` + `linux/arm64`), **signed with cosign
+(keyless)**, and carry **SBOM + SLSA provenance** attestations, all produced by the GitHub
+Actions release workflow. The SPDX SBOM is both attested on the image (verify below) and attached
+to the GitHub Release as a downloadable `sbom.spdx.json`. Verify the signature before deploying:
 
 ```bash
 cosign verify ghcr.io/somoore/auto-bot:0.0.2-prealpha \

@@ -28,6 +28,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      # QEMU enables cross-arch (arm64) builds on the amd64 runner. The image is
+      # a CGo/libopus build, so each arch compiles inside its own emulated stage.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -67,10 +72,11 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64   # multi-arch (amd64 + Apple Silicon / Graviton)
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          provenance: true     # SLSA build provenance attestation
-          sbom: true           # generate an SBOM attestation
+          provenance: true     # SLSA build provenance attestation (buildkit, per-arch)
+          sbom: true           # buildkit SBOM attestation (per-arch)
 
       - name: Install cosign
         uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
@@ -82,6 +88,27 @@ jobs:
           # Sign the immutable digest (not a mutable tag). Keyless: identity comes
           # from the GitHub Actions OIDC token, recorded in the public Rekor log.
           cosign sign --yes "ghcr.io/${{ github.repository }}@${DIGEST}"
+
+      # Generate an SPDX SBOM of the published image and attach it as a
+      # cosign-signed attestation (keyless). This is what docs/deployment.md tells
+      # users to verify with `cosign verify-attestation --type spdxjson`. (The
+      # build also carries buildkit SBOM/provenance attestations; this adds the
+      # cosign-signed, Rekor-logged SBOM on top.)
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        with:
+          image: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attest the SBOM (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdxjson \
+            "ghcr.io/${{ github.repository }}@${DIGEST}"
 
       - name: Create GitHub Release with auto-generated changelog
         env:
@@ -96,8 +123,10 @@ jobs:
             *-*) PRERELEASE_FLAG="--prerelease" ;;
           esac
           # Auto-generates notes from merged PRs (categorized via .github/release.yml).
+          # Attaches the SPDX SBOM as a downloadable release asset.
           gh release create "$TAG" \
             --title "$TAG" \
             $PRERELEASE_FLAG \
             --generate-notes \
-            --notes "Container image: \`ghcr.io/${{ github.repository }}:${TAG#v}\` (\`${DIGEST}\`), signed with cosign. See [docs/deployment.md](https://github.com/${{ github.repository }}/blob/main/docs/deployment.md#verifying-the-published-image) to verify."
+            --notes "Container image: \`ghcr.io/${{ github.repository }}:${TAG#v}\` (\`${DIGEST}\`), multi-arch (amd64+arm64), signed with cosign. SBOM (SPDX) attached below and attested on the image. See [docs/deployment.md](https://github.com/${{ github.repository }}/blob/main/docs/deployment.md#verifying-the-published-image) to verify." \
+            sbom.spdx.json
