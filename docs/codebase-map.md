@@ -99,7 +99,6 @@ fixtures.
 | `docs/architecture.md` | Core runtime boundaries and extension ownership. |
 | `docs/api/openapi.yaml` | HTTP control-plane reference. WebSocket message contracts are currently documented through tool schemas and frontend/server code rather than OpenAPI. |
 | `docs/extension-contracts.md` | Human-readable contract rules for providers, connectors, model backends, and action replay. |
-| `docs/golden-demo.md` | Narrow real-stack proof path and pass criteria. |
 | `docs/threat-model.md` | Trust boundaries, assets, threats, and mitigations. |
 | `docs/deployment.md` | Kubernetes deployment guide. |
 | `docs/research/` | Research notes for repository process decisions. |
