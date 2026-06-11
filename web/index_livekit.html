@@ -4951,6 +4951,8 @@
         const shouldNotify = Boolean(options.notify)
         if (shouldNotify) notifyMeetingLeave(false)
         intentionalLeave = true
+        // Return the user to the Auto Bot lobby on an explicit Leave.
+        if (shouldNotify) { abHideConnecting(); if (typeof window.__abShowLobby === 'function') window.__abShowLobby() }
         if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
         wsReconnectTimer = undefined
         joinButton.disabled = false
@@ -6551,6 +6553,8 @@
           if (typeof dismissMeetingChoiceModal === 'function') { try { dismissMeetingChoiceModal() } catch (e) {} }
         }
         function showLobby() { lobby.classList.remove('ab-hidden') }
+        // Expose so leaveRoom() can return the user to the lobby.
+        window.__abShowLobby = () => { startBtn.disabled = false; joinBtn.disabled = false; showLobby() }
         function applyJoinMode() { try { setMeetingJoinMode(chatOnly ? 'chat' : 'full', { broadcast: false }) } catch (e) {} }
         function lobbyError(error) {
           // Surface the error in the lobby instead of popping the old drawer.
