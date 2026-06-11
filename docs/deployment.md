@@ -58,7 +58,7 @@ attestations, all produced by the GitHub Actions release workflow. Verify the si
 before deploying:
 
 ```bash
-cosign verify ghcr.io/somoore/auto-bot:0.1.0 \
+cosign verify ghcr.io/somoore/auto-bot:0.0.2-prealpha \
   --certificate-identity-regexp 'https://github.com/somoore/auto-bot/.github/workflows/release.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -66,8 +66,8 @@ cosign verify ghcr.io/somoore/auto-bot:0.1.0 \
 Inspect the attached SBOM and provenance:
 
 ```bash
-cosign tree ghcr.io/somoore/auto-bot:0.1.0          # list attestations
-cosign verify-attestation ghcr.io/somoore/auto-bot:0.1.0 \
+cosign tree ghcr.io/somoore/auto-bot:0.0.2-prealpha          # list attestations
+cosign verify-attestation ghcr.io/somoore/auto-bot:0.0.2-prealpha \
   --type spdxjson \
   --certificate-identity-regexp 'https://github.com/somoore/auto-bot/.github/workflows/release.yml@.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
