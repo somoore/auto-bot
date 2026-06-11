@@ -3,7 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-    <title>Realtime Kanban Meeting Assistant (LiveKit)</title>
+    <title>Auto Bot</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230E1418'/%3E%3Ctext x='6' y='21' font-family='ui-monospace,Menlo,monospace' font-size='13' font-weight='700' fill='%23FFFFFF'%3Ea_%3C/text%3E%3Crect x='22' y='9' width='4' height='13' rx='1.5' fill='%231B6CA8'/%3E%3C/svg%3E">
     <style>
       :root {
         color-scheme: dark;
@@ -23,6 +24,19 @@
         --text-secondary: #bdc1c6;
         --text-muted: #5f6368;
         --radius: 10px;
+
+        /* ── Auto Bot brand tokens (maritime) ── */
+        --brand-mono: ui-monospace, "SF Mono", "Menlo", "Cascadia Code", "Roboto Mono", monospace;
+        --brand-navy: #0c2d48;
+        --brand-navy-deep: #08233a;
+        --brand-tide: #1b6ca8;
+        --brand-sky: #7fb3d5;
+        --brand-fog: #f4f6f8;
+        --brand-surface: #ffffff;
+        --brand-slate: #5a6b7b;
+        --brand-ink: #0e1418;
+        --brand-ok: #2e7d5b;
+        --brand-warn: #b4541e;
       }
 
       * { box-sizing: border-box; margin: 0; }
@@ -1742,10 +1756,233 @@
       @supports (height: 100dvh) {
         main { height: 100dvh; }
       }
+
+      /* ════ Auto Bot lobby ════ */
+      .ab-lobby {
+        position: fixed; inset: 0; z-index: 4000;
+        display: flex; flex-direction: column;
+        background: radial-gradient(120% 120% at 88% 80%, #dce6ee 0%, #edf1f5 38%, var(--brand-fog) 70%);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        color: var(--brand-navy);
+        overflow: hidden;
+      }
+      .ab-lobby.ab-hidden { display: none; }
+      .ab-lobby-bg { position: absolute; inset: 0; pointer-events: none; }
+      .ab-lobby-figs { position: absolute; bottom: 30px; left: 0; right: 0; display: flex; align-items: flex-end; justify-content: center; gap: 90px; opacity: 0.85; }
+      .ab-fig { position: relative; }
+      .ab-human::before { content: ""; display: block; width: 46px; height: 46px; border-radius: 999px; background: var(--brand-navy); margin: 0 auto; }
+      .ab-human::after { content: ""; display: block; width: 96px; height: 70px; border-radius: 48px 48px 14px 14px; background: var(--brand-navy); }
+      .ab-robot::before { content: ""; display: block; width: 54px; height: 44px; border-radius: 14px; background: var(--brand-tide); margin: 0 auto; }
+      .ab-robot::after { content: ""; display: block; width: 92px; height: 66px; border-radius: 20px 20px 14px 14px; background: var(--brand-tide); }
+      .ab-lobby-top { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 22px 40px; }
+      .ab-wordmark { display: flex; align-items: center; gap: 4px; font-family: var(--brand-mono); font-size: 21px; font-weight: 600; letter-spacing: -0.01em; color: var(--brand-navy); }
+      .ab-cursor { width: 9px; height: 18px; background: var(--brand-tide); border-radius: 2px; animation: ab-blink 1.1s steps(1) infinite; }
+      @keyframes ab-blink { 50% { opacity: 0; } }
+      .ab-status-pill { display: flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 999px; background: #fff; border: 1px solid #e3e8ed; font-size: 13px; font-weight: 500; color: var(--brand-slate); }
+      .ab-status-pill .ab-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--brand-ok); }
+      .ab-lobby-body { position: relative; z-index: 2; flex: 1; display: flex; align-items: center; justify-content: center; gap: 96px; padding: 0 80px 60px; flex-wrap: wrap; }
+      .ab-hero { width: 440px; display: flex; flex-direction: column; gap: 20px; }
+      .ab-eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--brand-tide); }
+      .ab-hero-title { font-size: 44px; font-weight: 700; line-height: 1.07; letter-spacing: -0.02em; color: var(--brand-navy); }
+      .ab-hero-copy { font-size: 16px; line-height: 1.6; color: var(--brand-slate); }
+      .ab-integrations { display: flex; align-items: center; gap: 12px; }
+      .ab-syncs { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--brand-slate); }
+      .ab-chip { display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+      .ab-chip-on { background: #fff; border: 1px solid #e3e8ed; color: var(--brand-navy); }
+      .ab-chip-soon { background: transparent; border: 1px solid #e3e8ed; color: var(--brand-slate); font-weight: 500; }
+      .ab-chip-soon i { font-style: normal; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; background: #eef1f4; color: var(--brand-slate); }
+      .ab-card { width: 440px; display: flex; flex-direction: column; gap: 22px; padding: 36px; background: #fff; border: 1px solid #e3e8ed; border-radius: 20px; box-shadow: 0 24px 60px rgba(8,35,58,0.16); }
+      .ab-card-head { display: flex; flex-direction: column; gap: 6px; }
+      .ab-card-title { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--brand-navy); }
+      .ab-card-sub { font-size: 14px; color: var(--brand-slate); }
+      .ab-start { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 17px; background: var(--brand-navy); border: none; border-radius: 12px; color: #fff; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer; }
+      .ab-start:hover { background: #0a2740; }
+      .ab-divider { display: flex; align-items: center; gap: 14px; }
+      .ab-divider::before, .ab-divider::after { content: ""; flex: 1; height: 1px; background: #e3e8ed; }
+      .ab-divider span { font-size: 12px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--brand-slate); }
+      .ab-join-row { display: flex; gap: 10px; }
+      .ab-code { flex: 1; padding: 0 16px; height: 54px; background: var(--brand-fog); border: 1.5px solid #d7dee5; border-radius: 12px; font-family: var(--brand-mono); font-size: 18px; font-weight: 600; letter-spacing: 0.14em; color: var(--brand-navy); }
+      .ab-code::placeholder { color: #9aa8b5; }
+      .ab-code:focus { outline: none; border-color: var(--brand-tide); }
+      .ab-join { padding: 0 22px; background: #fff; border: 1.5px solid var(--brand-navy); border-radius: 12px; color: var(--brand-navy); font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+      .ab-join:hover { background: var(--brand-fog); }
+      .ab-card-foot { display: flex; align-items: center; justify-content: space-between; }
+      .ab-identity { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 500; color: var(--brand-slate); }
+      .ab-avatar { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 999px; background: var(--brand-navy); color: #fff; font-size: 11px; font-weight: 600; }
+      .ab-chatonly { display: flex; align-items: center; gap: 7px; background: none; border: none; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 500; color: var(--brand-tide); }
+      @media (max-width: 880px) {
+        .ab-lobby-body { gap: 28px; padding: 24px 20px 40px; align-content: flex-start; align-items: stretch; }
+        .ab-hero, .ab-card { width: 100%; }
+        .ab-hero-title { font-size: 30px; }
+        .ab-lobby-figs { gap: 30px; }
+      }
+
+      /* ════ Host tools button (was Meeting Settings) ════ */
+      .ab-hosttools-btn {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 8px 14px; border-radius: 11px;
+        background: rgba(127,179,213,0.16); border: 1px solid rgba(127,179,213,0.34);
+        color: #cfe0ee; font-size: 13px; font-weight: 600; cursor: pointer;
+      }
+      .ab-hosttools-btn:hover { background: rgba(127,179,213,0.24); }
+      .ab-hosttools-btn .meeting-config-dot { display: none; }
+      .ab-hosttools-btn.bad { background: rgba(180,84,30,0.18); border-color: rgba(180,84,30,0.45); color: #f0c4a8; }
+
+      /* ════ Host tools panel (restyle of meetingAccessDrawer) ════ */
+      .meeting-access-drawer.ab-panel {
+        background: #fafbfc;
+        border-left: 1px solid #e3e8ed;
+        box-shadow: -24px 0 60px rgba(8,35,58,0.18);
+        color: var(--brand-navy);
+      }
+      /* Hide drawer sections not in the approved Host tools design.
+         display:none keeps the nodes in the DOM so JS writes still resolve. */
+      .ab-panel section[aria-label="Theater of work"],
+      .ab-panel section[aria-label="Multi-person validation"],
+      .ab-panel section[aria-label="Executive recap"],
+      .ab-panel section[aria-label="Agent confidence"] { display: none; }
+      /* Within the setup section, the role/code/host fields are now the lobby's job. */
+      .ab-panel #hostSetupFields,
+      .ab-panel #participantSetupFields,
+      .ab-panel .segmented[aria-label="Meeting role"] { display: none !important; }
+      /* Restyle operator panels for the light maritime surface. */
+      .ab-panel .operator-section {
+        background: #fff; border: 1px solid #e3e8ed; border-radius: 14px;
+        padding: 16px; color: var(--brand-navy);
+      }
+      .ab-panel h2 { color: var(--brand-navy); font-size: 15px; }
+      .ab-panel .operator-eyebrow { color: var(--brand-tide); font-size: 11px; letter-spacing: 0.08em; }
+      .ab-panel .operator-list,
+      .ab-panel .operator-list * { color: var(--brand-slate) !important; }
+      .ab-panel .operator-list {
+        background: transparent; border: none; padding: 0;
+        font-size: 13px;
+      }
+      .ab-panel .operator-item {
+        background: #f7f9fb !important; border: 1px solid #eef1f4;
+        color: var(--brand-slate) !important;
+      }
+      .ab-panel label, .ab-panel .field, .ab-panel .field span { color: var(--brand-slate); }
+      .ab-panel select, .ab-panel input {
+        background: #fff; border: 1px solid #d7dee5; color: var(--brand-navy); border-radius: 10px;
+      }
+      .ab-panel .state-pill { color: var(--brand-slate); }
+      .ab-panel .health-row, .ab-panel .health-label { color: var(--brand-slate); }
+      .ab-panel .segmented button { color: var(--brand-slate); }
+      /* Tighten the heading so eyebrow + title don't overlap. */
+      .ab-panel .operator-heading { align-items: flex-start; }
+      .ab-panel .operator-heading h2 { margin-top: 2px; }
+
+      /* ════ Step 3 — maritime meeting stage ════ */
+      body { background: var(--brand-ink); }
+      main { background: var(--brand-ink); }
+      .topbar {
+        background: var(--brand-ink);
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+      }
+      .topbar h1 { color: #fff; font-size: 15px; font-weight: 600; }
+      .topbar .status { color: #6b7c8c; }
+      .topbar-pill {
+        background: var(--brand-navy); color: var(--brand-sky);
+        font-family: var(--brand-mono); font-weight: 700;
+      }
+      /* Layout buttons → tide accent when active */
+      .layout-btn.active { background: var(--brand-tide); }
+      .layout-btn.active svg { fill: #fff; }
+      /* Board accent: Google blue → maritime tide */
+      .board-surface { background: #f7f9fb; border-radius: 16px; }
+      .card.highlighted {
+        border-color: var(--brand-tide);
+        box-shadow: 0 0 0 2px var(--brand-tide), 0 4px 16px rgba(27,108,168,0.3);
+      }
+      .count { background: #eaf2f8; color: var(--brand-tide); }
+      /* Active speaker tile → tide ring */
+      .participant-tile.speaking, .participant-tile.active-speaker {
+        outline: 2px solid var(--brand-tide); outline-offset: -2px;
+      }
+      /* Transcription panel header live dot → maritime */
+      .transcription-panel { border-radius: 16px; }
+      #liveDot, .dot.live { background: var(--brand-ok); }
+      /* Meeting bar (controls) */
+      .meeting-bar { background: var(--brand-ink); }
+      /* Primary join button → maritime navy */
+      .meeting-bar .primary, button.primary {
+        background: var(--brand-tide);
+      }
+      .meeting-bar .primary:hover, button.primary:hover {
+        background: #15598c;
+      }
+
+      /* ════ Step 5 — maritime failure/alert card ════ */
+      .ab-panel .failure-panel {
+        border: 1px solid #f0e0d6;
+        background: #fbf7f4;
+        color: #3a2a20;
+        border-radius: 12px;
+        padding: 14px;
+      }
+      .ab-panel .failure-panel strong { color: #b4541e; font-size: 14px; }
+      .ab-panel .failure-panel p { color: #7a5641; font-size: 13px; }
+      /* Reassurance line shown under any failure (board keeps working). */
+      .ab-panel .failure-panel.visible::after {
+        content: "The board and transcript keep working — you can still run the meeting.";
+        display: block; margin-top: 8px; padding-top: 8px;
+        border-top: 1px solid #f0e0d6;
+        color: var(--brand-ok); font-size: 12px; font-weight: 500;
+      }
     </style>
   </head>
   <body>
     <script>window.__WS_URL__="{{.WS}}";</script>
+
+    <!-- ── Auto Bot lobby (entry gate; hides to reveal <main>) ── -->
+    <div id="abLobby" class="ab-lobby">
+      <div class="ab-lobby-bg" aria-hidden="true">
+        <div class="ab-lobby-figs">
+          <div class="ab-fig ab-human"></div>
+          <div class="ab-fig ab-robot"></div>
+          <div class="ab-fig ab-human"></div>
+        </div>
+      </div>
+      <header class="ab-lobby-top">
+        <div class="ab-wordmark"><span>auto_bot</span><i class="ab-cursor"></i></div>
+        <div class="ab-status-pill"><span class="ab-dot"></span>Ready</div>
+      </header>
+      <div class="ab-lobby-body">
+        <div class="ab-hero">
+          <span class="ab-eyebrow">Where people and agents work</span>
+          <h2 class="ab-hero-title">Your whole team on one board. Finally.</h2>
+          <p class="ab-hero-copy">Assign work to anyone. Agents pick up tasks, ship them autonomously, update the board, and show up to standup to report. Any timezone, any language, human or AI.</p>
+          <div class="ab-integrations">
+            <span class="ab-syncs">Syncs with</span>
+            <span class="ab-chip ab-chip-on">Jira</span>
+            <span class="ab-chip ab-chip-soon">Linear <i>Soon</i></span>
+          </div>
+        </div>
+        <div class="ab-card">
+          <div class="ab-card-head">
+            <span class="ab-card-title">Start or join a meeting</span>
+            <span class="ab-card-sub">Hosting takes one click. No setup required.</span>
+          </div>
+          <button id="abStart" class="ab-start" type="button">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M15 10l4.5-3v10L15 14M4 6h9a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2z" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Start a meeting
+          </button>
+          <div class="ab-divider"><span>or join with a code</span></div>
+          <div class="ab-join-row">
+            <input id="abCode" class="ab-code" type="text" inputmode="text" maxlength="24" placeholder="ABC-123" autocomplete="off">
+            <button id="abJoin" class="ab-join" type="button">Join</button>
+          </div>
+          <div class="ab-card-foot">
+            <div class="ab-identity"><span id="abAvatar" class="ab-avatar">·</span><span id="abIdentity">Joining as guest</span></div>
+            <button id="abChatOnly" class="ab-chatonly" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" stroke="#1b6ca8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Chat only</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <main data-layout="filmstrip">
       <header class="topbar">
         <span class="topbar-pill" aria-hidden="true">K</span>
@@ -1754,9 +1991,9 @@
           <p class="status" id="status">Not connected</p>
         </div>
         <div class="topbar-right">
-          <button id="meetingConfigToggle" class="meeting-config-toggle warn" type="button" aria-expanded="false" aria-controls="meetingAccessDrawer" title="Meeting settings">
-            <span class="meeting-config-dot" aria-hidden="true"></span>
-            <span id="meetingConfigLabel" class="meeting-config-label">Meeting Settings</span>
+          <button id="meetingConfigToggle" class="meeting-config-toggle ab-hosttools-btn" type="button" aria-expanded="false" aria-controls="meetingAccessDrawer" title="Host tools">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="1.4"/></svg>
+            <span id="meetingConfigLabel" class="meeting-config-label">Host tools</span>
           </button>
           <div class="user-menu" id="userMenu" style="display:none">
             <button id="userMenuButton" class="user-avatar" type="button" aria-haspopup="true" aria-expanded="false" title="Account"></button>
@@ -1814,12 +2051,12 @@
           </aside>
 
           <div id="meetingAccessScrim" class="meeting-access-scrim"></div>
-          <aside id="meetingAccessDrawer" class="meeting-access-drawer" aria-label="Meeting settings" aria-hidden="true">
+          <aside id="meetingAccessDrawer" class="meeting-access-drawer ab-panel" aria-label="Host tools" aria-hidden="true">
             <section class="operator-section meeting-access-section" aria-label="Meeting setup and access">
               <div class="operator-heading">
                 <div>
-                  <div class="operator-eyebrow">Settings</div>
-                  <h2>Meeting Settings</h2>
+                  <div class="operator-eyebrow">Host tools</div>
+                  <h2>Meeting control</h2>
                 </div>
                 <div class="operator-actions">
                   <span id="meetingAccessState" class="state-pill warn">Setup needed</span>
@@ -3195,11 +3432,11 @@
           : 'Audio/video joins LiveKit with mic, camera, speaker playback, board sync, and chat.'
         if (!meetingJoined) joinButton.textContent = meetingJoinMode === 'chat' ? 'Join chat' : 'Join room'
         const hasVisibleFailure = failurePanel.classList.contains('visible')
-        meetingConfigLabel.textContent = hasVisibleFailure ? 'Settings issue' : 'Meeting Settings'
-        meetingConfigToggle.className = `meeting-config-toggle ${hasVisibleFailure ? 'bad' : hasCode ? 'ok' : 'warn'}`
+        meetingConfigLabel.textContent = hasVisibleFailure ? 'Host tools · attention' : 'Host tools'
+        meetingConfigToggle.className = `meeting-config-toggle ab-hosttools-btn ${hasVisibleFailure ? 'bad' : hasCode ? 'ok' : 'warn'}`
         meetingConfigToggle.title = meetingAccessDrawerOpen
-          ? 'Close meeting settings'
-          : hasVisibleFailure ? 'Meeting settings need attention' : 'Open meeting settings'
+          ? 'Close host tools'
+          : hasVisibleFailure ? 'Host tools need attention' : 'Open host tools'
         meetingConfigToggle.setAttribute('aria-label', meetingConfigToggle.title)
         meetingTypeState.textContent = MEETING_TYPES[currentMeetingType] || 'Standup'
         renderVoiceModelControl()
@@ -6090,6 +6327,96 @@
 
       applyPanelSizes()
       setupResizeHandles()
+
+      /* ════ Auto Bot lobby controller ════ */
+      ;(function initAbLobby() {
+        const lobby = document.getElementById('abLobby')
+        if (!lobby) return
+        const startBtn = document.getElementById('abStart')
+        const joinBtn = document.getElementById('abJoin')
+        const chatOnlyBtn = document.getElementById('abChatOnly')
+        const codeInput = document.getElementById('abCode')
+        const identityEl = document.getElementById('abIdentity')
+        const avatarEl = document.getElementById('abAvatar')
+        let chatOnly = false
+
+        // Reflect the resolved identity (SSO display name or stored identity).
+        try {
+          const who = (typeof localIdentity === 'string' && localIdentity) || cleanIdentity(localStorage.getItem('kanban-livekit-identity') || '')
+          if (who) { identityEl.textContent = 'Joining as ' + who; avatarEl.textContent = avatarInitial(who) }
+        } catch (e) {}
+
+        function hideLobby() { lobby.classList.add('ab-hidden') }
+        function showLobby() { lobby.classList.remove('ab-hidden') }
+        function applyJoinMode() { try { setMeetingJoinMode(chatOnly ? 'chat' : 'full', { broadcast: false }) } catch (e) {} }
+        function lobbyError(error) {
+          // Surface the error in the lobby instead of popping the old drawer.
+          showLobby()
+          const failure = (typeof classifyFailure === 'function') ? classifyFailure(error) : { title: 'Could not join', detail: String(error && error.message || error || '') }
+          let banner = document.getElementById('abError')
+          if (!banner) {
+            banner = document.createElement('div')
+            banner.id = 'abError'
+            banner.style.cssText = 'margin-top:6px;padding:11px 13px;border-radius:11px;background:#fbeae3;border:1px solid #f0e0d6;color:#7a2e12;font-size:13px;line-height:1.4'
+            document.querySelector('.ab-card').appendChild(banner)
+          }
+          // Build safely via DOM/textContent — failure.detail may carry server-supplied
+          // error text, so never inject it as HTML.
+          banner.replaceChildren()
+          const strong = document.createElement('strong')
+          strong.textContent = failure.title || 'Could not join'
+          banner.appendChild(strong)
+          banner.appendChild(document.createElement('br'))
+          banner.appendChild(document.createTextNode(failure.detail || ''))
+        }
+
+        chatOnlyBtn.addEventListener('click', () => {
+          chatOnly = !chatOnly
+          chatOnlyBtn.style.color = chatOnly ? 'var(--brand-navy)' : 'var(--brand-tide)'
+          chatOnlyBtn.style.fontWeight = chatOnly ? '700' : '500'
+        })
+
+        startBtn.addEventListener('click', async () => {
+          startBtn.disabled = true
+          try {
+            setMeetingRole('host')
+            applyJoinMode()
+            await hostCreateMeeting()
+            hideLobby()
+            await joinRoom()
+          } catch (error) {
+            startBtn.disabled = false
+            lobbyError(error)
+          }
+        })
+
+        async function doJoin() {
+          const code = formatMeetingCode(codeInput.value || '')
+          if (!code) { codeInput.focus(); codeInput.style.borderColor = 'var(--brand-warn)'; return }
+          joinBtn.disabled = true
+          try {
+            setMeetingRole('participant')
+            applyJoinMode()
+            joinCodeInput.value = code
+            joinCodeInput.dispatchEvent(new Event('input'))
+            hideLobby()
+            await joinRoom()
+          } catch (error) {
+            joinBtn.disabled = false
+            lobbyError(error)
+          }
+        }
+        joinBtn.addEventListener('click', doJoin)
+        codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') doJoin() })
+        codeInput.addEventListener('input', () => { codeInput.value = formatMeetingCode(codeInput.value); codeInput.style.borderColor = '' })
+
+        // Deep-link: ?code=ABC-123 prefills the join field for calendar links.
+        try {
+          const params = new URLSearchParams(window.location.search)
+          const linkCode = params.get('meeting_code') || params.get('code')
+          if (linkCode) codeInput.value = formatMeetingCode(linkCode)
+        } catch (e) {}
+      })()
     </script>
   </body>
 </html>
