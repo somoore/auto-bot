@@ -187,24 +187,60 @@ The app speaks plain HTTP on `:3000`. Terminate TLS wherever you like:
 > `https://<ingress.host>` automatically — so make sure `ingress.host` is the exact hostname the
 > browser uses. If the board loads but shows "reconnecting", a host mismatch is the usual cause.
 
-## Access control & the no-popup auth pattern
+## Access control
 
 The app has its own login gate: on first use it prompts for `APP_API_TOKEN` and then sets an
-HttpOnly session cookie. For a deployment that's already access-controlled (SSO at the edge, a
-private network, or a tunnel), you can skip that prompt by having your ingress inject the token:
+HttpOnly session cookie. There are three ways to run it, from simplest to most capable. Pick one.
+
+### 1. Shared token (simplest)
+
+Leave the app on token auth (`APP_AUTH_MODE=token`, the default). Users paste `APP_API_TOKEN`
+once. If access is **already gated upstream** (SSO at the edge, a private network, a tunnel) you
+can skip even that prompt by having your ingress inject the token so the app auto-authenticates:
 
 ```text
 Authorization: Bearer <APP_API_TOKEN>
 ```
 
-Every authenticated endpoint accepts this header, so the app auto-authenticates and never shows
-the prompt. **Only do this when access is already gated upstream** — the injected token grants
-full access to whoever reaches the route. With Traefik, a `Middleware` with
-`headers.customRequestHeaders` works; with nginx, a `configuration-snippet`. Keep the token in
-the middleware/snippet object, never in the browser.
+With Traefik, a `Middleware` with `headers.customRequestHeaders`; with nginx, a
+`configuration-snippet`. Keep the token in the middleware/snippet object, never in the browser.
 
-Note: with header injection the app sees a single shared identity. That's fine for a small team
-behind SSO; true per-user identity would require app changes.
+> **Only inject the token when access is already gated upstream** — the injected token grants
+> full access to whoever reaches the route, and **everyone shares the single identity
+> `api-token`** (so the meeting host gate can't distinguish users, and LiveKit participants would
+> collide). For real per-user identity, use one of the SSO options below.
+>
+> If you mix paths — e.g. a public SSO ingress *and* a private admin ingress that injects the
+> token — set `ADMIN_BEARER_HOSTS` to the comma-separated Host(s) where the injected bearer is
+> allowed (the admin ingress). The bearer is then honored only on those hosts; SSO-fronted public
+> hosts fail closed (401) if SSO identity is missing, instead of silently downgrading to the
+> shared `api-token` identity.
+
+### 2. Cloudflare Access (per-user identity, no app secret at the edge)
+
+Front the app with a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
+application. Cloudflare does the SSO login at the edge and forwards a signed JWT; the app
+verifies it (RS256, against the team JWKS), binds it to your application, and derives a distinct
+per-user identity from the verified email. Set:
+
+| Var | Value |
+|---|---|
+| `APP_CF_ACCESS_AUTH` | `1` |
+| `CF_ACCESS_TEAM_DOMAIN` | `https://<your-team>.cloudflareaccess.com` |
+| `CF_ACCESS_AUD` | the Access application's **Application Audience (AUD) tag** |
+| `ALLOWED_EMAILS` and/or `ALLOWED_EMAIL_DOMAINS` | who may use the app (required — refuses to start open) |
+
+### 3. AWS ALB OIDC / Cognito (per-user identity behind an ALB)
+
+When running behind an Application Load Balancer with an `authenticate-cognito` action, set
+`APP_ALB_OIDC_AUTH=1`, `APP_ALB_ARN=<your ALB ARN>`, and the same `ALLOWED_EMAILS` /
+`ALLOWED_EMAIL_DOMAINS` allowlist. The app verifies the ALB-signed `X-Amzn-Oidc-Data` header and
+derives identity from the verified email.
+
+> Options 2 and 3 derive a **distinct, server-controlled identity per user** from their verified
+> email — the meeting host gate and LiveKit participants work correctly for multi-user meetings.
+> The client cannot name itself; it may only set a cosmetic display label. All of these vars are
+> plain config — set them through the chart's `config:` block (non-secret) or your own env.
 
 ## Troubleshooting
 

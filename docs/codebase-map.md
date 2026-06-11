@@ -10,7 +10,9 @@ fixtures.
 | Path | Responsibility |
 | --- | --- |
 | `cmd/server/main.go` | Process startup, Nova Sonic agent bootstrap, HTTP route registration, WebSocket upgrade, LiveKit token minting, security headers, and origin policy. |
-| `cmd/server/auth.go` | Shared-token bootstrap, HttpOnly browser sessions, local-only login, room/board authorization, and production safety checks. |
+| `cmd/server/auth.go` | Shared-token bootstrap, HttpOnly browser sessions, local-only login, SSO-vs-bearer auth resolution (incl. `ADMIN_BEARER_HOSTS` host confinement), room/board authorization, and production safety checks. |
+| `cmd/server/cf_access.go` | Cloudflare Access auth: verifies the CF-signed JWT (RS256/JWKS), binds it to the app audience, and derives per-user identity from the verified email. |
+| `cmd/server/alb_oidc.go` | AWS ALB OIDC / Cognito auth: verifies the ALB-signed `X-Amzn-Oidc-Data` header and derives per-user identity from the verified email; shared email allowlist. |
 | `cmd/server/rate_limiter.go` | Fixed-window limits for WebSocket upgrades and LiveKit token requests. |
 | `cmd/server/workspace.go` | Current deployment/workspace scope returned by `/workspace/status`; documents the future workspace isolation model. |
 

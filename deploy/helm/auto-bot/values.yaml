@@ -35,7 +35,10 @@ ingress:
   annotations: {}
   # Optionally inject "Authorization: Bearer <token>" via your ingress so the app
   # auto-authenticates and never shows its token prompt. Only safe when access is
-  # already gated upstream (SSO / private network). See docs/deployment.md.
+  # already gated upstream (SSO / private network). Note: all users then share the
+  # single identity "api-token" — for per-user identity use the SSO config below.
+  # If you also run an SSO public ingress, set config.ADMIN_BEARER_HOSTS to confine
+  # the injected bearer to the admin host. See docs/deployment.md.
   # Provide the middleware/annotation yourself; this just toggles the doc pattern.
 
 # -- App configuration (non-secret) -----------------------------------------
@@ -51,6 +54,23 @@ config:
   AWS_DEFAULT_REGION: us-east-1
   LIVEKIT_DEPLOYMENT_MODE: cloud
   # APP_BASE_URL is derived from ingress.host automatically (drives CSP/WebSocket origin).
+  #
+  # Optional SSO — gives each user a distinct identity from their verified email
+  # (needed for the meeting host gate + multi-user LiveKit). Any keys you add to
+  # this block are passed through to the app as env. See docs/deployment.md.
+  #   Cloudflare Access:
+  #     APP_CF_ACCESS_AUTH: "1"
+  #     CF_ACCESS_TEAM_DOMAIN: https://<your-team>.cloudflareaccess.com
+  #     CF_ACCESS_AUD: <your Access application's AUD tag>
+  #   AWS ALB OIDC:
+  #     APP_ALB_OIDC_AUTH: "1"
+  #     APP_ALB_ARN: <your ALB ARN>
+  #   Required allowlist for either (the app refuses to start open):
+  #     ALLOWED_EMAILS: alice@example.com,bob@example.com
+  #     ALLOWED_EMAIL_DOMAINS: example.com
+  #   Confine an injected admin bearer to specific host(s) so SSO public hosts
+  #   fail closed instead of downgrading to the shared identity:
+  #     ADMIN_BEARER_HOSTS: admin.internal.example
 
 # -- Secrets -----------------------------------------------------------------
 # The chart injects secret env vars from an existing Kubernetes Secret that YOU
