@@ -85,6 +85,11 @@ The container image is published — you don't need to build it. The chart defau
 [`ghcr.io/somoore/auto-bot`](https://github.com/somoore/auto-bot/pkgs/container/auto-bot)
 (signed with cosign; see [docs/deployment.md](docs/deployment.md#verifying-the-published-image)).
 
+**Supported platforms:** `linux/amd64` and `linux/arm64` (from `v0.0.3-prealpha` on) — Intel/AMD
+servers and ARM (Apple Silicon, AWS Graviton, Raspberry Pi). Per-tag arches are listed on the
+[GHCR package page](https://github.com/somoore/auto-bot/pkgs/container/auto-bot); see
+[releases](https://github.com/somoore/auto-bot/releases) for the latest.
+
 For GitOps, seal this with [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets)
 or [External Secrets](https://external-secrets.io) instead. See
 [`deploy/helm/auto-bot/secret.example.yaml`](deploy/helm/auto-bot/secret.example.yaml).
