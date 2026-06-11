@@ -5345,14 +5345,21 @@
         const role = (data.role || '').toLowerCase()
         speaker.classList.add(role === 'assistant' ? 'assistant-speaker' : 'user-speaker')
         if (role !== 'assistant') {
-          markSpoken(data.speaker || localIdentity)
+          // Track "has spoken" by authorization identity (matches the
+          // participant roster), not the cosmetic display name in data.speaker.
+          markSpoken(data.speaker_identity || data.speakerIdentity || localIdentity)
           theaterLastUserUtterance = String(data.text || '').trim() || theaterLastUserUtterance
         }
         extractTranscriptIntel(data)
         const now = new Date()
         const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
         const nameSpan = document.createElement('span')
-        nameSpan.textContent = data.speaker || (role === 'assistant' ? 'Assistant' : 'User')
+        // Prefer the server-supplied speaker label. The server now resolves the
+        // cosmetic display name for voice transcripts, so this is normally set.
+        // Fall back to the local participant's chosen name (never the bare
+        // "User" placeholder) so an empty label can't surface as "User".
+        const userFallback = (localDisplayName || '').trim() || (localIdentity && localIdentity !== 'User' ? localIdentity : '') || 'User'
+        nameSpan.textContent = data.speaker || (role === 'assistant' ? 'Assistant' : userFallback)
         if (isChat) {
           const badge = document.createElement('span')
           badge.className = 'transcript-badge'
@@ -5426,10 +5433,14 @@
           showToast(message)
           return
         }
+        // speaker is the COSMETIC chat label — send the chosen "Join as" display
+        // name (e.g. "Scott") so chat matches the video tile. Authorization is
+        // enforced server-side from the verified identity, never from this field.
+        const chatDisplayName = (localDisplayName || '').trim() || identityInput.value.trim() || localIdentity || 'User'
         const payload = {
           text,
           language: 'auto',
-          speaker: localIdentity || identityInput.value.trim() || 'User',
+          speaker: chatDisplayName,
         }
         ws.send(JSON.stringify({ event: 'chat_message', data: JSON.stringify(payload) }))
         chatInput.value = ''

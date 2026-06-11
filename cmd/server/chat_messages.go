@@ -100,6 +100,11 @@ func handleClientChatMessage(c *threadSafeWriter, rawData string, authCtx reques
 		"createdAt":          createdAt,
 		"translation_status": normalized.TranslationStatus,
 	}
+	// Carry the verified identity so the client keys "has spoken" presence on
+	// identity (matching the roster) rather than the cosmetic display name.
+	if id := strings.TrimSpace(authCtx.Identity); id != "" {
+		payload["speaker_identity"] = id
+	}
 	if normalized.TranslationWarning != "" {
 		payload["translation_warning"] = normalized.TranslationWarning
 	}
