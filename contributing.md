@@ -1,6 +1,6 @@
 # Contributing
 
-The project should be easy to extend without understanding every voice, Jira, GitHub, and AWS detail. Start with the contracts in `internal/core`, the mocks in `internal/mocks`, and the templates in `examples/`.
+The project should be easy to extend without understanding every voice, Jira, GitHub, and AWS detail. Start with the contracts in `internal/core`, the no-credential mocks in `internal/mocks`, and the shared contract tests in `internal/core/contracttest`. The shipped implementations in `cmd/server` (Nova Sonic for voice; Jira and GitHub for connectors) are the working reference examples.
 
 ## Local Setup
 
@@ -33,11 +33,10 @@ pre-commit run --all-files
 
 ## Adding A Voice Provider
 
-Current limitation: `internal/core.VoiceProvider` is the stable contract, but the running meeting session is still selected through the server runtime switch in `cmd/server/main.go`. The registered providers in `cmd/server/extensions.go` describe availability and health; they do not yet own browser session startup. A production-ready provider therefore needs both a contract implementation and runtime/UI integration.
+How the boundary works: `internal/core.VoiceProvider` is the stable contract, and `cmd/server/extensions.go` registers descriptors that report each provider's availability, health, and capabilities. The live meeting session lifecycle is owned by the server runtime (`cmd/server/main.go`), not by the descriptor — so a production-ready provider needs both a contract implementation and the runtime/UI integration that drives the actual HTTP/WebSocket/LiveKit session.
 
-1. Copy `examples/voice-provider-template/voice_provider.go.tmpl`.
-2. Implement `core.VoiceProvider`.
-3. Add contract tests with `internal/core/contracttest.VoiceProvider`.
+1. Implement `core.VoiceProvider` (use `cmd/server/nova_sonic.go` and its descriptor in `cmd/server/extensions.go` as the working reference).
+2. Add contract tests with `internal/core/contracttest.VoiceProvider`.
 4. Add provider health details that make failure states explicit.
 5. Register the provider in `cmd/server/extensions.go`.
 6. Wire runtime selection in `cmd/server/main.go`, including startup, WebSocket/token behavior, and readiness checks.
@@ -50,9 +49,8 @@ Voice providers must treat transcripts, Jira fields, task descriptions, and meet
 
 ## Adding A Connector
 
-1. Copy `examples/connector-template/connector.go.tmpl`.
-2. Implement `core.Connector`.
-3. Declare capabilities with risk levels and undo support.
+1. Implement `core.Connector` (the Jira and GitHub connector descriptors in `cmd/server/extensions.go` are the working references).
+2. Declare capabilities with risk levels and undo support.
 4. Return receipts for external writes.
 5. Add contract tests with `internal/core/contracttest.Connector`.
 6. Add replay evidence for every API write.

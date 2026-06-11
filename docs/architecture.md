@@ -69,13 +69,15 @@ Connectors implement `core.Connector`. A connector declares capabilities, health
 
 Model providers implement `core.ModelProvider`. The current runtime registers Bedrock as the model provider. Direct Anthropic API usage is intentionally not part of the agent path.
 
-## Current Migration Status
+## Runtime And Contract Boundary
 
-The extension layer is in place and tested. The existing runtime still contains mature Jira, GitHub, and Nova Sonic paths in `cmd/server`; those are now exposed through adapter descriptors while behavior stays stable. Future refactors should move one implementation at a time behind the contracts, with contract tests and eval fixtures added before changing behavior.
+`internal/core` is the stable extension *surface*: provider-neutral contracts for voice, connectors, model backends, and the action ledger. The concrete Jira, GitHub, and Nova Sonic implementations live in `cmd/server` and are exposed through adapter descriptors (see `cmd/server/extensions.go`) that report availability, health, and capability metadata.
+
+This is a deliberate split, not a half-finished migration: the runtime owns the live HTTP/WebSocket/LiveKit session lifecycle, while the contracts give a stable boundary to test against and to add new providers/connectors behind. A new first-class provider implements the relevant `internal/core` contract *and* the runtime/UI integration. Contract tests (`internal/core/contracttest`) and no-credential mocks (`internal/mocks`) keep that surface honest.
 
 The action replay ledger is persisted in SQLite when `BOARD_SQLITE_PATH` is configured. Recent replay records are loaded on restart so audit can still answer what speech/tool/API result caused a mutation after a process restart.
 
-Workspace scaffolding is exposed through `/workspace/status`. The current runtime remains deployment-scoped to one workspace/board/room, while the data model now names the future split: workspace-scoped rooms, boards, connector installs, and secrets.
+Workspace scaffolding is exposed through `/workspace/status`. The runtime is deployment-scoped to one workspace/board/room today, while the data model already names the future split: workspace-scoped rooms, boards, connector installs, and secrets.
 
 ## Quality Gates
 

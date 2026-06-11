@@ -39,5 +39,4 @@ Auto Bot connects live meeting audio, browser participants, a scrum-master agent
 ## Residual Risks
 
 - Real 2-4 participant LiveKit proof still must be run from realistic networks before public demos.
-- Public multi-tenant hosting needs an SSO/identity layer in front of the app, workspace-scoped secrets, and per-connector install records.
-- Provider implementations are still being migrated behind the new contracts incrementally.
+- Public multi-tenant hosting needs workspace-scoped secrets and per-connector install records. The app supports per-user SSO identity (Cloudflare Access / ALB OIDC, deriving identity from a verified email); workspace-level multi-tenancy is the remaining gap.
