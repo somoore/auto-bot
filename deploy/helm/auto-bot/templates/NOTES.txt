@@ -1,0 +1,23 @@
+auto-bot has been deployed.
+
+1. Check the pod is running:
+   kubectl get pods -l app.kubernetes.io/name=auto-bot {{ if .Release.Namespace }}-n {{ .Release.Namespace }}{{ end }}
+
+2. Health check:
+   kubectl exec deploy/auto-bot -- wget -qO- http://localhost:{{ .Values.service.port }}/healthz
+
+{{- if .Values.ingress.enabled }}
+
+3. Open the app:
+   https://{{ .Values.ingress.host }}
+{{- end }}
+
+{{- if not .Values.awsRolesAnywhere.enabled }}
+
+NOTE: IAM Roles Anywhere is disabled. The nova-sonic voice path needs AWS Bedrock
+credentials — either enable awsRolesAnywhere (recommended) or provide AWS keys via
+the Secret. See docs/deployment.md.
+{{- end }}
+
+Remember: you must create the Secret named "{{ .Values.existingSecret }}" with at least
+APP_API_TOKEN before the pod will start. See deploy/helm/auto-bot/secret.example.yaml.

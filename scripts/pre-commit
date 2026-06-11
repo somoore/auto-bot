@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="$PATH:$(go env GOPATH)/bin"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+FAIL=0
+
+step() { printf "\n${YELLOW}▶ %s${NC}\n" "$1"; }
+pass() { printf "${GREEN}  ✓ %s${NC}\n" "$1"; }
+fail() { printf "${RED}  ✗ %s${NC}\n" "$1"; FAIL=1; }
+
+# ── Go module hygiene ──
+
+step "Checking go mod tidy (no stale dependencies)"
+cp go.mod go.mod.bak
+cp go.sum go.sum.bak
+go mod tidy 2>/dev/null
+if ! diff -q go.mod go.mod.bak >/dev/null 2>&1 || ! diff -q go.sum go.sum.bak >/dev/null 2>&1; then
+  fail "go.mod or go.sum changed after 'go mod tidy' — commit the updated files"
+  mv go.mod.bak go.mod
+  mv go.sum.bak go.sum
+else
+  pass "go.mod and go.sum are tidy"
+  rm -f go.mod.bak go.sum.bak
+fi
+
+step "Verifying go.sum checksums"
+if go mod verify >/dev/null 2>&1; then
+  pass "All module checksums verified"
+else
+  fail "go mod verify failed — module checksums do not match"
+fi
+
+step "Checking package graph and ghost imports"
+if scripts/check-go-dependencies.sh 2>&1; then
+  pass "Go package and module graph resolved"
+else
+  fail "Go dependency graph check failed"
+fi
+
+# ── Go code quality ──
+
+step "Running go vet"
+if go vet ./... 2>&1; then
+  pass "go vet passed"
+else
+  fail "go vet found issues"
+fi
+
+step "Checking for dead code (staticcheck)"
+if command -v staticcheck >/dev/null 2>&1; then
+  if staticcheck ./... 2>&1; then
+    pass "staticcheck passed (no unused funcs/types/dead code)"
+  else
+    fail "staticcheck found issues"
+  fi
+else
+  printf "${YELLOW}  ⚠ staticcheck not installed — skipping (CI enforces it). Install: go install honnef.co/go/tools/cmd/staticcheck@latest${NC}\n"
+fi
+
+step "Running Go tests"
+if go test ./... 2>&1; then
+  pass "Go tests passed"
+else
+  fail "Go tests failed"
+fi
+
+step "Checking architecture import boundaries"
+if scripts/check-import-boundaries.sh 2>&1; then
+  pass "Import boundaries are intact"
+else
+  fail "Import boundary check failed"
+fi
+
+step "Checking GitHub Actions pinning"
+if scripts/check-github-actions-pinning.sh 2>&1; then
+  pass "GitHub Actions use immutable refs"
+else
+  fail "GitHub Actions pinning check failed"
+fi
+
+step "Checking dependency lock files and immutable release pins"
+LOCK_FAIL=0
+
+if [ -f go.mod ] && [ ! -f go.sum ]; then
+  fail "go.mod exists but go.sum is missing"
+  LOCK_FAIL=1
+fi
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/package-lock.json" ] && [ ! -f "$dir/pnpm-lock.yaml" ] && [ ! -f "$dir/yarn.lock" ] && [ ! -f "$dir/bun.lock" ] && [ ! -f "$dir/bun.lockb" ]; then
+    fail "JavaScript manifest lacks a lock file: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -path './node_modules' -prune -o -name package.json -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if grep -q '^\[tool\.poetry\]' "$manifest" && [ ! -f "$dir/poetry.lock" ]; then
+    fail "Poetry manifest lacks poetry.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name pyproject.toml -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/Pipfile.lock" ]; then
+    fail "Pipfile lacks Pipfile.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name Pipfile -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/Cargo.lock" ]; then
+    fail "Cargo manifest lacks Cargo.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name Cargo.toml -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/Gemfile.lock" ]; then
+    fail "Gemfile lacks Gemfile.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name Gemfile -print)
+
+while IFS= read -r manifest; do
+  dir="$(dirname "$manifest")"
+  if [ ! -f "$dir/composer.lock" ]; then
+    fail "Composer manifest lacks composer.lock: $manifest"
+    LOCK_FAIL=1
+  fi
+done < <(find . -path './.git' -prune -o -name composer.json -print)
+
+if [ -f .pre-commit-config.yaml ]; then
+  FLOATING_PRECOMMIT_REVS=$(awk '/^[[:space:]]+rev:/ { print FNR ": " $0 }' .pre-commit-config.yaml | grep -Ev 'rev:[[:space:]]+[0-9a-f]{40}([[:space:]]+#.*)?$' || true)
+  if [ -n "$FLOATING_PRECOMMIT_REVS" ]; then
+    fail "pre-commit hook revs must be immutable commit SHAs:"
+    echo "$FLOATING_PRECOMMIT_REVS" | while IFS= read -r line; do printf "    .pre-commit-config.yaml:%s\n" "$line"; done
+    LOCK_FAIL=1
+  fi
+fi
+
+if [ "$LOCK_FAIL" -eq 0 ]; then
+  pass "Dependency lock files and immutable release pins are present"
+fi
+
+step "Running golangci-lint if installed"
+if command -v golangci-lint >/dev/null 2>&1; then
+  if golangci-lint run 2>&1; then
+    pass "golangci-lint passed"
+  else
+    fail "golangci-lint found issues"
+  fi
+else
+  printf "${YELLOW}  ⚠ golangci-lint not installed — skipping (install v2.12.2 from https://golangci-lint.run/docs/welcome/install/)${NC}\n"
+fi
+
+step "Checking for unused imports (goimports)"
+if command -v goimports >/dev/null 2>&1; then
+  BAD_IMPORTS=$(goimports -l . 2>/dev/null || true)
+  if [ -z "$BAD_IMPORTS" ]; then
+    pass "No unused imports"
+  else
+    fail "Unused or mis-ordered imports in:"
+    echo "$BAD_IMPORTS" | while read -r f; do printf "    %s\n" "$f"; done
+  fi
+else
+  printf "${YELLOW}  ⚠ goimports not installed — skipping import check (go install golang.org/x/tools/cmd/goimports@v0.45.0)${NC}\n"
+fi
+
+# ── Vulnerability scan ──
+
+step "Scanning for known vulnerabilities (govulncheck)"
+if command -v govulncheck >/dev/null 2>&1; then
+  if govulncheck ./... 2>&1; then
+    pass "No known vulnerabilities"
+  else
+    fail "govulncheck found vulnerabilities"
+  fi
+else
+  printf "${YELLOW}  ⚠ govulncheck not installed — skipping (go install golang.org/x/vuln/cmd/govulncheck@v1.3.0)${NC}\n"
+fi
+
+step "Running gosec if installed"
+if command -v gosec >/dev/null 2>&1; then
+  if gosec -exclude-generated ./... 2>&1; then
+    pass "gosec found no unsuppressed findings"
+  else
+    fail "gosec found security findings"
+  fi
+else
+  printf "${YELLOW}  ⚠ gosec not installed — skipping (go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1)${NC}\n"
+fi
+
+# ── Terraform hygiene ──
+
+step "Checking Terraform formatting"
+if [ -d deploy/terraform ]; then
+  if command -v terraform >/dev/null 2>&1; then
+    if terraform fmt -check -recursive deploy/terraform/ 2>&1; then
+      pass "Terraform files are formatted"
+    else
+      fail "terraform fmt found files that need formatting"
+    fi
+  else
+    printf "${YELLOW}  ⚠ terraform not installed — skipping Terraform fmt check${NC}\n"
+  fi
+fi
+
+# ── Docker image digest pinning ──
+
+step "Checking Docker image pinning (sha256 digests)"
+DOCKER_FAIL=0
+
+for f in Dockerfile docker-compose.yml; do
+  if [ ! -f "$f" ]; then continue; fi
+
+  if grep -qiE '^\s*(FROM|image:)\s+' "$f"; then
+    UNPINNED=$(grep -iE '^\s*(FROM|image:)\s+' "$f" | grep -v '@sha256:' | grep -v '^\s*#' || true)
+    if [ -n "$UNPINNED" ]; then
+      fail "Unpinned image(s) in $f:"
+      echo "$UNPINNED" | while read -r line; do printf "    %s\n" "$line"; done
+      DOCKER_FAIL=1
+    fi
+  fi
+done
+
+if [ "$DOCKER_FAIL" -eq 0 ]; then
+  pass "All Docker images pinned to sha256 digests"
+fi
+
+step "Checking Debian package pinning"
+APT_FAIL=0
+APT_UNPINNED=$(
+  awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        token = $i
+        gsub(/\\$/, "", token)
+        if (token == "apt-get" && (i + 1) <= NF && $(i + 1) == "install") {
+          in_install = 1
+          i++
+          continue
+        }
+        if (!in_install) {
+          continue
+        }
+        if (token == "&&" || token == ";") {
+          in_install = 0
+          continue
+        }
+        if (token == "" || token == "\\" || token ~ /^-/) {
+          continue
+        }
+        if (token !~ /=/) {
+          printf "%s:%d: %s\n", FILENAME, FNR, token
+        }
+      }
+    }
+  ' Dockerfile 2>/dev/null || true
+)
+
+if [ -n "$APT_UNPINNED" ]; then
+  fail "Unpinned apt package(s):"
+  echo "$APT_UNPINNED" | while IFS= read -r line; do printf "    %s\n" "$line"; done
+  APT_FAIL=1
+fi
+
+if [ "$APT_FAIL" -eq 0 ]; then
+  pass "Debian apt packages are pinned to exact versions"
+fi
+
+step "Checking for forbidden latest version references"
+LATEST_FAIL=0
+LATEST_MATCHES=$(rg -n '(:latest|@latest)' \
+  Dockerfile docker-compose.yml infra scripts \
+  --glob '!**/.terraform/**' \
+  --glob '!scripts/pre-commit' \
+  2>/dev/null || true)
+
+if [ -n "$LATEST_MATCHES" ]; then
+  fail "Forbidden latest reference(s):"
+  echo "$LATEST_MATCHES" | while read -r line; do printf "    %s\n" "$line"; done
+  LATEST_FAIL=1
+fi
+
+MODEL_LATEST_MATCHES=$(rg -n 'gpt-[A-Za-z0-9_.-]*latest' \
+  cmd/server docker-compose.yml infra scripts .github \
+  --glob '!**/.terraform/**' \
+  2>/dev/null || true)
+
+if [ -n "$MODEL_LATEST_MATCHES" ]; then
+  fail "Forbidden floating model latest alias(es):"
+  echo "$MODEL_LATEST_MATCHES" | while read -r line; do printf "    %s\n" "$line"; done
+  LATEST_FAIL=1
+fi
+
+if [ "$LATEST_FAIL" -eq 0 ]; then
+  pass "No forbidden latest references in operational files"
+fi
+
+# ── CDN SRI (Subresource Integrity) ──
+
+step "Checking CDN scripts for SRI integrity attributes"
+SRI_FAIL=0
+
+for f in web/*.html; do
+  if [ ! -f "$f" ]; then continue; fi
+
+  # Collapse multi-line <script> tags onto single lines, then check for external src without integrity
+  COLLAPSED=$(perl -0777 -pe 's/<script\b([^>]*?)>/join(" ", split(\/\n\s*\/, "<script$1>"))/gei' "$f")
+  MISSING=$(echo "$COLLAPSED" | grep -n '<script[^>]*src="https\?://[^"]*"' | grep -v 'integrity=' || true)
+
+  if [ -n "$MISSING" ]; then
+    echo "$MISSING" | while IFS= read -r line; do
+      fail "Missing SRI integrity attribute in $f: $(echo "$line" | sed 's/^[[:space:]]*//')"
+    done
+    SRI_FAIL=1
+  fi
+done
+
+if [ "$SRI_FAIL" -eq 0 ]; then
+  pass "All external scripts have SRI integrity attributes"
+fi
+
+# ── Secrets detection (basic) ──
+
+step "Scanning staged files for potential secrets"
+SECRETS_PATTERN='(AKIA[0-9A-Z]{16}|sk-[a-zA-Z0-9]{20,}|-----BEGIN (RSA |EC )?PRIVATE KEY-----|password\s*=\s*["\x27][^\s]{8,})'
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || true)
+
+if [ -n "$STAGED" ]; then
+  FOUND=$(echo "$STAGED" | xargs grep -lEn "$SECRETS_PATTERN" 2>/dev/null || true)
+  if [ -n "$FOUND" ]; then
+    fail "Potential secrets detected in staged files:"
+    echo "$FOUND" | while read -r f; do printf "    %s\n" "$f"; done
+  else
+    pass "No obvious secrets in staged files"
+  fi
+else
+  pass "No staged files to scan"
+fi
+
+# ── Result ──
+
+echo ""
+if [ "$FAIL" -ne 0 ]; then
+  printf "${RED}✗ Pre-commit checks FAILED — fix issues above before committing${NC}\n"
+  exit 1
+else
+  printf "${GREEN}✓ All pre-commit checks passed${NC}\n"
+  exit 0
+fi

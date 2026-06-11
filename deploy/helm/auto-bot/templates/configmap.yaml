@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "auto-bot.name" . }}-config
+  labels:
+    {{- include "auto-bot.labels" . | nindent 4 }}
+data:
+  {{- range $k, $v := .Values.config }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- /* APP_BASE_URL drives the CSP connect-src WebSocket origin. It MUST match the
+         hostname the browser uses, or wss:// is blocked and the board can't sync. */}}
+  {{- if .Values.ingress.enabled }}
+  APP_BASE_URL: {{ printf "https://%s" .Values.ingress.host | quote }}
+  {{- end }}

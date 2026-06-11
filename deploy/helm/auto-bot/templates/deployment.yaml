@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "auto-bot.name" . }}
+  labels:
+    {{- include "auto-bot.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate          # never run 2 pods: SQLite-WAL on a ReadWriteOnce PVC
+  selector:
+    matchLabels:
+      {{- include "auto-bot.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "auto-bot.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when config or the derived APP_BASE_URL changes.
+        checksum/config: {{ printf "%s|%s" (.Values.config | toYaml) (.Values.ingress.host | default "") | sha256sum }}
+    spec:
+      securityContext:
+        fsGroup: 10001          # app runs as uid/gid 10001; lets it write the PVC
+      containers:
+        - name: auto-bot
+          image: {{ include "auto-bot.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          workingDir: /srv      # the app reads web/ templates relative to cwd
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "auto-bot.name" . }}-config
+          env:
+            {{- if .Values.awsRolesAnywhere.enabled }}
+            # Point the AWS SDK at the Roles Anywhere sidecar's IMDS endpoint.
+            - name: AWS_EC2_METADATA_SERVICE_ENDPOINT
+              value: "http://127.0.0.1:{{ .Values.awsRolesAnywhere.port }}"
+            {{- end }}
+            {{- range .Values.secretEnvKeys }}
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.existingSecret }}
+                  key: {{ . }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+          {{- end }}
+        {{- if .Values.awsRolesAnywhere.enabled }}
+        # IAM Roles Anywhere sidecar: exchanges the X.509 leaf cert for short-lived
+        # STS credentials and serves them on an IMDS-compatible endpoint (localhost).
+        # The cert/key live only in this sidecar, never in the app container.
+        - name: aws-signing-helper
+          image: {{ .Values.awsRolesAnywhere.image }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --port
+            - {{ .Values.awsRolesAnywhere.port | quote }}
+            - --certificate
+            - /ra/leaf.crt
+            - --private-key
+            - /ra/leaf.key
+            - --trust-anchor-arn
+            - {{ .Values.awsRolesAnywhere.trustAnchorArn }}
+            - --profile-arn
+            - {{ .Values.awsRolesAnywhere.profileArn }}
+            - --role-arn
+            - {{ .Values.awsRolesAnywhere.roleArn }}
+          volumeMounts:
+            - name: ra-cert
+              mountPath: /ra
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+        {{- end }}
+      volumes:
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "auto-bot.name" . }}-data
+        {{- end }}
+        {{- if .Values.awsRolesAnywhere.enabled }}
+        - name: ra-cert
+          secret:
+            secretName: {{ .Values.awsRolesAnywhere.certSecret }}
+            defaultMode: 0400
+        {{- end }}

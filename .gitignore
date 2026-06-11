@@ -1,0 +1,102 @@
+# ---------- Go ----------
+# Compiled binaries
+/auto-bot
+/server
+openai-realtime-meeting-assistant
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+*.prof
+cover.html
+coverage.txt
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# ---------- Node / web build ----------
+node_modules/
+web/app/
+
+# ---------- Browser / test artifacts ----------
+.playwright-mcp/
+playwright-report/
+test-results/
+blob-report/
+
+# ---------- Local app data ----------
+*.sqlite
+*.sqlite3
+*.db
+
+# Module vendoring (uncomment if you vendor)
+# vendor/
+
+# ---------- macOS ----------
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+__MACOSX
+Icon?
+
+# ---------- Windows ----------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# ---------- Linux ----------
+*~
+.nfs*
+
+# ---------- IDEs / Editors ----------
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+\#*\#
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ---------- Environment / Secrets ----------
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# ---------- Docker ----------
+# docker-compose.yml and Dockerfile are tracked;
+# ignore runtime volumes and overrides
+docker-compose.override.yml
+var/
+
+# Internal/maintainer-only docs (not part of the public project)
+docs/launch-checklist.md
+docs/*.local.md
+*.scratch.md
