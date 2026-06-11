@@ -1828,6 +1828,18 @@
       .ab-card-sub { font-size: 14px; color: var(--brand-slate); }
       .ab-start { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 17px; background: var(--brand-navy); border: none; border-radius: 12px; color: #fff; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer; }
       .ab-start:hover { background: #0a2740; }
+      .ab-setup { display: flex; flex-direction: column; gap: 14px; }
+      .ab-setup-row { display: flex; gap: 12px; }
+      .ab-field { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+      .ab-field > span { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--brand-slate); }
+      .ab-field select, .ab-field input {
+        height: 44px; padding: 0 12px; background: #fff; border: 1.5px solid #d7dee5;
+        border-radius: 10px; font-family: inherit; font-size: 14px; color: var(--brand-navy);
+      }
+      .ab-field select:focus, .ab-field input:focus { outline: none; border-color: var(--brand-tide); }
+      .ab-setup-actions { display: flex; gap: 10px; align-items: center; }
+      .ab-setup-actions .ab-start { flex: 1; }
+      .ab-setup-cancel { background: none; border: none; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; color: var(--brand-slate); padding: 0 14px; }
       .ab-divider { display: flex; align-items: center; gap: 14px; }
       .ab-divider::before, .ab-divider::after { content: ""; flex: 1; height: 1px; background: #e3e8ed; }
       .ab-divider span { font-size: 12px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--brand-slate); }
@@ -2104,6 +2116,29 @@
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M15 10l4.5-3v10L15 14M4 6h9a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2z" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Start a meeting
           </button>
+          <!-- Inline host setup (expands when Start is clicked) -->
+          <div id="abSetup" class="ab-setup" hidden>
+            <div class="ab-setup-row">
+              <label class="ab-field">
+                <span>Meeting type</span>
+                <select id="abMeetingType">
+                  <option value="general">General meeting</option>
+                  <option value="standup">Standup</option>
+                  <option value="one_on_one">1:1</option>
+                  <option value="sprint_review">Sprint review</option>
+                  <option value="open_ended">Open-ended</option>
+                </select>
+              </label>
+              <label class="ab-field">
+                <span>Join as</span>
+                <input id="abName" type="text" maxlength="64" autocomplete="name" placeholder="Your name">
+              </label>
+            </div>
+            <div class="ab-setup-actions">
+              <button id="abStartConfirm" class="ab-start" type="button">Start meeting</button>
+              <button id="abStartCancel" class="ab-setup-cancel" type="button">Cancel</button>
+            </div>
+          </div>
           <div class="ab-divider"><span>or join with a code</span></div>
           <div class="ab-join-row">
             <input id="abCode" class="ab-code" type="text" inputmode="text" maxlength="24" placeholder="ABC-123" autocomplete="off">
@@ -6555,13 +6590,43 @@
         const codeInput = document.getElementById('abCode')
         const identityEl = document.getElementById('abIdentity')
         const avatarEl = document.getElementById('abAvatar')
+        const setupEl = document.getElementById('abSetup')
+        const meetingTypeSel = document.getElementById('abMeetingType')
+        const nameInput = document.getElementById('abName')
+        const startConfirmBtn = document.getElementById('abStartConfirm')
+        const startCancelBtn = document.getElementById('abStartCancel')
         let chatOnly = false
+        let resolvedName = ''
 
-        // Reflect the resolved identity (SSO display name or stored identity).
-        try {
-          const who = (typeof localIdentity === 'string' && localIdentity) || cleanIdentity(localStorage.getItem('kanban-livekit-identity') || '')
-          if (who) { identityEl.textContent = 'Joining as ' + who; avatarEl.textContent = avatarInitial(who) }
-        } catch (e) {}
+        // Apply the chosen display name everywhere it's used: the underlying
+        // identityInput (drives the LiveKit token AND the chat "speaker"),
+        // localIdentity/localDisplayName, and the lobby footer label. This is
+        // what unifies the video-tile name with the chat name.
+        function applyName(name) {
+          const clean = (name || '').trim()
+          if (!clean) return
+          resolvedName = clean
+          try { identityInput.value = clean } catch (e) {}
+          try { identityInput.dispatchEvent(new Event('input')) } catch (e) {}
+          try { localStorage.setItem('kanban-livekit-identity', cleanIdentity(clean)) } catch (e) {}
+          identityEl.textContent = 'Joining as ' + clean
+          avatarEl.textContent = avatarInitial(clean)
+        }
+
+        // Pre-fill from the verified Cloudflare Access / session identity.
+        ;(async () => {
+          let who = ''
+          try {
+            const res = await fetch('/auth/session', { credentials: 'same-origin', headers: { 'X-Auto-Bot-Local-Session': '1' } })
+            if (res.ok) {
+              const s = await res.json()
+              who = (s.display_name || s.participant_identity || '').trim()
+            }
+          } catch (e) {}
+          if (!who) who = cleanIdentity(localStorage.getItem('kanban-livekit-identity') || '')
+          if (!who) who = (typeof localIdentity === 'string' && localIdentity !== 'User') ? localIdentity : ''
+          if (who) { applyName(who); if (nameInput) nameInput.value = who }
+        })()
 
         function hideLobby() {
           lobby.classList.add('ab-hidden')
@@ -6602,28 +6667,50 @@
           chatOnlyBtn.style.fontWeight = chatOnly ? '700' : '500'
         })
 
-        startBtn.addEventListener('click', async () => {
-          startBtn.disabled = true
-          // Instant feedback: show the connecting overlay before any await so the
-          // user never stares at an unresponsive lobby during backend calls.
+        // Step 1: clicking "Start a meeting" reveals the inline host setup
+        // (meeting type + editable name) rather than starting immediately.
+        startBtn.addEventListener('click', () => {
+          // Pre-fill meeting type from the current default.
+          try { if (meetingTypeSel && typeof currentMeetingType === 'string') meetingTypeSel.value = currentMeetingType } catch (e) {}
+          if (nameInput && !nameInput.value && resolvedName) nameInput.value = resolvedName
+          setupEl.hidden = false
+          startBtn.hidden = true
+          if (nameInput) { nameInput.focus(); nameInput.select() }
+        })
+        startCancelBtn.addEventListener('click', () => {
+          setupEl.hidden = true
+          startBtn.hidden = false
+        })
+
+        // Step 2: "Start meeting" commits the chosen name + type, then hosts.
+        async function doStartMeeting() {
+          const chosenName = (nameInput && nameInput.value.trim()) || resolvedName
+          if (!chosenName) { if (nameInput) { nameInput.focus(); nameInput.style.borderColor = 'var(--brand-warn)' } return }
+          applyName(chosenName)
+          const chosenType = (meetingTypeSel && meetingTypeSel.value) || 'general'
+          startConfirmBtn.disabled = true
           hideLobby()
           setStatus('Preparing meeting…')
           try {
             setMeetingRole('host')
+            try { setMeetingType(chosenType, { silent: true }) } catch (e) {}
             applyJoinMode()
             await hostCreateMeeting()
             await joinRoom()
           } catch (error) {
-            startBtn.disabled = false
+            startConfirmBtn.disabled = false
             abHideConnecting()
             lobbyError(error)
           }
-        })
+        }
+        startConfirmBtn.addEventListener('click', doStartMeeting)
+        if (nameInput) nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') doStartMeeting() })
 
         async function doJoin() {
           const code = formatMeetingCode(codeInput.value || '')
           if (!code) { codeInput.focus(); codeInput.style.borderColor = 'var(--brand-warn)'; return }
           joinBtn.disabled = true
+          if (resolvedName) applyName(resolvedName)
           hideLobby()
           setStatus('Preparing meeting…')
           try {
