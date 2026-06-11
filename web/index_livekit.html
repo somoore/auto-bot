@@ -6542,7 +6542,14 @@
           if (who) { identityEl.textContent = 'Joining as ' + who; avatarEl.textContent = avatarInitial(who) }
         } catch (e) {}
 
-        function hideLobby() { lobby.classList.add('ab-hidden') }
+        function hideLobby() {
+          lobby.classList.add('ab-hidden')
+          // The lobby already made the host/join choice — suppress the legacy
+          // post-login "Start or join a meeting" choice modal so it doesn't
+          // double up on top of the meeting view.
+          try { meetingChoiceDismissed = true } catch (e) {}
+          if (typeof dismissMeetingChoiceModal === 'function') { try { dismissMeetingChoiceModal() } catch (e) {} }
+        }
         function showLobby() { lobby.classList.remove('ab-hidden') }
         function applyJoinMode() { try { setMeetingJoinMode(chatOnly ? 'chat' : 'full', { broadcast: false }) } catch (e) {} }
         function lobbyError(error) {
@@ -6574,14 +6581,18 @@
 
         startBtn.addEventListener('click', async () => {
           startBtn.disabled = true
+          // Instant feedback: show the connecting overlay before any await so the
+          // user never stares at an unresponsive lobby during backend calls.
+          hideLobby()
+          setStatus('Preparing meeting…')
           try {
             setMeetingRole('host')
             applyJoinMode()
             await hostCreateMeeting()
-            hideLobby()
             await joinRoom()
           } catch (error) {
             startBtn.disabled = false
+            abHideConnecting()
             lobbyError(error)
           }
         })
@@ -6590,15 +6601,17 @@
           const code = formatMeetingCode(codeInput.value || '')
           if (!code) { codeInput.focus(); codeInput.style.borderColor = 'var(--brand-warn)'; return }
           joinBtn.disabled = true
+          hideLobby()
+          setStatus('Preparing meeting…')
           try {
             setMeetingRole('participant')
             applyJoinMode()
             joinCodeInput.value = code
             joinCodeInput.dispatchEvent(new Event('input'))
-            hideLobby()
             await joinRoom()
           } catch (error) {
             joinBtn.disabled = false
+            abHideConnecting()
             lobbyError(error)
           }
         }
