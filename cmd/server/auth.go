@@ -31,6 +31,12 @@ var (
 	appBoardID         = defaultAppBoardID
 	appLocalLoginToken = ""
 	authStore          = newWebAuthStore(defaultSessionTTL)
+	// adminBearerHosts, when non-empty, restricts the shared injected-bearer auth
+	// path to these request Host values (set from ADMIN_BEARER_HOSTS, comma-sep).
+	// Used to confine the Traefik-injected admin token to the non-SSO Tailscale
+	// ingress so the public (CF Access) path fails closed. Empty = honor the
+	// bearer on any host (legacy behavior, for deployments with no SSO front door).
+	adminBearerHosts = map[string]struct{}{}
 )
 
 type requestAuthContext struct {
@@ -73,6 +79,7 @@ func configureAppSecurity() error {
 	appRoomID = normalizeRuntimeID(getEnvDefault("APP_ROOM_ID", defaultAppRoomID), defaultAppRoomID)
 	appBoardID = normalizeRuntimeID(getEnvDefault("APP_BOARD_ID", defaultAppBoardID), defaultAppBoardID)
 	appLocalLoginToken = strings.TrimSpace(os.Getenv("APP_LOCAL_LOGIN_TOKEN"))
+	adminBearerHosts = parseHostSet(os.Getenv("ADMIN_BEARER_HOSTS"))
 
 	if appAuthMode != "token" && appAuthMode != "disabled" {
 		return fmt.Errorf("APP_AUTH_MODE must be token or disabled")
@@ -157,6 +164,37 @@ func defaultAuthContext(identity string) requestAuthContext {
 	}
 }
 
+// sanitizeDisplayName cleans a client-supplied cosmetic display label for the
+// LiveKit tile. It is intentionally more permissive than identity (allows
+// spaces and unicode letters) but strips control characters and caps length, so
+// it can never carry control bytes or unbounded input. It is NOT an
+// authorization key.
+func sanitizeDisplayName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range name {
+		// Drop control characters (incl. newlines) and the unicode replacement
+		// char; keep everything else (letters, digits, spaces, punctuation).
+		if r < 0x20 || r == 0x7f || r == 0xfffd {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	out := strings.TrimSpace(b.String())
+	if len(out) > 64 {
+		// Cap by rune to avoid splitting a multi-byte character.
+		runes := []rune(out)
+		if len(runes) > 64 {
+			runes = runes[:64]
+		}
+		out = strings.TrimSpace(string(runes))
+	}
+	return out
+}
+
 func normalizeParticipantIdentity(identity string) string {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
@@ -194,7 +232,29 @@ func authorizeBaseRequest(r *http.Request) (requestAuthContext, bool) {
 		}
 	}
 
-	if bearerToken(r) != "" && secureTokenEqual(bearerToken(r), apiToken) {
+	// Cloudflare Access: when enabled, identity comes from the CF-signed JWT
+	// (see cf_access.go), giving each SSO user a distinct, server-controlled
+	// identity derived from their email. A request without a valid CF JWT (e.g.
+	// the Tailscale admin ingress, which bypasses Cloudflare) falls through to
+	// the shared-token path below.
+	if cfAccessEnabled {
+		if ctx, ok := cfAccessContext(r); ok {
+			return ctx, requestMatchesAuthorizedRoomBoard(r, ctx)
+		}
+	}
+
+	// Shared-token (injected-bearer) path. SECURITY — fail closed on the public
+	// path: when an SSO provider (CF Access / ALB) is the front door, every
+	// public request is expected to carry a verified SSO identity above. If CF
+	// validation misses for ANY reason (cookie not forwarded, clock skew, JWKS
+	// hiccup) we must NOT silently fall back to the shared bearer here, because an
+	// upstream proxy (Traefik) injects that bearer on the public host too — doing
+	// so would hand every user the same generic "api-token" identity, collapsing
+	// the meeting host gate and colliding LiveKit participants. So when an
+	// admin-bearer host allowlist is configured (ADMIN_BEARER_HOSTS), the shared
+	// bearer is honored ONLY on those hosts (the Tailscale admin ingress, which
+	// bypasses Cloudflare and has no SSO). Public hosts then fail closed → 401.
+	if bearerToken(r) != "" && secureTokenEqual(bearerToken(r), apiToken) && bearerAllowedForHost(r) {
 		identity := normalizeParticipantIdentity(r.Header.Get("X-Participant-Identity"))
 		if identity == "" {
 			identity = "api-token"
@@ -231,6 +291,36 @@ func requestMatchesAuthorizedRoomBoard(r *http.Request, ctx requestAuthContext) 
 		return false
 	}
 	return ctx.RoomID == appRoomID && ctx.BoardID == appBoardID
+}
+
+// parseHostSet parses a comma-separated host allowlist into a lowercase set.
+func parseHostSet(raw string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, part := range strings.Split(raw, ",") {
+		h := strings.ToLower(strings.TrimSpace(part))
+		if h != "" {
+			out[h] = struct{}{}
+		}
+	}
+	return out
+}
+
+// bearerAllowedForHost reports whether the shared injected-bearer auth path may
+// be honored for this request's Host. When ADMIN_BEARER_HOSTS is unset (empty
+// set) the bearer is honored on any host (legacy / no-SSO deployments). When it
+// is set, the bearer is honored ONLY on those hosts — confining the injected
+// admin token to the non-SSO Tailscale ingress so public (SSO) hosts fail closed.
+func bearerAllowedForHost(r *http.Request) bool {
+	if len(adminBearerHosts) == 0 {
+		return true
+	}
+	host := strings.TrimSpace(r.Host)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	_, ok := adminBearerHosts[host]
+	return ok
 }
 
 func bearerToken(r *http.Request) string {

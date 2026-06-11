@@ -1232,7 +1232,7 @@ func (app *novaSonicApp) Close() {
 
 // --- LiveKit token generation ---
 
-func generateLivekitToken(roomID string, identity string) (string, error) {
+func generateLivekitToken(roomID string, identity string, displayName string) (string, error) {
 	apiKey := os.Getenv("LIVEKIT_API_KEY")
 	apiSecret := os.Getenv("LIVEKIT_API_SECRET")
 	if apiKey == "" || apiSecret == "" {
@@ -1245,6 +1245,12 @@ func generateLivekitToken(roomID string, identity string) (string, error) {
 		Room:     normalizeRuntimeID(roomID, appRoomID),
 	}
 	at.SetVideoGrant(grant).SetIdentity(identity).SetValidFor(15 * time.Minute)
+	// Name is the cosmetic LiveKit participant label (shown on the tile). Unlike
+	// identity it is NOT an authorization key — the host gate keys on identity —
+	// so it is safe to let the client set it. Falls back to identity when empty.
+	if displayName = strings.TrimSpace(displayName); displayName != "" {
+		at.SetName(displayName)
+	}
 	return at.ToJWT()
 }
 

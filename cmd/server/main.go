@@ -56,7 +56,6 @@ type websocketMessage struct {
 	Data  string `json:"data"`
 }
 
-
 func main() {
 	flag.Parse()
 
@@ -74,6 +73,9 @@ func main() {
 		panic(err)
 	}
 	if err := configureALBAuth(); err != nil {
+		panic(err)
+	}
+	if err := configureCFAccessAuth(); err != nil {
 		panic(err)
 	}
 
@@ -226,18 +228,28 @@ func livekitTokenHandler(w http.ResponseWriter, r *http.Request) {
 
 	// The authenticated identity is authoritative. A client-supplied ?identity=
 	// override is only honored in local/disabled mode (no real identity exists);
-	// for any authenticated context (token, cookie, or ALB OIDC) we mint the
-	// LiveKit token strictly with authCtx.Identity. Honoring the query param for
-	// authenticated requests would let a participant impersonate another user
-	// (incl. the host) in the LiveKit room — a privilege-escalation vector.
+	// for any authenticated context (token, cookie, ALB OIDC, or CF Access) we
+	// mint the LiveKit token strictly with authCtx.Identity. Honoring the query
+	// param for authenticated requests would let a participant impersonate
+	// another user (incl. the host) in the LiveKit room — a privilege-escalation
+	// vector.
+	//
+	// Under SSO (ALB / CF Access) the server already assigns each user a distinct
+	// identity from their verified email; the client has no authority to name
+	// itself. We therefore IGNORE the client ?identity outright rather than 403
+	// on a mismatch — the frontend always sends the Name-field value, which need
+	// not equal the server identity, and rejecting it would break join entirely.
 	identity := authCtx.Identity
+	ssoAuthenticated := albAuthEnabled || cfAccessEnabled
 	if appAuthMode == "disabled" {
 		if q := normalizeParticipantIdentity(r.URL.Query().Get("identity")); q != "" {
 			identity = q
 		}
-	} else if requested := normalizeParticipantIdentity(r.URL.Query().Get("identity")); requested != "" && requested != authCtx.Identity {
-		http.Error(w, "identity does not match authenticated session", http.StatusForbidden)
-		return
+	} else if !ssoAuthenticated {
+		if requested := normalizeParticipantIdentity(r.URL.Query().Get("identity")); requested != "" && requested != authCtx.Identity {
+			http.Error(w, "identity does not match authenticated session", http.StatusForbidden)
+			return
+		}
 	}
 	if identity == "" {
 		http.Error(w, "invalid identity: must be 1-64 alphanumeric/dash/underscore characters", http.StatusBadRequest)
@@ -249,7 +261,18 @@ func livekitTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := generateLivekitToken(authCtx.RoomID, identity)
+	// Display name is the cosmetic LiveKit tile label. The client may set it via
+	// ?name= (sanitized, length-capped); it is decoupled from the authorization
+	// identity above. Fall back to the SSO display name, then the identity.
+	displayName := sanitizeDisplayName(r.URL.Query().Get("name"))
+	if displayName == "" {
+		displayName = sanitizeDisplayName(authCtx.DisplayName)
+	}
+	if displayName == "" {
+		displayName = identity
+	}
+
+	token, err := generateLivekitToken(authCtx.RoomID, identity, displayName)
 	if err != nil {
 		log.Errorf("Failed to generate LiveKit token: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
