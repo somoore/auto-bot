@@ -982,6 +982,25 @@ type novaSonicToolUse struct {
 	Content     string `json:"content"`
 }
 
+// voiceToolConfirmationID extracts the confirmation_id argument from a tool
+// call's raw JSON content, if present. It is used to scope the participant
+// confirmation gate to the specific pending action(s) being resolved. Returns
+// "" when the content is empty, unparseable, or has no confirmation_id (an empty
+// reference means "all pending", which the gate handles).
+func voiceToolConfirmationID(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	var args struct {
+		ConfirmationID string `json:"confirmation_id"`
+	}
+	if err := json.Unmarshal([]byte(content), &args); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(args.ConfirmationID)
+}
+
 func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	var tu novaSonicToolUse
 	if err := json.Unmarshal(raw, &tu); err != nil {
@@ -998,7 +1017,7 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	var result map[string]any
 	var changed bool
 	var err error
-	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, app.currentOrLastSpeakerLabel()) {
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, app.currentOrLastSpeakerLabel(), voiceToolConfirmationID(tu.Content)) {
 		result = hostOnlyToolResult(tu.ToolName)
 	} else {
 		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{

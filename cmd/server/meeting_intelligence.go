@@ -436,6 +436,64 @@ func (board *kanbanBoard) takePendingConfirmationsLocked(confirmationID string) 
 	return board.takeAllPendingConfirmationsLocked()
 }
 
+// pendingConfirmationToolsForReference reports the distinct tool names that a
+// confirm_action / cancel_confirmation with the given confirmation_id reference
+// would resolve, WITHOUT mutating the pending set. It mirrors the selection
+// logic of takePendingConfirmationsLocked so the authorization gate inspects
+// exactly the same set the resolution will act on. An empty reference means
+// "all pending". Returns nil when the reference matches nothing.
+func (board *kanbanBoard) pendingConfirmationToolsForReference(confirmationID string) []string {
+	board.mu.Lock()
+	defer board.mu.Unlock()
+
+	confirmationID = strings.TrimSpace(confirmationID)
+	var selected []pendingConfirmation
+	switch {
+	case confirmationID == "":
+		selected = board.pendingConfirmationsSliceLocked()
+	default:
+		if confirmation, ok := board.pendingConfirmations[confirmationID]; ok {
+			selected = []pendingConfirmation{confirmation}
+		} else if byRef := board.pendingConfirmationsMatchingReferenceLocked(confirmationID); len(byRef) > 0 {
+			selected = byRef
+		} else if confirmationReferenceMeansAll(confirmationID) {
+			selected = board.pendingConfirmationsSliceLocked()
+		}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	tools := make([]string, 0, len(selected))
+	for _, confirmation := range selected {
+		tools = append(tools, confirmation.ToolName)
+	}
+	return tools
+}
+
+// pendingConfirmationsSliceLocked returns a copy of all pending confirmations
+// without removing them. Callers must hold board.mu.
+func (board *kanbanBoard) pendingConfirmationsSliceLocked() []pendingConfirmation {
+	out := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
+	for _, confirmation := range board.pendingConfirmations {
+		out = append(out, confirmation)
+	}
+	return out
+}
+
+// pendingConfirmationsMatchingReferenceLocked is the read-only counterpart of
+// takePendingConfirmationsByReferenceLocked: it returns matches without deleting
+// them. Callers must hold board.mu.
+func (board *kanbanBoard) pendingConfirmationsMatchingReferenceLocked(reference string) []pendingConfirmation {
+	normalizedReference := strings.ToLower(strings.TrimSpace(reference))
+	confirmations := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
+	for id, confirmation := range board.pendingConfirmations {
+		if strings.Contains(normalizedReference, strings.ToLower(id)) {
+			confirmations = append(confirmations, confirmation)
+		}
+	}
+	return confirmations
+}
+
 func (board *kanbanBoard) takePendingConfirmationsByReferenceLocked(reference string) []pendingConfirmation {
 	normalizedReference := strings.ToLower(strings.TrimSpace(reference))
 	confirmations := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
