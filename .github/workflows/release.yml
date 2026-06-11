@@ -57,6 +57,9 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+          # metadata-action treats a version with a pre-release identifier (e.g.
+          # 0.0.1-prealpha) as NOT latest: it won't move the `latest` tag or emit
+          # the {{major}}.{{minor}} tag for it. Stable tags (e.g. 1.2.0) still do.
 
       - name: Build and push
         id: build
@@ -86,8 +89,15 @@ jobs:
           TAG: ${{ github.ref_name }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
+          # Tags with a pre-release identifier (e.g. -prealpha, -alpha, -beta, -rc)
+          # are published as GitHub pre-releases (not marked "Latest").
+          PRERELEASE_FLAG=""
+          case "$TAG" in
+            *-*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
           # Auto-generates notes from merged PRs (categorized via .github/release.yml).
           gh release create "$TAG" \
             --title "$TAG" \
+            $PRERELEASE_FLAG \
             --generate-notes \
             --notes "Container image: \`ghcr.io/${{ github.repository }}:${TAG#v}\` (\`${DIGEST}\`), signed with cosign. See [docs/deployment.md](https://github.com/${{ github.repository }}/blob/main/docs/deployment.md#verifying-the-published-image) to verify."
