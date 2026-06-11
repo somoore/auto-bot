@@ -1835,12 +1835,10 @@
         box-shadow: -24px 0 60px rgba(8,35,58,0.18);
         color: var(--brand-navy);
       }
-      /* Hide drawer sections not in the approved Host tools design.
-         display:none keeps the nodes in the DOM so JS writes still resolve. */
-      .ab-panel section[aria-label="Theater of work"],
-      .ab-panel section[aria-label="Multi-person validation"],
-      .ab-panel section[aria-label="Executive recap"],
-      .ab-panel section[aria-label="Agent confidence"] { display: none; }
+      /* All operator sections are kept visible in the Host tools panel
+         (Theater of Work, Multi-Person Proof, Agent Confidence, Executive
+         recap restored per user request). Only the redundant setup fields
+         below are hidden, since the lobby now owns join/host. */
       /* Within the setup section, the role/code/host fields are now the lobby's job. */
       .ab-panel #hostSetupFields,
       .ab-panel #participantSetupFields,
@@ -1867,8 +1865,21 @@
         background: #fff; border: 1px solid #d7dee5; color: var(--brand-navy); border-radius: 10px;
       }
       .ab-panel .state-pill { color: var(--brand-slate); }
-      .ab-panel .health-row, .ab-panel .health-label { color: var(--brand-slate); }
       .ab-panel .segmented button { color: var(--brand-slate); }
+      /* Restored sections: validation rows, health rows, recap box, confidence. */
+      .ab-panel .validation-row,
+      .ab-panel .health-row {
+        background: #f7f9fb !important; border: 1px solid #eef1f4;
+        color: var(--brand-slate) !important;
+      }
+      .ab-panel .validation-label, .ab-panel .health-label { color: var(--brand-slate) !important; }
+      .ab-panel .recap-box {
+        background: #f7f9fb !important; border: 1px solid #eef1f4;
+        color: var(--brand-navy) !important;
+      }
+      .ab-panel .confidence-bar { background: #eef1f4; }
+      .ab-panel .confidence-fill { background: var(--brand-tide); }
+      .ab-panel .confidence-copy { color: var(--brand-slate); }
       /* Tighten the heading so eyebrow + title don't overlap. */
       .ab-panel .operator-heading { align-items: flex-start; }
       .ab-panel .operator-heading h2 { margin-top: 2px; }
