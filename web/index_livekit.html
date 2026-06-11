@@ -6530,6 +6530,25 @@
       ;(function initAbLobby() {
         const lobby = document.getElementById('abLobby')
         if (!lobby) return
+        // The Auto Bot lobby OWNS the start/join choice, so the legacy
+        // "Start or join a meeting" choice modal must never open while the
+        // lobby is showing — otherwise it layers over the lobby and (with
+        // pointer-events:auto) silently eats clicks on Start/Join. Suppress it
+        // immediately, and keep it dismissed against the async session-load
+        // path (maybeShowMeetingChoiceModal) that fires after auth resolves.
+        try { meetingChoiceDismissed = true } catch (e) {}
+        function killChoiceModal() {
+          try { meetingChoiceDismissed = true } catch (e) {}
+          const m = document.getElementById('meetingChoiceModal')
+          if (m && m.classList.contains('visible') && !lobby.classList.contains('ab-hidden')) {
+            if (typeof dismissMeetingChoiceModal === 'function') { try { dismissMeetingChoiceModal() } catch (e) {} }
+            else { m.classList.remove('visible'); m.setAttribute('aria-hidden', 'true'); m.style.display = 'none' }
+          }
+        }
+        killChoiceModal()
+        // Watchdog: the modal may try to open shortly after auth resolves.
+        const _choiceGuard = setInterval(killChoiceModal, 200)
+        setTimeout(() => clearInterval(_choiceGuard), 8000)
         const startBtn = document.getElementById('abStart')
         const joinBtn = document.getElementById('abJoin')
         const chatOnlyBtn = document.getElementById('abChatOnly')
