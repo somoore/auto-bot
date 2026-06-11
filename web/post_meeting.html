@@ -3,20 +3,22 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Post-Meeting Intelligence</title>
+    <title>Auto Bot — Meeting Recap</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230E1418'/%3E%3Ctext x='6' y='21' font-family='ui-monospace,Menlo,monospace' font-size='13' font-weight='700' fill='%23FFFFFF'%3Ea_%3C/text%3E%3Crect x='22' y='9' width='4' height='13' rx='1.5' fill='%231B6CA8'/%3E%3C/svg%3E">
     <style>
       :root {
-        color-scheme: dark;
-        --bg: #101316;
-        --panel: #171c20;
-        --panel-2: #1e252b;
-        --line: #2f3942;
-        --text: #f1f5f8;
-        --muted: #9aa8b4;
-        --accent: #54c6a8;
-        --warn: #f3c969;
-        --bad: #f27676;
-        --ok: #69d39a;
+        color-scheme: light;
+        --bg: #f4f6f8;
+        --panel: #ffffff;
+        --panel-2: #f7f9fb;
+        --line: #e3e8ed;
+        --text: #0c2d48;
+        --muted: #5a6b7b;
+        --accent: #1b6ca8;
+        --warn: #b4541e;
+        --bad: #c0392b;
+        --ok: #2e7d5b;
+        --brand-mono: ui-monospace, "SF Mono", "Menlo", monospace;
       }
       * { box-sizing: border-box; }
       body {
@@ -33,7 +35,7 @@
         align-items: end;
         padding: 28px 32px 18px;
         border-bottom: 1px solid var(--line);
-        background: #11161a;
+        background: var(--panel);
       }
       h1, h2, h3, p { margin: 0; }
       h1 { font-size: 28px; line-height: 1.1; letter-spacing: 0; }
@@ -53,7 +55,7 @@
         display: inline-flex;
         align-items: center;
       }
-      button.primary, a.button.primary { background: var(--accent); color: #071512; border-color: var(--accent); font-weight: 700; }
+      button.primary, a.button.primary { background: var(--accent); color: #ffffff; border-color: var(--accent); font-weight: 700; }
       main { padding: 24px 32px 40px; display: grid; gap: 18px; }
       .metrics {
         display: grid;
@@ -74,8 +76,8 @@
       .list { display: grid; gap: 8px; }
       .item {
         padding: 10px 12px;
-        background: #12171b;
-        border: 1px solid #27313a;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
         border-radius: 7px;
         line-height: 1.4;
         overflow-wrap: anywhere;
@@ -98,7 +100,7 @@
       pre {
         white-space: pre-wrap;
         margin: 0;
-        color: #d7e2e8;
+        color: var(--text);
         line-height: 1.45;
         font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
@@ -130,7 +132,10 @@
   <body>
     <header>
       <div>
-        <h1>Post-Meeting Intelligence</h1>
+        <div style="display:flex;align-items:center;gap:4px;margin-bottom:10px;font-family:var(--brand-mono);font-size:17px;font-weight:600;letter-spacing:-0.01em;color:var(--text)">
+          <span>auto_bot</span><i style="width:8px;height:15px;background:var(--accent);border-radius:2px;font-style:normal"></i>
+        </div>
+        <h1>Meeting recap</h1>
         <p id="subtitle" class="subtle">Loading meeting report...</p>
       </div>
       <div class="toolbar">
