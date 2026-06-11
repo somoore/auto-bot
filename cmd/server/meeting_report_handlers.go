@@ -146,7 +146,7 @@ func voiceProvidersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":        true,
-		"active":    firstNonEmpty(voiceProvider, "openai"),
+		"active":    firstNonEmpty(voiceProvider, "nova-sonic"),
 		"providers": voiceProviderOptions(),
 	})
 }

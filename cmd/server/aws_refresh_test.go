@@ -17,7 +17,9 @@ func TestLocalAWSRefreshRequiresNovaProvider(t *testing.T) {
 	appAuthMode = "disabled"
 	appRoomID = "team-room"
 	appBoardID = "team-board"
-	voiceProvider = "openai"
+	// The refresh broker is Nova-only; an unknown/non-Nova provider must be
+	// rejected before any broker call.
+	voiceProvider = "some-other-provider"
 	meetingAccess = newMeetingAccessManager()
 
 	req := httptest.NewRequest(http.MethodPost, "http://localhost:3001/setup/aws/refresh", strings.NewReader(`{}`))

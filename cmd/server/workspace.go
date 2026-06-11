@@ -43,7 +43,7 @@ func currentWorkspaceScope(authCtx requestAuthContext) workspaceScope {
 		MeetingType:      authCtx.MeetingType,
 		AuthMode:         firstNonEmpty(authCtx.AuthMode, appAuthMode),
 		IdentityProvider: identityProviderMode(),
-		VoiceProvider:    firstNonEmpty(voiceProvider, "openai"),
+		VoiceProvider:    firstNonEmpty(voiceProvider, "nova-sonic"),
 		Metadata: map[string]string{
 			"isolation_model": "single-workspace-local-or-deployment-scoped",
 			"future_model":    "workspace-scoped rooms, boards, connector installs, and secrets",

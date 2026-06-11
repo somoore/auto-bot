@@ -142,15 +142,14 @@ make down
 
 ---
 
-## Voice providers
+## Voice provider
 
 | Provider | Media path | Models | AWS needed |
 |---|---|---|---|
-| **AWS Nova Sonic** (default) | LiveKit Cloud SFU | Bedrock Nova Sonic + Claude | Yes (Bedrock) |
-| **OpenAI Realtime** | in-process Pion SFU | OpenAI Realtime | No |
+| **AWS Nova Sonic** | LiveKit Cloud SFU | Bedrock Nova Sonic + Claude | Yes (Bedrock) |
 
-Set `VOICE_PROVIDER` (`nova-sonic` or `openai`). Both share the same board state and tool
-definitions. The shipped meeting UI uses the LiveKit/Nova Sonic path.
+The voice path is AWS Nova Sonic over LiveKit Cloud, with Bedrock Claude for board
+reasoning and agent runs. `VOICE_PROVIDER` defaults to `nova-sonic`.
 
 ## Configuration
 
@@ -160,7 +159,7 @@ and `secretEnvKeys` (from your Secret). Key ones:
 | Var | Purpose |
 |---|---|
 | `APP_API_TOKEN` | App login token (required) |
-| `VOICE_PROVIDER` | `nova-sonic` or `openai` |
+| `VOICE_PROVIDER` | `nova-sonic` (default) |
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | LiveKit Cloud (nova-sonic) |
 | `AWS_REGION` | Bedrock region (us-east-1 / us-west-2) |
 | `BOARD_SQLITE_PATH` | Board persistence (`/srv/data/board.sqlite`) |

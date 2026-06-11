@@ -100,7 +100,7 @@ func TestConfigureSecurityRejectsDisabledAuthOutsideLocal(t *testing.T) {
 
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("APP_AUTH_MODE", "disabled")
-	voiceProvider = "openai"
+	voiceProvider = "nova-sonic"
 	apiToken = ""
 
 	if err := configureAppSecurity(); err == nil {
@@ -115,7 +115,7 @@ func TestConfigureSecurityRejectsLocalLoginOutsideLocal(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("APP_AUTH_MODE", "token")
 	t.Setenv("APP_LOCAL_LOGIN_TOKEN", "local-login-token")
-	voiceProvider = "openai"
+	voiceProvider = "nova-sonic"
 	apiToken = "strong-test-token"
 
 	if err := configureAppSecurity(); err == nil {
@@ -334,7 +334,7 @@ func TestSessionStatusDoesNotAutoCreateLocalSessionForNonLocalhost(t *testing.T)
 }
 
 func TestFrontendDoesNotReferenceBrowserVisibleAppToken(t *testing.T) {
-	for _, path := range []string{"../../web/index.html", "../../web/index_livekit.html"} {
+	for _, path := range []string{"../../web/index_livekit.html"} {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
@@ -364,7 +364,6 @@ func snapshotAuthGlobals() func() {
 	}
 	voiceModels.mu.RUnlock()
 	oldNovaSonic := novaSonic
-	oldKanbanApp := kanbanApp
 	oldValidateAWSRuntimeCredentials := validateAWSRuntimeCredentials
 	oldMeetingAccess := meetingAccess
 	oldSharedBoard := sharedBoard
@@ -383,7 +382,6 @@ func snapshotAuthGlobals() func() {
 		voiceModels.models = oldVoiceModels
 		voiceModels.mu.Unlock()
 		novaSonic = oldNovaSonic
-		kanbanApp = oldKanbanApp
 		validateAWSRuntimeCredentials = oldValidateAWSRuntimeCredentials
 		meetingAccess = oldMeetingAccess
 		sharedBoard = oldSharedBoard

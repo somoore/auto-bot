@@ -40,7 +40,7 @@ Initial public release.
 
 ### Added
 - Voice-operated Kanban board with an AI scrum-master agent (Go).
-- Voice via LiveKit Cloud + AWS Bedrock (Nova Sonic), or OpenAI Realtime.
+- Voice via LiveKit Cloud + AWS Bedrock (Nova Sonic).
 - Helm chart for Kubernetes deployment (`deploy/helm/auto-bot`).
 - Terraform module for AWS Bedrock auth via IAM Roles Anywhere (`deploy/terraform/roles-anywhere`).
 - Local development via Docker Compose.

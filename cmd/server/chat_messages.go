@@ -361,11 +361,6 @@ func translateMeetingTextToEnglish(ctx context.Context, model agentModelClient, 
 
 func forwardChatMessageToVoiceAgent(speaker string, normalized normalizedMeetingText) error {
 	switch activeVoiceProviderID() {
-	case voiceProviderOpenAI:
-		if kanbanApp == nil {
-			return fmt.Errorf("openai realtime agent is not initialized")
-		}
-		return kanbanApp.SendTextMessage(speaker, normalized)
 	case voiceProviderNovaSonic:
 		if novaSonic == nil {
 			return fmt.Errorf("nova sonic agent is not initialized")

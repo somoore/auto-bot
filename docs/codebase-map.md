@@ -9,7 +9,7 @@ fixtures.
 
 | Path | Responsibility |
 | --- | --- |
-| `cmd/server/main.go` | Process startup, provider selection, HTTP route registration, WebSocket upgrade, LiveKit token minting, OpenAI WebRTC signaling, security headers, and origin policy. |
+| `cmd/server/main.go` | Process startup, Nova Sonic agent bootstrap, HTTP route registration, WebSocket upgrade, LiveKit token minting, security headers, and origin policy. |
 | `cmd/server/auth.go` | Shared-token bootstrap, HttpOnly browser sessions, local-only login, room/board authorization, and production safety checks. |
 | `cmd/server/rate_limiter.go` | Fixed-window limits for WebSocket upgrades and LiveKit token requests. |
 | `cmd/server/workspace.go` | Current deployment/workspace scope returned by `/workspace/status`; documents the future workspace isolation model. |
@@ -30,14 +30,13 @@ fixtures.
 
 | Path | Responsibility |
 | --- | --- |
-| `cmd/server/kanban.go` | OpenAI Realtime WebRTC path, OpenAI session configuration, model profile validation, event handling, and tool-call dispatch. |
 | `cmd/server/nova_sonic.go` | AWS Nova Sonic provider, LiveKit agent participant, Bedrock bidirectional stream lifecycle, board-context refresh, and tool-call dispatch. |
 | `cmd/server/nova_sonic_output.go` | Paced Nova Sonic output audio framing, queue limits, pre-roll, underrun/drop metrics, and frame padding. |
 | `cmd/server/nova_sonic_mixer.go` | 16 kHz mono PCM mixer feeding Nova Sonic. |
-| `cmd/server/audio_mixer.go` | 48 kHz stereo PCM mixer feeding OpenAI Realtime. |
+| `cmd/server/room_audio.go` | Shared room-audio format constants (48 kHz stereo) and PCM helpers for decoding LiveKit room audio. |
 | `cmd/server/opus_encoder.go` / `cmd/server/opus_decoder.go` | CGo Opus wrappers used by browser and LiveKit audio paths. |
-| `cmd/server/voice_models.go` | Host-selectable voice model options, same-provider model changes, restart-required provider switches, and local restart broker integration. |
-| `cmd/server/voice_status.go` | Voice readiness preflight for OpenAI/Nova, AWS credential checks, LiveKit agent presence, and user-facing recovery guidance. |
+| `cmd/server/voice_models.go` | Host-selectable Nova Sonic model options, same-provider model changes, and local restart broker integration. |
+| `cmd/server/voice_status.go` | Nova Sonic voice readiness preflight, AWS credential checks, LiveKit agent presence, and user-facing recovery guidance. |
 | `cmd/server/aws_refresh.go` | Optional local-only proxy for refreshing short-lived AWS speech credentials (enabled via `APP_LOCAL_AWS_REFRESH_URL`). |
 
 ## Jira, GitHub, And Agent Runs
@@ -74,7 +73,6 @@ fixtures.
 | Path | Responsibility |
 | --- | --- |
 | `web/index_livekit.html` | Main LiveKit/Nova Sonic meeting UI, host/participant access flow, video layouts, operator panel, voice reliability dashboard, board rendering, audit replay, and model settings. |
-| `web/index.html` | OpenAI Realtime/Pion browser UI for the raw WebRTC path. |
 | `web/post_meeting.html` | Post-meeting intelligence dashboard and archived report viewer. |
 | `public/screenshot.png` | README screenshot. |
 

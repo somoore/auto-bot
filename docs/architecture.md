@@ -9,7 +9,6 @@ flowchart LR
   Browser["Web app / Meeting UI"] --> Server["Go server"]
   Server --> Voice["Voice provider registry"]
   Voice --> Nova["AWS Nova Sonic + LiveKit"]
-  Voice --> Realtime["OpenAI Realtime + WebRTC"]
   Voice --> FutureVoice["Future full-duplex providers"]
   Server --> Core["internal/core contracts"]
   Core --> Ledger["Action ledger / replay"]
@@ -64,7 +63,7 @@ The agent must not claim Jira or GitHub success unless the relevant API confirms
 
 ## Extension Contracts
 
-Voice providers implement `core.VoiceProvider`. A provider declares transport, full-duplex support, modalities, health, and session lifecycle. This is the path for Nova Sonic, OpenAI Realtime, LiveKit Cloud-backed providers, and future full-duplex speech models. Model-specific profiles matter: `gpt-realtime-2` is the OpenAI tool-calling voice-agent profile, while `gpt-realtime-whisper` and `gpt-realtime-translate` are registered as transcription/translation profiles without Jira or GitHub write authority.
+Voice providers implement `core.VoiceProvider`. A provider declares transport, full-duplex support, modalities, health, and session lifecycle. This is the path for Nova Sonic, LiveKit Cloud-backed providers, and future full-duplex speech models.
 
 Connectors implement `core.Connector`. A connector declares capabilities, health, action execution, and undo semantics. Jira and GitHub are current first-class connectors; new tools should expose capability names, risk levels, and receipts that can be replayed.
 
@@ -72,7 +71,7 @@ Model providers implement `core.ModelProvider`. The current runtime registers Be
 
 ## Current Migration Status
 
-The extension layer is in place and tested. The existing runtime still contains mature Jira, GitHub, Nova Sonic, and OpenAI paths in `cmd/server`; those are now exposed through adapter descriptors while behavior stays stable. Future refactors should move one implementation at a time behind the contracts, with contract tests and eval fixtures added before changing behavior.
+The extension layer is in place and tested. The existing runtime still contains mature Jira, GitHub, and Nova Sonic paths in `cmd/server`; those are now exposed through adapter descriptors while behavior stays stable. Future refactors should move one implementation at a time behind the contracts, with contract tests and eval fixtures added before changing behavior.
 
 The action replay ledger is persisted in SQLite when `BOARD_SQLITE_PATH` is configured. Recent replay records are loaded on restart so audit can still answer what speech/tool/API result caused a mutation after a process restart.
 

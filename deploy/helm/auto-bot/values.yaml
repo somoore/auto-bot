@@ -42,7 +42,7 @@ ingress:
 config:
   APP_ENV: production
   APP_AUTH_MODE: token        # "token" (default) or "disabled" (local only)
-  VOICE_PROVIDER: nova-sonic  # "nova-sonic" (AWS Bedrock) or "openai"
+  VOICE_PROVIDER: nova-sonic  # AWS Bedrock Nova Sonic
   APP_ROOM_ID: kanban-meeting
   APP_BOARD_ID: default
   BOARD_SQLITE_PATH: /srv/data/board.sqlite
@@ -64,7 +64,6 @@ secretEnvKeys:
   - LIVEKIT_API_KEY
   - LIVEKIT_API_SECRET
   - LIVEKIT_BROWSER_URL
-  # If VOICE_PROVIDER=openai, add: OPENAI_API_KEY
 
 resources:
   requests:
