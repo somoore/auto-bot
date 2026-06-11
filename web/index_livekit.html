@@ -1880,9 +1880,26 @@
       .ab-panel .confidence-bar { background: #eef1f4; }
       .ab-panel .confidence-fill { background: var(--brand-tide); }
       .ab-panel .confidence-copy { color: var(--brand-slate); }
+      /* Buttons inside the panel → light maritime, tide for active states. */
+      .ab-panel .compact-btn {
+        background: #fff !important; border: 1px solid #e3e8ed !important; color: var(--brand-navy) !important;
+      }
+      .ab-panel .compact-btn:hover { background: var(--brand-fog) !important; }
+      .ab-panel .segmented { background: #eef1f4; border-radius: 10px; padding: 3px; }
+      .ab-panel .segmented button.active { background: var(--brand-tide) !important; color: #fff !important; }
+      .ab-panel .meeting-code, .ab-panel .meeting-code-meta { color: var(--brand-slate); }
+      .ab-panel .meeting-code-box { background: #f7f9fb; border: 1px solid #eef1f4; }
+      .ab-panel .agent-theater-setting-actions button { background: #fff !important; border: 1px solid #e3e8ed !important; color: var(--brand-slate) !important; }
       /* Tighten the heading so eyebrow + title don't overlap. */
       .ab-panel .operator-heading { align-items: flex-start; }
       .ab-panel .operator-heading h2 { margin-top: 2px; }
+      /* Density: tighten the Control Center's stacked sub-lists. */
+      .ab-panel .operator-section { gap: 12px; }
+      .ab-panel .operator-eyebrow { margin-bottom: 4px; }
+      .ab-panel .operator-list { max-height: 110px; }
+      .ab-panel .operator-item { padding: 7px 10px; font-size: 12px; }
+      /* Muted empty-state items read lighter (less heavy boxes). */
+      .ab-panel .operator-item:only-child { background: transparent !important; border: 1px dashed #e3e8ed; color: #9aa8b5 !important; }
 
       /* ════ Step 3 — maritime meeting stage ════ */
       body { background: var(--brand-ink); }
@@ -1923,6 +1940,23 @@
       .meeting-bar .primary:hover, button.primary:hover {
         background: #15598c;
       }
+
+      /* ════ Empty-board hint ════ */
+      .board-surface { position: relative; }
+      .ab-board-empty {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 14px; text-align: center; padding: 24px; pointer-events: none;
+      }
+      .ab-be-icon {
+        display: flex; align-items: center; justify-content: center;
+        width: 56px; height: 56px; border-radius: 16px; background: #eaf2f8;
+      }
+      .ab-be-title { font-size: 18px; font-weight: 600; color: var(--brand-navy); }
+      .ab-be-copy { font-size: 14px; line-height: 1.5; color: var(--brand-slate); max-width: 360px; }
+      /* When the whole board is empty, dim the per-column "Empty" labels so the
+         centered hint reads as the single focal point. */
+      .board-surface.ab-board-is-empty .empty { opacity: 0; }
 
       /* ════ Step 5 — maritime failure/alert card ════ */
       .ab-panel .failure-panel {
@@ -5422,6 +5456,29 @@
           else stack.append(...colCards.map(c => renderCard(c, changes.moved.has(c.id), changes.completed.has(c.id))))
           col.append(header, stack); return col
         }))
+        // Global empty-board hint (Auto Bot): teach the voice-first interaction
+        // when the whole board is empty.
+        const surface = boardEl.closest('.board-surface') || boardEl.parentElement
+        if (surface) {
+          let hint = surface.querySelector('.ab-board-empty')
+          if (cards.length === 0) {
+            if (!hint) {
+              hint = document.createElement('div')
+              hint.className = 'ab-board-empty'
+              hint.innerHTML = '<div class="ab-be-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="5" height="16" rx="1.5" fill="#1b6ca8"/><rect x="9.5" y="4" width="5" height="10" rx="1.5" fill="#7fb3d5"/><rect x="16" y="4" width="5" height="13" rx="1.5" fill="#bbd4e6"/></svg></div>'
+              const t = document.createElement('div'); t.className = 'ab-be-title'; t.textContent = 'Your board is ready'
+              const p = document.createElement('div'); p.className = 'ab-be-copy'
+              p.textContent = 'Just start talking. Say "create a ticket to fix the login bug" and it appears here.'
+              hint.append(t, p)
+              surface.appendChild(hint)
+            }
+            hint.style.display = ''
+            surface.classList.add('ab-board-is-empty')
+          } else if (hint) {
+            hint.style.display = 'none'
+            surface.classList.remove('ab-board-is-empty')
+          }
+        }
       }
 
       function renderCard(card, moved = false, completed = false) {
