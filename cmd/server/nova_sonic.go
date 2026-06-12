@@ -61,6 +61,12 @@ type novaSonicApp struct {
 	speakerMu       sync.Mutex
 	activeSpeakers  []string
 	lastUserSpeaker string
+	// displayNames maps a participant's authorization identity (e.g.
+	// "somoore2025") to its cosmetic display name (e.g. "Scott", from the
+	// LiveKit token's ?name=). The speaker labels above stay as identities so
+	// the host gate (voiceSpeakerHasHostAccess) can authorize them; this map is
+	// consulted only when rendering a human-visible transcript label.
+	displayNames map[string]string
 
 	audioMu                sync.Mutex
 	activeAudioTracks      map[string]string
@@ -391,6 +397,7 @@ func (app *novaSonicApp) LeaveConferenceRoom(reason string) {
 	app.speakerMu.Lock()
 	app.activeSpeakers = app.activeSpeakers[:0]
 	app.lastUserSpeaker = ""
+	app.displayNames = nil
 	app.speakerMu.Unlock()
 	log.Infof("Nova Sonic: left conference room (%s)", reason)
 }
@@ -493,6 +500,13 @@ func (app *novaSonicApp) handleTrackSubscribed(track *webrtc.TrackRemote, rp *lk
 	}
 	app.activeAudioTracks[trackKey] = rp.Identity()
 	app.audioMu.Unlock()
+	// Record this participant's display name so transcript labels resolve to a
+	// human-friendly name. We deliberately do NOT seed lastUserSpeaker (the host
+	// gate's fallback identity) here: that would attribute the empty-active-
+	// speaker path to whoever joined most recently, letting a non-host's voice
+	// command run as the host. The gate's fallback (onlyHostSessionLocked) stays
+	// deny-safe for mixed-role rooms.
+	app.rememberDisplayName(rp.Identity(), rp.Name())
 	app.ensureBedrockStream()
 
 	dec, err := newOpusDecoder(roomAudioSampleRate, roomAudioChannels)
@@ -544,27 +558,65 @@ func (app *novaSonicApp) handleTrackSubscribed(track *webrtc.TrackRemote, rp *lk
 }
 
 func (app *novaSonicApp) handleActiveSpeakersChanged(speakers []lksdk.Participant) {
-	var names []string
+	var ids []string
 	for _, s := range speakers {
 		id := s.Identity()
 		if id == "nova-sonic-agent" {
 			continue
 		}
-		names = append(names, id)
+		// Speaker labels stay as the authorization identity so the host gate
+		// (voiceSpeakerHasHostAccess) can map them back to m.hostIdentity. The
+		// cosmetic display name is recorded separately for rendering only.
+		ids = append(ids, id)
+		app.rememberDisplayName(id, s.Name())
 	}
 
 	app.speakerMu.Lock()
-	app.activeSpeakers = append(app.activeSpeakers[:0], names...)
+	app.activeSpeakers = append(app.activeSpeakers[:0], ids...)
 	app.speakerMu.Unlock()
 }
 
-func (app *novaSonicApp) currentSpeakerLabel() string {
+// rememberDisplayName records the cosmetic display name for an authorization
+// identity so transcript broadcasts can render a human-friendly label without
+// disturbing the identity used for host authorization.
+func (app *novaSonicApp) rememberDisplayName(identity, name string) {
+	identity = strings.TrimSpace(identity)
+	name = strings.TrimSpace(name)
+	if identity == "" || name == "" {
+		return
+	}
 	app.speakerMu.Lock()
-	defer app.speakerMu.Unlock()
-	if len(app.activeSpeakers) == 0 {
+	if app.displayNames == nil {
+		app.displayNames = map[string]string{}
+	}
+	app.displayNames[identity] = name
+	app.speakerMu.Unlock()
+}
+
+// displayLabelForSpeaker resolves a speaker label (one or more identities,
+// comma-joined) into a comma-joined list of display names, falling back to the
+// identity when no display name is known. Returns the input unchanged when it
+// is empty so callers can keep their own fallbacks.
+func (app *novaSonicApp) displayLabelForSpeaker(label string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
 		return ""
 	}
-	return strings.Join(app.activeSpeakers, ", ")
+	app.speakerMu.Lock()
+	defer app.speakerMu.Unlock()
+	if len(app.displayNames) == 0 {
+		return label
+	}
+	parts := strings.Split(label, ",")
+	for i, part := range parts {
+		id := strings.TrimSpace(part)
+		if name, ok := app.displayNames[id]; ok {
+			parts[i] = name
+		} else {
+			parts[i] = id
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (app *novaSonicApp) rememberUserSpeaker(speaker string) {
@@ -873,13 +925,24 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 	switch role {
 	case "USER":
 		log.Infof("Nova Sonic ASR: user transcript received")
-		speaker := app.currentSpeakerLabel()
-		app.rememberUserSpeaker(speaker)
+		// identity drives the host gate; displaySpeaker is the human-visible
+		// label. Fall back to the last known speaker so neither is empty when
+		// no ActiveSpeakersChanged event coincides with the ASR result.
+		identity := app.currentOrLastSpeakerLabel()
+		app.rememberUserSpeaker(identity)
+		displaySpeaker := app.displayLabelForSpeaker(identity)
 		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
-		normalized := normalizeTranscriptForRoom(context.Background(), app.board, "user", speaker, out.Content, "audio", "auto", chatTranslationModelClient())
-		recordRoomTranscript(app.board, "user", speaker, normalized, createdAt)
-		broadcastKanbanEvent("transcription", roomTranscriptPayload("user", speaker, normalized, createdAt))
-		if err := app.sendResponseLanguageRefresh(speaker, normalized); err != nil {
+		normalized := normalizeTranscriptForRoom(context.Background(), app.board, "user", displaySpeaker, out.Content, "audio", "auto", chatTranslationModelClient())
+		recordRoomTranscript(app.board, "user", displaySpeaker, normalized, createdAt)
+		payload := roomTranscriptPayload("user", displaySpeaker, normalized, createdAt)
+		// Carry the authorization identity alongside the cosmetic display name so
+		// the client can key presence/"has spoken" tracking on identity (matching
+		// the participant roster) while still rendering the friendly name.
+		if id := strings.TrimSpace(identity); id != "" {
+			payload["speaker_identity"] = id
+		}
+		broadcastKanbanEvent("transcription", payload)
+		if err := app.sendResponseLanguageRefresh(displaySpeaker, normalized); err != nil {
 			log.Errorf("Nova Sonic: failed to refresh response language policy: %v", err)
 		}
 	case "ASSISTANT":
@@ -910,6 +973,25 @@ type novaSonicToolUse struct {
 	Content     string `json:"content"`
 }
 
+// voiceToolConfirmationID extracts the confirmation_id argument from a tool
+// call's raw JSON content, if present. It is used to scope the participant
+// confirmation gate to the specific pending action(s) being resolved. Returns
+// "" when the content is empty, unparseable, or has no confirmation_id (an empty
+// reference means "all pending", which the gate handles).
+func voiceToolConfirmationID(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	var args struct {
+		ConfirmationID string `json:"confirmation_id"`
+	}
+	if err := json.Unmarshal([]byte(content), &args); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(args.ConfirmationID)
+}
+
 func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	var tu novaSonicToolUse
 	if err := json.Unmarshal(raw, &tu); err != nil {
@@ -926,12 +1008,20 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	var result map[string]any
 	var changed bool
 	var err error
-	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, app.currentOrLastSpeakerLabel()) {
+	speakerLabel := app.currentOrLastSpeakerLabel()
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, speakerLabel, voiceToolConfirmationID(tu.Content)) {
 		result = hostOnlyToolResult(tu.ToolName)
 	} else {
+		// Mark non-host speakers so confirm_action / cancel_confirmation re-check
+		// the participant-confirmable allowlist inside the resolution lock (the
+		// gate above is advisory; this closes the TOCTOU window). The gate having
+		// allowed a non-host here means the pending set was all-deletable when it
+		// was inspected; the in-lock re-check guarantees it still is at resolution.
+		nonHostSpeaker := meetingAccess != nil && !meetingAccess.voiceSpeakerHasHostAccess(speakerLabel)
 		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
-			Source: "nova-sonic",
-			CallID: tu.ToolUseID,
+			Source:                           "nova-sonic",
+			CallID:                           tu.ToolUseID,
+			RestrictToParticipantConfirmable: nonHostSpeaker,
 		})
 		if err != nil {
 			log.Errorf("Nova Sonic tool call %q failed: %v", tu.ToolName, err)

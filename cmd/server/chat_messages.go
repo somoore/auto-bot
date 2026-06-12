@@ -54,9 +54,18 @@ func handleClientChatMessage(c *threadSafeWriter, rawData string, authCtx reques
 		return
 	}
 
-	speaker := authCtx.Identity
+	// Speaker is a COSMETIC transcript label only — it never affects auth, which
+	// is enforced separately by authCtx.Identity. Prefer the client-supplied
+	// display name (the host/participant's chosen "Join as" name, e.g. "Scott"),
+	// then the SSO display name, then the authorization identity. This keeps the
+	// chat label consistent with the LiveKit video-tile name without weakening
+	// authorization.
+	speaker := sanitizeDisplayName(request.Speaker)
 	if speaker == "" {
-		speaker = normalizeParticipantIdentity(request.Speaker)
+		speaker = strings.TrimSpace(authCtx.DisplayName)
+	}
+	if speaker == "" {
+		speaker = authCtx.Identity
 	}
 	if speaker == "" {
 		speaker = "participant"
@@ -90,6 +99,11 @@ func handleClientChatMessage(c *threadSafeWriter, rawData string, authCtx reques
 		"input_mode":         "chat",
 		"createdAt":          createdAt,
 		"translation_status": normalized.TranslationStatus,
+	}
+	// Carry the verified identity so the client keys "has spoken" presence on
+	// identity (matching the roster) rather than the cosmetic display name.
+	if id := strings.TrimSpace(authCtx.Identity); id != "" {
+		payload["speaker_identity"] = id
 	}
 	if normalized.TranslationWarning != "" {
 		payload["translation_warning"] = normalized.TranslationWarning

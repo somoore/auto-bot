@@ -440,14 +440,73 @@ func activeMeetingRequiresAuthenticatedHostForTool(toolName string) bool {
 	return kanbanToolRequiresHost(toolName) && meetingAccess != nil && meetingAccess.isActive()
 }
 
-func activeMeetingRequiresAuthenticatedHostForVoiceTool(toolName string, speakerLabel string) bool {
+func activeMeetingRequiresAuthenticatedHostForVoiceTool(toolName string, speakerLabel string, confirmationID string) bool {
 	if !activeMeetingRequiresAuthenticatedHostForTool(toolName) {
 		return false
 	}
 	if meetingAccess == nil {
 		return false
 	}
-	return !meetingAccess.voiceSpeakerHasHostAccess(speakerLabel)
+	if meetingAccess.voiceSpeakerHasHostAccess(speakerLabel) {
+		return false
+	}
+	// The speaker is not the host. Any participant may still confirm or cancel a
+	// pending action by voice/chat, but ONLY when every pending action being
+	// resolved is in the participant-confirmable allowlist (task deletion). A
+	// mixed set, or a set containing a host-only action, still requires the host
+	// so a participant's "yes" can never finalize an action they shouldn't.
+	if voiceConfirmationAllowedForNonHost(toolName, confirmationID) {
+		return false
+	}
+	return true
+}
+
+// participantConfirmablePendingTools is the set of pending-action tools that a
+// non-host meeting participant may confirm or cancel by voice/chat. Deletion is
+// included per product decision: any user may delete a task with a verbal or
+// chat confirmation. Everything else stays host-only.
+func participantConfirmablePendingTool(toolName string) bool {
+	switch toolName {
+	case "delete_ticket":
+		return true
+	default:
+		return false
+	}
+}
+
+// voiceConfirmationAllowedForNonHost reports whether a non-host may run a
+// confirm_action / cancel_confirmation that resolves the pending set referenced
+// by confirmationID. It returns true only when there is at least one pending
+// action and EVERY pending action in the referenced set is participant-
+// confirmable. An empty/mixed/unknown set returns false (deny-safe).
+//
+// This check is the fast/friendly advisory path: it produces the host-required
+// message before the tool runs. It is NOT the security boundary. The authoritative
+// enforcement is in confirmPendingAction / cancelPendingConfirmation, which re-run
+// the same allowlist check (participantConfirmableSetLocked) inside the lock that
+// takes the pending set, so the authorized set and the resolved set are identical
+// (toolCallMeta.RestrictToParticipantConfirmable carries the non-host decision).
+// This advisory copy inspects under its own lock, so it can race the resolution,
+// but a stale allow here is caught and denied by the in-lock check.
+func voiceConfirmationAllowedForNonHost(toolName string, confirmationID string) bool {
+	switch toolName {
+	case "confirm_action", "cancel_confirmation":
+	default:
+		return false
+	}
+	if sharedBoard == nil {
+		return false
+	}
+	tools := sharedBoard.pendingConfirmationToolsForReference(confirmationID)
+	if len(tools) == 0 {
+		return false
+	}
+	for _, pendingTool := range tools {
+		if !participantConfirmablePendingTool(pendingTool) {
+			return false
+		}
+	}
+	return true
 }
 
 func hostOnlyToolResult(toolName string) map[string]any {

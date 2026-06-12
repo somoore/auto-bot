@@ -491,3 +491,67 @@ func useFakeAgentTranslationModel(t *testing.T, response string) *fakeChatTransl
 	t.Cleanup(func() { agentOrchestrator = previous })
 	return model
 }
+
+// TestNovaSonicSpeakerLabelSeparation locks in the fix for the regression where
+// using the cosmetic display name as the speaker label broke the host gate
+// (which maps the label back to an authorization identity) and where an empty
+// label surfaced as "User" in the transcript. The identity must drive the gate;
+// the display name is only for rendering.
+func TestNovaSonicSpeakerLabelSeparation(t *testing.T) {
+	board := newKanbanBoard()
+	app := newNovaSonicApp(board)
+
+	// Simulate a participant whose authorization identity is "somoore2025"
+	// joining with the cosmetic display name "Scott" (from the LiveKit ?name=).
+	app.rememberDisplayName("somoore2025", "Scott")
+	app.rememberUserSpeaker("somoore2025")
+
+	// The gate-relevant label stays the identity, even with no active-speaker
+	// event (the common single-speaker case).
+	if got := app.currentOrLastSpeakerLabel(); got != "somoore2025" {
+		t.Fatalf("currentOrLastSpeakerLabel() = %q, want identity %q", got, "somoore2025")
+	}
+
+	// The human-visible label resolves to the display name.
+	if got := app.displayLabelForSpeaker("somoore2025"); got != "Scott" {
+		t.Fatalf("displayLabelForSpeaker(identity) = %q, want %q", got, "Scott")
+	}
+
+	// Unknown identity falls back to itself (never empty, never "User").
+	if got := app.displayLabelForSpeaker("intruder"); got != "intruder" {
+		t.Fatalf("displayLabelForSpeaker(unknown) = %q, want passthrough %q", got, "intruder")
+	}
+
+	// A display name containing a space (e.g. "Scott Moore") must never become
+	// the gate label, since normalizeParticipantIdentity would reject it and the
+	// gate would deny a legitimate host. The identity path is immune to this.
+	app.rememberDisplayName("somoore2025", "Scott Moore")
+	if got := app.currentOrLastSpeakerLabel(); got != "somoore2025" {
+		t.Fatalf("gate label changed to display name = %q, want identity %q", got, "somoore2025")
+	}
+	if got := app.displayLabelForSpeaker("somoore2025"); got != "Scott Moore" {
+		t.Fatalf("displayLabelForSpeaker = %q, want %q", got, "Scott Moore")
+	}
+}
+
+// TestNovaSonicDisplayNameSeedingDoesNotAffectGate guards against re-introducing
+// the privilege-escalation regression where seeding lastUserSpeaker from the
+// audio-track-accept path attributed the empty-active-speaker gate fallback to
+// whoever joined most recently. Recording a participant's display name must
+// never populate the gate's fallback identity.
+func TestNovaSonicDisplayNameSeedingDoesNotAffectGate(t *testing.T) {
+	board := newKanbanBoard()
+	app := newNovaSonicApp(board)
+
+	// Two participants become known (display names recorded), as happens when
+	// their audio tracks are accepted. sarah joins, then host scott joins.
+	app.rememberDisplayName("sarah", "Sarah")
+	app.rememberDisplayName("scott", "Scott")
+
+	// With no ActiveSpeakersChanged event, the gate's fallback label must stay
+	// empty (NOT "scott", the last joined). An empty label routes to
+	// onlyHostSessionLocked, which is deny-safe for mixed-role rooms.
+	if got := app.currentOrLastSpeakerLabel(); got != "" {
+		t.Fatalf("gate fallback label = %q after display-name seeding, want empty (deny-safe)", got)
+	}
+}

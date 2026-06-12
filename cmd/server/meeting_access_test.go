@@ -221,13 +221,13 @@ func TestVoiceHostToolAllowedForAuthenticatedHostSpeaker(t *testing.T) {
 		t.Fatalf("setup status = %d, body = %s", setupRec.Code, setupRec.Body.String())
 	}
 
-	if activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "scott") {
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "scott", "") {
 		t.Fatal("host speaker was blocked from start_meeting")
 	}
-	if activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "scott, scott") {
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "scott, scott", "") {
 		t.Fatal("duplicate host speaker labels should still authorize start_meeting")
 	}
-	if activeMeetingRequiresAuthenticatedHostForVoiceTool("move_ticket", "sarah") {
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("move_ticket", "sarah", "") {
 		t.Fatal("non-host-only voice tool should not require host")
 	}
 }
@@ -266,13 +266,13 @@ func TestVoiceHostToolRejectsParticipantAndOverlappingSpeakers(t *testing.T) {
 		t.Fatalf("join status = %d, body = %s", joinRec.Code, joinRec.Body.String())
 	}
 
-	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "sarah") {
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "sarah", "") {
 		t.Fatal("participant speaker should be blocked from start_meeting")
 	}
-	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "scott, sarah") {
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "scott, sarah", "") {
 		t.Fatal("overlapping host and participant speakers should not authorize host-only voice action")
 	}
-	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "") {
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("start_meeting", "", "") {
 		t.Fatal("unknown voice speaker should be blocked when participants are present")
 	}
 }
@@ -590,5 +590,97 @@ func TestOIDCHostStatelessSetupLeave(t *testing.T) {
 	}
 	if meetingAccess.isActive() {
 		t.Error("meeting should be inactive after host leave")
+	}
+}
+
+// TestParticipantMayConfirmDeleteButNotOtherActions pins the product decision
+// that any meeting participant may confirm or cancel a pending task deletion by
+// voice/chat, while every other confirmable action (and any mixed set) stays
+// host-only and deny-safe.
+func TestParticipantMayConfirmDeleteButNotOtherActions(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	apiToken = "host-token"
+	appAuthMode = "token"
+	appEnvironment = "production"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(time.Hour)
+	meetingAccess = newMeetingAccessManager()
+	sharedBoard = newKanbanBoard()
+
+	// Host scott starts the meeting; participant sarah joins.
+	hostCookie := createTestSessionCookie(t, "host-token", "scott")
+	setupRec := httptest.NewRecorder()
+	setupReq := httptest.NewRequest(http.MethodPost, "/meeting/setup", strings.NewReader(`{"meeting_type":"standup"}`))
+	setupReq.AddCookie(hostCookie)
+	setupMeetingHandler(setupRec, setupReq)
+	if setupRec.Code != http.StatusOK {
+		t.Fatalf("setup status = %d, body = %s", setupRec.Code, setupRec.Body.String())
+	}
+	var setupResponse struct {
+		Meeting meetingAccessSnapshot `json:"meeting"`
+	}
+	if err := json.Unmarshal(setupRec.Body.Bytes(), &setupResponse); err != nil {
+		t.Fatal(err)
+	}
+	joinReq := httptest.NewRequest(http.MethodPost, "/meeting/join", strings.NewReader(`{"join_code":"`+setupResponse.Meeting.JoinCode+`","identity":"sarah"}`))
+	joinRec := httptest.NewRecorder()
+	joinMeetingHandler(joinRec, joinReq)
+	if joinRec.Code != http.StatusOK {
+		t.Fatalf("join status = %d, body = %s", joinRec.Code, joinRec.Body.String())
+	}
+
+	createResult, _, err := sharedBoard.ApplyToolCall("create_ticket", `{"title":"Disposable task","notes":"to delete","status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket: %v", err)
+	}
+	card := createResult["card"].(kanbanCard)
+
+	// Helper: create a pending confirmation and return its id.
+	pend := func(tool, argsJSON string) string {
+		t.Helper()
+		res, _, err := sharedBoard.ApplyToolCallWithMeta(tool, argsJSON, toolCallMeta{Source: "nova-sonic"})
+		if err != nil {
+			t.Fatalf("%s pending: %v", tool, err)
+		}
+		id, _ := res["confirmation_id"].(string)
+		if id == "" {
+			t.Fatalf("%s did not create a pending confirmation: %#v", tool, res)
+		}
+		return id
+	}
+
+	// Case 1: a lone pending delete_ticket. A participant (sarah) may confirm it.
+	deleteID := pend("delete_ticket", `{"card_id":"`+card.ID+`"}`)
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("confirm_action", "sarah", deleteID) {
+		t.Fatal("participant should be allowed to confirm a pending task deletion")
+	}
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("cancel_confirmation", "sarah", deleteID) {
+		t.Fatal("participant should be allowed to cancel a pending task deletion")
+	}
+	// The host is, of course, still allowed.
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("confirm_action", "scott", deleteID) {
+		t.Fatal("host should always be allowed to confirm")
+	}
+
+	// Case 2: a non-allowlisted pending action (set_sprint, host-only). A
+	// participant must NOT be able to confirm it.
+	sprintID := pend("set_sprint", `{"card_id":"`+card.ID+`","sprint_id":42}`)
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("confirm_action", "sarah", sprintID) {
+		t.Fatal("participant must NOT be able to confirm a non-delete pending action")
+	}
+
+	// Case 3: a bare confirm (no id) now resolves a MIXED set (delete + sprint).
+	// It must require the host, so a participant's "yes" can't sweep the sprint
+	// change alongside the delete.
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("confirm_action", "sarah", "") {
+		t.Fatal("participant must NOT be able to confirm a mixed pending set with a bare yes")
+	}
+
+	// Case 4: an empty pending set (nothing referenced) is deny-safe.
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("confirm_action", "sarah", "nonexistent-id") {
+		t.Fatal("participant confirm referencing nothing must be deny-safe")
 	}
 }
