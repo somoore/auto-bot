@@ -5,11 +5,23 @@ metadata:
   labels:
     {{- include "auto-bot.labels" . | nindent 4 }}
 data:
+  {{- /* APP_BASE_URL drives the CSP connect-src + the board WebSocket origin. It
+         MUST match the hostname the browser uses, or wss:// is blocked and the
+         client bounces back to the lobby. Resolve it once with clear precedence:
+         an explicit config.APP_BASE_URL wins; otherwise derive it from the ingress
+         host when the chart's ingress is enabled. If you disable the chart ingress
+         (operator-managed routing) you MUST set config.APP_BASE_URL yourself. */}}
+  {{- $appBaseURL := "" }}
+  {{- if .Values.config.APP_BASE_URL }}
+  {{- $appBaseURL = .Values.config.APP_BASE_URL }}
+  {{- else if and .Values.ingress.enabled .Values.ingress.host }}
+  {{- $appBaseURL = printf "https://%s" .Values.ingress.host }}
+  {{- end }}
   {{- range $k, $v := .Values.config }}
+  {{- if ne $k "APP_BASE_URL" }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}
-  {{- /* APP_BASE_URL drives the CSP connect-src WebSocket origin. It MUST match the
-         hostname the browser uses, or wss:// is blocked and the board can't sync. */}}
-  {{- if .Values.ingress.enabled }}
-  APP_BASE_URL: {{ printf "https://%s" .Values.ingress.host | quote }}
+  {{- end }}
+  {{- if $appBaseURL }}
+  APP_BASE_URL: {{ $appBaseURL | quote }}
   {{- end }}
