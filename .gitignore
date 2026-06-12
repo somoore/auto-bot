@@ -99,3 +99,13 @@ var/
 docs/launch-checklist.md
 docs/*.local.md
 *.scratch.md
+
+# ---------- Local agent + ops state (never publish) ----------
+# Claude Code session/agent state and local-only runbooks/scripts.
+.claude/
+# Belt-and-suspenders guard: filled-in operator values / reconcile runbooks hold
+# real hostnames, emails, AWS account IDs and ARNs. These live OUTSIDE the repo
+# (e.g. ~/auto-bot-ops/); ignore them here too in case a copy ever lands in-tree.
+values-*.local.yaml
+*-ops/
+auto-bot-ops/
