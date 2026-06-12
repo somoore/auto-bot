@@ -1,14 +1,18 @@
 auto-bot has been deployed.
 
-1. Check the pod is running:
+1. Check the pod is Ready (the readiness probe already hits /healthz, so Ready
+   means the app is serving):
    kubectl get pods -l app.kubernetes.io/name=auto-bot {{ if .Release.Namespace }}-n {{ .Release.Namespace }}{{ end }}
 
-2. Health check:
-   kubectl exec deploy/auto-bot -- wget -qO- http://localhost:{{ .Values.service.port }}/healthz
-
+2. Health check / open it locally (the image is minimal and has no shell tools,
+   so port-forward and use your own browser or curl):
+   kubectl port-forward {{ if .Release.Namespace }}-n {{ .Release.Namespace }} {{ end }}deploy/auto-bot 3000:{{ .Values.service.port }}
+   # then in another terminal:
+   curl http://localhost:3000/healthz   # -> {"ok":true}
+   # or open http://localhost:3000 in a browser
 {{- if .Values.ingress.enabled }}
 
-3. Open the app:
+3. Or open it via your ingress:
    https://{{ .Values.ingress.host }}
 {{- end }}
 
@@ -19,5 +23,8 @@ credentials — either enable awsRolesAnywhere (recommended) or provide AWS keys
 the Secret. See docs/deployment.md.
 {{- end }}
 
-Remember: you must create the Secret named "{{ .Values.existingSecret }}" with at least
-APP_API_TOKEN before the pod will start. See deploy/helm/auto-bot/secret.example.yaml.
+Remember: you must create the Secret named "{{ .Values.existingSecret }}" with APP_API_TOKEN
+and the LiveKit credentials (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
+LIVEKIT_BROWSER_URL) before the pod will start — the server requires a LiveKit
+backend to boot. A free LiveKit Cloud project works. See
+deploy/helm/auto-bot/secret.example.yaml.

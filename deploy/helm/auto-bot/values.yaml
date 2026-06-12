@@ -77,9 +77,17 @@ config:
 # create (never commit real secrets). See deploy/helm/auto-bot/secret.example.yaml.
 # Tools like Sealed Secrets or External Secrets are recommended for GitOps.
 existingSecret: auto-bot-secrets
+# Secret keys injected as env from `existingSecret`. Entries may be a bare string
+# (required — the pod will not start if the key is absent) or a map with
+# `optional: true`. ALL of the keys below are required: the server panics at
+# startup unless APP_API_TOKEN is set AND LiveKit credentials are present (it
+# refuses to run a meeting backend with no signalling). To stand the app up you
+# must create a LiveKit Cloud project (free tier works) and supply these. The
+# map form with `optional: true` is supported by the template for any future
+# genuinely-optional secret env you add.
 secretEnvKeys:
   - APP_API_TOKEN
-  # nova-sonic voice path (LiveKit Cloud):
+  # nova-sonic voice path (LiveKit Cloud) — required, the server needs these to boot:
   - LIVEKIT_URL
   - LIVEKIT_API_KEY
   - LIVEKIT_API_SECRET
