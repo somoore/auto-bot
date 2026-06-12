@@ -76,7 +76,9 @@ fixtures.
 | --- | --- |
 | `web/index_livekit.html` | Main LiveKit/Nova Sonic meeting UI, host/participant access flow, video layouts, operator panel, voice reliability dashboard, board rendering, audit replay, and model settings. |
 | `web/post_meeting.html` | Post-meeting intelligence dashboard and archived report viewer. |
-| `public/screenshot.png` | README screenshot. |
+| `public/wordmark.svg` | Auto Bot wordmark used as the README banner. |
+| `public/screenshot-lobby.png` | README screenshot: lobby (start/join a meeting). |
+| `public/screenshot-meeting.png` | README screenshot: in-meeting board + transcription. |
 
 ## Infrastructure And Operations
 

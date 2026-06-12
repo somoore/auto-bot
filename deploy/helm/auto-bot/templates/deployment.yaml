@@ -38,12 +38,26 @@ spec:
             - name: AWS_EC2_METADATA_SERVICE_ENDPOINT
               value: "http://127.0.0.1:{{ .Values.awsRolesAnywhere.port }}"
             {{- end }}
+            {{- /* Each entry is either a bare string (required) or a map
+                   {name, optional}. Required keys block startup if absent;
+                   optional keys are injected only when present in the Secret. */}}
             {{- range .Values.secretEnvKeys }}
+            {{- if kindIs "string" . }}
             - name: {{ . }}
               valueFrom:
                 secretKeyRef:
                   name: {{ $.Values.existingSecret }}
                   key: {{ . }}
+            {{- else }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.existingSecret }}
+                  key: {{ .name }}
+                  {{- if .optional }}
+                  optional: true
+                  {{- end }}
+            {{- end }}
             {{- end }}
           livenessProbe:
             httpGet:

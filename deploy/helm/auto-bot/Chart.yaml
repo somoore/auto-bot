@@ -1,6 +1,6 @@
 apiVersion: v2
 name: auto-bot
-description: Living Kanban Board — a voice-operated Kanban app where standup happens by voice
+description: Auto Bot — a voice-first board where people and agents work, and standup happens by voice
 type: application
 version: 0.1.0
 appVersion: "0.1.0-prealpha"

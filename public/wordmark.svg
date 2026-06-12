@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="340" height="76" viewBox="0 0 340 76" role="img" aria-label="auto_bot">
+  <!--
+    Auto Bot wordmark: "auto_bot" in navy mono with a tide-blue cursor block,
+    mirroring the in-app wordmark. Fills are inline attributes (not a <style>
+    block) so the colors render even where SVG <style>/animation is sanitized,
+    e.g. GitHub's README renderer. The blink only animates in browsers that
+    allow the CSS; on GitHub it shows as a static cursor, which is intended.
+  -->
+  <style>@keyframes ab-blink { 50% { opacity: 0; } } .cursor { animation: ab-blink 1.1s steps(1) infinite; }</style>
+  <text x="6" y="52"
+        font-family='ui-monospace, "SF Mono", "Menlo", "Cascadia Code", "Consolas", monospace'
+        font-size="44" font-weight="600" letter-spacing="-0.01em" fill="#0c2d48">auto_bot<tspan class="cursor" dx="6" fill="#1b6ca8">█</tspan></text>
+</svg>

@@ -36,7 +36,9 @@ secretEnvKeys:
 # (deploy/terraform/roles-anywhere) and store a leaf cert in `certSecret`.
 awsRolesAnywhere:
   enabled: true
-  image: ghcr.io/somoore/aws-signing-helper:1.8.4
+  # NOT a published image — build it yourself from the AWS upstream and push to
+  # your own registry. See the note in values.yaml and docs/deployment.md.
+  image: your-registry.example.com/aws-signing-helper:1.8.4
   certSecret: auto-bot-ra-cert
   trustAnchorArn: arn:aws:rolesanywhere:us-east-1:111122223333:trust-anchor/REPLACE
   profileArn: arn:aws:rolesanywhere:us-east-1:111122223333:profile/REPLACE
