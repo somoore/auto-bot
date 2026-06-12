@@ -97,6 +97,7 @@ var/
 
 # Internal/maintainer-only docs (not part of the public project)
 docs/launch-checklist.md
+docs/redesign-port-plan.md
 docs/*.local.md
 *.scratch.md
 
