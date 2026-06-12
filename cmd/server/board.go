@@ -366,7 +366,7 @@ func (board *kanbanBoard) ApplyToolCallWithMeta(toolName string, rawArgs string,
 	case "confirm_action":
 		return board.confirmPendingAction(args, meta)
 	case "cancel_confirmation":
-		return board.cancelPendingConfirmation(args)
+		return board.cancelPendingConfirmation(args, meta)
 	case "list_pending_confirmations":
 		return board.listPendingConfirmations()
 	case "undo_last_mutation":

@@ -21,6 +21,16 @@ type toolCallMeta struct {
 	Actor      string
 	CallID     string
 	Transcript string
+	// RestrictToParticipantConfirmable, when true, marks this tool call as coming
+	// from a NON-HOST meeting participant. confirm_action / cancel_confirmation
+	// then enforce the participant-confirmable allowlist (task deletion only)
+	// INSIDE the resolution lock, so the set being authorized is exactly the set
+	// being resolved (no TOCTOU window). It defaults false (unrestricted), which
+	// is safe only because every other confirm/cancel entry point is host-gated
+	// upstream: the UI path via kanbanCommandAllowed->isHost, and server-side
+	// connectors (extensions.go) which are not meeting participants. A future
+	// non-host entry point MUST set this true.
+	RestrictToParticipantConfirmable bool
 }
 
 type pendingConfirmation struct {
@@ -296,6 +306,17 @@ func confirmationPrompt(toolName string, args map[string]any) string {
 func (board *kanbanBoard) confirmPendingAction(args map[string]any, meta toolCallMeta) (map[string]any, bool, error) {
 	confirmationID := asString(args["confirmation_id"])
 	board.mu.Lock()
+	// Authoritative participant gate: when the caller is a non-host participant,
+	// every pending action this confirm would resolve must be participant-
+	// confirmable (task deletion). Checked here, inside the same lock that takes
+	// the set below, so the authorized set and the resolved set are identical
+	// (closes the TOCTOU window the advisory gate in main.go cannot). On denial
+	// the pending set is left untouched, so a participant cannot consume a host's
+	// pending action by being refused.
+	if meta.RestrictToParticipantConfirmable && !board.participantConfirmableSetLocked(confirmationID) {
+		board.mu.Unlock()
+		return participantConfirmDeniedResult("confirm_action"), false, nil
+	}
 	// Guard mixed-risk sweeps: a bare/generic affirmation ("yes", "ok") must not
 	// confirm every pending action when those actions span more than one risk
 	// level, because the host may have only intended to approve one of them. An
@@ -376,9 +397,16 @@ func (board *kanbanBoard) executePendingConfirmation(confirmation pendingConfirm
 	return result, changed, err
 }
 
-func (board *kanbanBoard) cancelPendingConfirmation(args map[string]any) (map[string]any, bool, error) {
+func (board *kanbanBoard) cancelPendingConfirmation(args map[string]any, meta toolCallMeta) (map[string]any, bool, error) {
 	confirmationID := asString(args["confirmation_id"])
 	board.mu.Lock()
+	// Same authoritative participant gate as confirmPendingAction: a non-host may
+	// only cancel a pending set that is entirely participant-confirmable, checked
+	// in-lock before the take so a refusal cannot consume a host's pending.
+	if meta.RestrictToParticipantConfirmable && !board.participantConfirmableSetLocked(confirmationID) {
+		board.mu.Unlock()
+		return participantConfirmDeniedResult("cancel_confirmation"), false, nil
+	}
 	confirmations := board.takePendingConfirmationsLocked(confirmationID)
 	board.mu.Unlock()
 	if len(confirmations) == 0 {
@@ -416,58 +444,88 @@ func (board *kanbanBoard) listPendingConfirmations() (map[string]any, bool, erro
 	}, false, nil
 }
 
-func (board *kanbanBoard) takePendingConfirmationsLocked(confirmationID string) []pendingConfirmation {
+// selectPendingConfirmationsLocked is the SINGLE source of truth for which
+// pending confirmations a confirm_action / cancel_confirmation reference maps to.
+// It selects WITHOUT mutating. Both the resolution path (takePending...) and the
+// participant authorization check derive from this one function, so the set that
+// is authorized can never diverge from the set that is resolved. An empty
+// reference means "all pending"; a reference may match an exact id, an id
+// substring, or an aggregate phrase ("all"/"both"). Callers must hold board.mu.
+func (board *kanbanBoard) selectPendingConfirmationsLocked(confirmationID string) []pendingConfirmation {
 	confirmationID = strings.TrimSpace(confirmationID)
-	if confirmationID != "" {
-		confirmation, ok := board.pendingConfirmations[confirmationID]
-		if ok {
-			delete(board.pendingConfirmations, confirmationID)
-			return []pendingConfirmation{confirmation}
-		}
-		if confirmations := board.takePendingConfirmationsByReferenceLocked(confirmationID); len(confirmations) > 0 {
-			return confirmations
-		}
-		if confirmationReferenceMeansAll(confirmationID) {
-			return board.takeAllPendingConfirmationsLocked()
-		}
+	if confirmationID == "" {
+		return board.pendingConfirmationsSliceLocked()
+	}
+	if confirmation, ok := board.pendingConfirmations[confirmationID]; ok {
+		return []pendingConfirmation{confirmation}
+	}
+	if byRef := board.pendingConfirmationsMatchingReferenceLocked(confirmationID); len(byRef) > 0 {
+		return byRef
+	}
+	if confirmationReferenceMeansAll(confirmationID) {
+		return board.pendingConfirmationsSliceLocked()
+	}
+	return nil
+}
+
+func (board *kanbanBoard) takePendingConfirmationsLocked(confirmationID string) []pendingConfirmation {
+	selected := board.selectPendingConfirmationsLocked(confirmationID)
+	if len(selected) == 0 {
 		return nil
 	}
-
-	return board.takeAllPendingConfirmationsLocked()
+	for _, confirmation := range selected {
+		delete(board.pendingConfirmations, confirmation.ConfirmationID)
+	}
+	sort.Slice(selected, func(i, j int) bool {
+		return selected[i].CreatedAt < selected[j].CreatedAt
+	})
+	return selected
 }
 
 // pendingConfirmationToolsForReference reports the distinct tool names that a
 // confirm_action / cancel_confirmation with the given confirmation_id reference
-// would resolve, WITHOUT mutating the pending set. It mirrors the selection
-// logic of takePendingConfirmationsLocked so the authorization gate inspects
-// exactly the same set the resolution will act on. An empty reference means
+// would resolve, WITHOUT mutating the pending set. An empty reference means
 // "all pending". Returns nil when the reference matches nothing.
 func (board *kanbanBoard) pendingConfirmationToolsForReference(confirmationID string) []string {
 	board.mu.Lock()
 	defer board.mu.Unlock()
-
-	confirmationID = strings.TrimSpace(confirmationID)
-	var selected []pendingConfirmation
-	switch {
-	case confirmationID == "":
-		selected = board.pendingConfirmationsSliceLocked()
-	default:
-		if confirmation, ok := board.pendingConfirmations[confirmationID]; ok {
-			selected = []pendingConfirmation{confirmation}
-		} else if byRef := board.pendingConfirmationsMatchingReferenceLocked(confirmationID); len(byRef) > 0 {
-			selected = byRef
-		} else if confirmationReferenceMeansAll(confirmationID) {
-			selected = board.pendingConfirmationsSliceLocked()
-		}
-	}
-	if len(selected) == 0 {
-		return nil
-	}
-	tools := make([]string, 0, len(selected))
-	for _, confirmation := range selected {
+	tools := make([]string, 0)
+	for _, confirmation := range board.selectPendingConfirmationsLocked(confirmationID) {
 		tools = append(tools, confirmation.ToolName)
 	}
 	return tools
+}
+
+// participantConfirmableSetLocked reports whether every pending action that the
+// given reference would resolve is participant-confirmable (and that the set is
+// non-empty). It shares selectPendingConfirmationsLocked with the resolution
+// path, so it authorizes exactly the set that will be taken. Callers must hold
+// board.mu. This is the authoritative in-lock counterpart to the advisory
+// voiceConfirmationAllowedForNonHost gate.
+func (board *kanbanBoard) participantConfirmableSetLocked(confirmationID string) bool {
+	selected := board.selectPendingConfirmationsLocked(confirmationID)
+	if len(selected) == 0 {
+		return false
+	}
+	for _, confirmation := range selected {
+		if !participantConfirmablePendingTool(confirmation.ToolName) {
+			return false
+		}
+	}
+	return true
+}
+
+// participantConfirmDeniedResult mirrors the host-required denial shape so a
+// non-host whose confirm/cancel was rejected at the resolution lock gets a
+// coherent result rather than a bare internal error.
+func participantConfirmDeniedResult(toolName string) map[string]any {
+	return map[string]any{
+		"ok":                    false,
+		"tool_name":             toolName,
+		"error":                 "meeting host access is required",
+		"requires_host_session": true,
+		"assistant_instruction": "Only the meeting host can confirm this action. Task deletion can be confirmed by any participant, but this pending set includes an action that requires the host.",
+	}
 }
 
 // pendingConfirmationsSliceLocked returns a copy of all pending confirmations
@@ -480,9 +538,9 @@ func (board *kanbanBoard) pendingConfirmationsSliceLocked() []pendingConfirmatio
 	return out
 }
 
-// pendingConfirmationsMatchingReferenceLocked is the read-only counterpart of
-// takePendingConfirmationsByReferenceLocked: it returns matches without deleting
-// them. Callers must hold board.mu.
+// pendingConfirmationsMatchingReferenceLocked returns the pending confirmations
+// whose id appears as a substring of the reference, without deleting them. It
+// feeds selectPendingConfirmationsLocked. Callers must hold board.mu.
 func (board *kanbanBoard) pendingConfirmationsMatchingReferenceLocked(reference string) []pendingConfirmation {
 	normalizedReference := strings.ToLower(strings.TrimSpace(reference))
 	confirmations := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
@@ -491,26 +549,6 @@ func (board *kanbanBoard) pendingConfirmationsMatchingReferenceLocked(reference 
 			confirmations = append(confirmations, confirmation)
 		}
 	}
-	return confirmations
-}
-
-func (board *kanbanBoard) takePendingConfirmationsByReferenceLocked(reference string) []pendingConfirmation {
-	normalizedReference := strings.ToLower(strings.TrimSpace(reference))
-	confirmations := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
-	for id, confirmation := range board.pendingConfirmations {
-		if strings.Contains(normalizedReference, strings.ToLower(id)) {
-			confirmations = append(confirmations, confirmation)
-		}
-	}
-	if len(confirmations) == 0 {
-		return nil
-	}
-	for _, confirmation := range confirmations {
-		delete(board.pendingConfirmations, confirmation.ConfirmationID)
-	}
-	sort.Slice(confirmations, func(i, j int) bool {
-		return confirmations[i].CreatedAt < confirmations[j].CreatedAt
-	})
 	return confirmations
 }
 
@@ -588,18 +626,6 @@ func (board *kanbanBoard) pendingConfirmationsAreMixedRiskLocked() bool {
 		}
 	}
 	return false
-}
-
-func (board *kanbanBoard) takeAllPendingConfirmationsLocked() []pendingConfirmation {
-	confirmations := make([]pendingConfirmation, 0, len(board.pendingConfirmations))
-	for id, confirmation := range board.pendingConfirmations {
-		delete(board.pendingConfirmations, id)
-		confirmations = append(confirmations, confirmation)
-	}
-	sort.Slice(confirmations, func(i, j int) bool {
-		return confirmations[i].CreatedAt < confirmations[j].CreatedAt
-	})
-	return confirmations
 }
 
 func confirmationReferenceMeansAll(reference string) bool {

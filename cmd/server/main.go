@@ -480,13 +480,14 @@ func participantConfirmablePendingTool(toolName string) bool {
 // action and EVERY pending action in the referenced set is participant-
 // confirmable. An empty/mixed/unknown set returns false (deny-safe).
 //
-// This check is advisory: it inspects the pending set under its own lock, then
-// the resolution (confirmPendingAction) re-locks to act. The two run in the same
-// goroutine with no I/O between them and an attacker cannot inject a host-only
-// pending into the gap without making the set mixed (which denies), so the
-// window is not practically exploitable. The robust fix (TODO) is to thread the
-// auth decision into confirmPendingAction and re-check inside the resolution
-// lock; the resolution remains the source of truth.
+// This check is the fast/friendly advisory path: it produces the host-required
+// message before the tool runs. It is NOT the security boundary. The authoritative
+// enforcement is in confirmPendingAction / cancelPendingConfirmation, which re-run
+// the same allowlist check (participantConfirmableSetLocked) inside the lock that
+// takes the pending set, so the authorized set and the resolved set are identical
+// (toolCallMeta.RestrictToParticipantConfirmable carries the non-host decision).
+// This advisory copy inspects under its own lock, so it can race the resolution,
+// but a stale allow here is caught and denied by the in-lock check.
 func voiceConfirmationAllowedForNonHost(toolName string, confirmationID string) bool {
 	switch toolName {
 	case "confirm_action", "cancel_confirmation":

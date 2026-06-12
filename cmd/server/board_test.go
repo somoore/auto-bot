@@ -998,3 +998,98 @@ func findBoardTestCard(t *testing.T, cards []kanbanCard, cardID string) kanbanCa
 	t.Fatalf("card %s not found", cardID)
 	return kanbanCard{}
 }
+
+// TestParticipantConfirmAllowlistEnforcedInResolutionLock proves the
+// authoritative (non-advisory) participant gate: confirm_action /
+// cancel_confirmation carrying RestrictToParticipantConfirmable enforce the
+// delete-only allowlist inside the resolution lock. A denial must leave the
+// pending set intact so a participant cannot consume a host's pending action.
+func TestParticipantConfirmAllowlistEnforcedInResolutionLock(t *testing.T) {
+	board := newKanbanBoard()
+	created, _, err := board.ApplyToolCall("create_ticket", `{"title":"Disposable","notes":"x","status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket: %v", err)
+	}
+	card := created["card"].(kanbanCard)
+
+	pend := func(tool, argsJSON string) string {
+		t.Helper()
+		res, _, err := board.ApplyToolCallWithMeta(tool, argsJSON, toolCallMeta{Source: "nova-sonic"})
+		if err != nil {
+			t.Fatalf("%s pending: %v", tool, err)
+		}
+		id, _ := res["confirmation_id"].(string)
+		if id == "" {
+			t.Fatalf("%s did not create pending: %#v", tool, res)
+		}
+		return id
+	}
+
+	participant := toolCallMeta{Source: "nova-sonic", RestrictToParticipantConfirmable: true}
+
+	// A lone pending delete: a participant may confirm it and it executes.
+	deleteID := pend("delete_ticket", `{"card_id":"`+card.ID+`"}`)
+	res, changed, err := board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"`+deleteID+`"}`, participant)
+	if err != nil {
+		t.Fatalf("participant confirm delete: %v", err)
+	}
+	if !changed {
+		t.Fatalf("participant confirm of a pending delete should execute; result = %#v", res)
+	}
+	if len(board.SnapshotState().PendingConfirmations) != 0 {
+		t.Fatalf("pending after participant delete confirm = %d, want 0", len(board.SnapshotState().PendingConfirmations))
+	}
+
+	// Recreate the card (the delete removed it) for the next cases.
+	created, _, err = board.ApplyToolCall("create_ticket", `{"title":"Disposable 2","notes":"x","status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket 2: %v", err)
+	}
+	card = created["card"].(kanbanCard)
+
+	// A lone pending set_sprint (host-only): a participant must be denied AND the
+	// pending must remain so the host can still act on it.
+	sprintID := pend("set_sprint", `{"card_id":"`+card.ID+`","sprint":"Sprint 9"}`)
+	res, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"`+sprintID+`"}`, participant)
+	if err != nil {
+		t.Fatalf("participant confirm set_sprint: %v", err)
+	}
+	if changed {
+		t.Fatal("participant must NOT be able to confirm a host-only pending action")
+	}
+	if ok, _ := res["requires_host_session"].(bool); !ok {
+		t.Fatalf("denied result should set requires_host_session; result = %#v", res)
+	}
+	if len(board.SnapshotState().PendingConfirmations) != 1 {
+		t.Fatalf("pending after denied participant confirm = %d, want 1 (left intact)", len(board.SnapshotState().PendingConfirmations))
+	}
+
+	// A MIXED set (delete + the still-pending sprint) resolved by a bare confirm:
+	// a participant must be denied and BOTH pendings must remain. This is the
+	// TOCTOU-relevant case: the in-lock check sees the whole set is not all-delete.
+	deleteID2 := pend("delete_ticket", `{"card_id":"`+card.ID+`"}`)
+	_ = deleteID2
+	if len(board.SnapshotState().PendingConfirmations) != 2 {
+		t.Fatalf("expected 2 pendings (sprint + delete), got %d", len(board.SnapshotState().PendingConfirmations))
+	}
+	res, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"all"}`, participant)
+	if err != nil {
+		t.Fatalf("participant confirm mixed: %v", err)
+	}
+	if changed {
+		t.Fatal("participant must NOT be able to confirm a mixed delete+sprint set")
+	}
+	if len(board.SnapshotState().PendingConfirmations) != 2 {
+		t.Fatalf("pending after denied mixed confirm = %d, want 2 (both intact)", len(board.SnapshotState().PendingConfirmations))
+	}
+
+	// And the host (no restriction) can still sweep that same mixed set.
+	host := toolCallMeta{Source: "nova-sonic"}
+	_, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"yes to all"}`, host)
+	if err != nil {
+		t.Fatalf("host confirm mixed: %v", err)
+	}
+	if !changed {
+		t.Fatal("host should be able to confirm the mixed set")
+	}
+}

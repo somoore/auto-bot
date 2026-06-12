@@ -1017,12 +1017,20 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	var result map[string]any
 	var changed bool
 	var err error
-	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, app.currentOrLastSpeakerLabel(), voiceToolConfirmationID(tu.Content)) {
+	speakerLabel := app.currentOrLastSpeakerLabel()
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, speakerLabel, voiceToolConfirmationID(tu.Content)) {
 		result = hostOnlyToolResult(tu.ToolName)
 	} else {
+		// Mark non-host speakers so confirm_action / cancel_confirmation re-check
+		// the participant-confirmable allowlist inside the resolution lock (the
+		// gate above is advisory; this closes the TOCTOU window). The gate having
+		// allowed a non-host here means the pending set was all-deletable when it
+		// was inspected; the in-lock re-check guarantees it still is at resolution.
+		nonHostSpeaker := meetingAccess != nil && !meetingAccess.voiceSpeakerHasHostAccess(speakerLabel)
 		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
-			Source: "nova-sonic",
-			CallID: tu.ToolUseID,
+			Source:                           "nova-sonic",
+			CallID:                           tu.ToolUseID,
+			RestrictToParticipantConfirmable: nonHostSpeaker,
 		})
 		if err != nil {
 			log.Errorf("Nova Sonic tool call %q failed: %v", tu.ToolName, err)
