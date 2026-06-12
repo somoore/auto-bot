@@ -2,7 +2,7 @@ apiVersion: v2
 name: auto-bot
 description: Auto Bot — a voice-first board where people and agents work, and standup happens by voice
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "0.1.0-prealpha"
 home: https://github.com/somoore/auto-bot
 sources:
