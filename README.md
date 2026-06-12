@@ -1,4 +1,6 @@
-# Living Kanban Board
+<img src="./public/wordmark.svg" alt="Auto Bot" height="64" />
+
+# Auto Bot
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Go](https://img.shields.io/badge/Built_with-Go-blue)
@@ -6,12 +8,15 @@
 ![Kubernetes](https://img.shields.io/badge/Deploy-Helm%2FK8s-326ce5)
 ![AWS Nova Sonic](https://img.shields.io/badge/Voice-AWS_Nova_Sonic-yellow)
 
-A **voice-operated Kanban board where standup happens by voice.** An AI scrum-master agent
-listens to the meeting, tracks who's speaking, and updates the board in real time — creating,
-moving, opening, and closing tickets hands-free. Participants join with mic and webcam, see and
-hear each other, and all interact with the same shared board and agent.
+**Your whole team on one board.** Auto Bot is a voice-first place where people and agents work
+side by side. Assign a task to a teammate or to an autonomous agent; the agent picks it up,
+ships it, updates the board, and shows up to standup to report. An AI scrum-master agent runs
+the meeting by voice, tracks who is speaking, and creates, moves, opens, and closes tickets in
+real time. Any timezone, any language, human or AI. Syncs with Jira (Linear coming soon).
 
-![screenshot](./public/screenshot.png)
+![Auto Bot lobby — start or join a meeting in one click](./public/screenshot-lobby.png)
+
+![Auto Bot in a meeting — shared board, live transcription, and the agent updating tickets](./public/screenshot-meeting.png)
 
 ---
 
