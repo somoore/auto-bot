@@ -1067,12 +1067,11 @@ func TestParticipantConfirmAllowlistEnforcedInResolutionLock(t *testing.T) {
 	// A MIXED set (delete + the still-pending sprint) resolved by a bare confirm:
 	// a participant must be denied and BOTH pendings must remain. This is the
 	// TOCTOU-relevant case: the in-lock check sees the whole set is not all-delete.
-	deleteID2 := pend("delete_ticket", `{"card_id":"`+card.ID+`"}`)
-	_ = deleteID2
+	pend("delete_ticket", `{"card_id":"`+card.ID+`"}`)
 	if len(board.SnapshotState().PendingConfirmations) != 2 {
 		t.Fatalf("expected 2 pendings (sprint + delete), got %d", len(board.SnapshotState().PendingConfirmations))
 	}
-	res, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"all"}`, participant)
+	_, changed, err = board.ApplyToolCallWithMeta("confirm_action", `{"confirmation_id":"all"}`, participant)
 	if err != nil {
 		t.Fatalf("participant confirm mixed: %v", err)
 	}

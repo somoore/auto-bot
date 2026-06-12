@@ -619,15 +619,6 @@ func (app *novaSonicApp) displayLabelForSpeaker(label string) string {
 	return strings.Join(parts, ", ")
 }
 
-func (app *novaSonicApp) currentSpeakerLabel() string {
-	app.speakerMu.Lock()
-	defer app.speakerMu.Unlock()
-	if len(app.activeSpeakers) == 0 {
-		return ""
-	}
-	return strings.Join(app.activeSpeakers, ", ")
-}
-
 func (app *novaSonicApp) rememberUserSpeaker(speaker string) {
 	speaker = strings.TrimSpace(speaker)
 	if speaker == "" {
