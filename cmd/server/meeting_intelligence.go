@@ -389,7 +389,8 @@ func (board *kanbanBoard) executePendingConfirmation(confirmation pendingConfirm
 	if result == nil {
 		result = map[string]any{}
 	}
-	result["confirmed"] = true
+	ok, hasOK := result["ok"].(bool)
+	result["confirmed"] = err == nil && (!hasOK || ok)
 	result["confirmation_id"] = confirmation.ConfirmationID
 	result["original_tool_name"] = confirmation.ToolName
 	result["original_arguments"] = cloneToolArgs(confirmation.Arguments)
