@@ -252,6 +252,47 @@ func TestRiskyVoiceToolsConfirmMultiplePendingActionsWithSingleYes(t *testing.T)
 	}
 }
 
+func TestRiskyVoiceToolsDoNotCountFailedPendingActionAsConfirmed(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS pentest","notes":"Contact dev team","tags":["security"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	if _, changed, err := board.ApplyToolCallWithMeta("assign_ticket", `{"card_id":"`+card.ID+`"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("assign_ticket returned error before confirmation: %v", err)
+	} else if changed {
+		t.Fatal("assign_ticket should wait for confirmation")
+	}
+	if _, changed, err := board.ApplyToolCallWithMeta("set_eta", `{"card_id":"`+card.ID+`","eta":"2026-05-28"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+		t.Fatalf("set_eta returned error before confirmation: %v", err)
+	} else if changed {
+		t.Fatal("set_eta should wait for confirmation")
+	}
+
+	result, changed, err := board.ApplyToolCallWithMeta("confirm_action", `{}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("successful pending action should mutate")
+	}
+	if got, _ := result["confirmed_count"].(int); got != 1 {
+		t.Fatalf("confirmed_count = %d, want only the successful action; result = %#v", got, result)
+	}
+	actions := confirmedActionResults(result)
+	if len(actions) != 2 {
+		t.Fatalf("action results = %#v, want one failed and one confirmed action", actions)
+	}
+	if asBool(actions[0]["confirmed"]) || actions[0]["original_tool_name"] != "assign_ticket" {
+		t.Fatalf("first action = %#v, want unconfirmed assign_ticket", actions[0])
+	}
+	if !asBool(actions[1]["confirmed"]) || actions[1]["original_tool_name"] != "set_eta" {
+		t.Fatalf("second action = %#v, want confirmed set_eta", actions[1])
+	}
+}
+
 func TestRiskyVoiceToolsConfirmMultiplePendingActionsWithGenericBothID(t *testing.T) {
 	board := newKanbanBoard()
 	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS rollout","notes":"Contact dev team","tags":["aws"],"status":"Backlog"}`)
@@ -302,7 +343,7 @@ func TestGenericYesDoesNotSweepMixedRiskPendingActions(t *testing.T) {
 	if _, _, err := board.ApplyToolCallWithMeta("set_eta", `{"card_id":"`+card.ID+`","eta":"2026-05-28"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
 		t.Fatalf("set_eta returned error: %v", err)
 	}
-	if _, _, err := board.ApplyToolCallWithMeta("set_sprint", `{"card_id":"`+card.ID+`","sprint":"Sprint 7"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+	if _, _, err := board.ApplyToolCallWithMeta("set_sprint", `{"card_id":"`+card.ID+`","sprint_id":7,"sprint_name":"Sprint 7"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
 		t.Fatalf("set_sprint returned error: %v", err)
 	}
 	if pending := board.SnapshotState().PendingConfirmations; len(pending) != 2 {

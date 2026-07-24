@@ -1366,7 +1366,7 @@ func browserLiveKitURL(r *http.Request) string {
 	if host == "localhost" || host == "::1" {
 		host = "127.0.0.1"
 	}
-	return fmt.Sprintf("%s://%s:7880", scheme, host)
+	return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(host, "7880"))
 }
 
 // --- Helpers ---

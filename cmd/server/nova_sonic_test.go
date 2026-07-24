@@ -93,6 +93,16 @@ func TestBrowserLiveKitURLUsesIPv4LoopbackForLocalhost(t *testing.T) {
 	}
 }
 
+func TestBrowserLiveKitURLBracketsIPv6Host(t *testing.T) {
+	t.Setenv("LIVEKIT_BROWSER_URL", "")
+	t.Setenv("LIVEKIT_URL", "ws://livekit:7880")
+
+	req := httptest.NewRequest("GET", "http://[2001:db8::1]:3001/livekit-token", nil)
+	if got := browserLiveKitURL(req); got != "ws://[2001:db8::1]:7880" {
+		t.Fatalf("browserLiveKitURL = %q, want bracketed IPv6 URL", got)
+	}
+}
+
 func TestContentSecurityPolicyAllowsLiveKitValidationOrigin(t *testing.T) {
 	t.Setenv("APP_ENV", "local")
 	t.Setenv("LIVEKIT_BROWSER_URL", "wss://voice.example.com")
