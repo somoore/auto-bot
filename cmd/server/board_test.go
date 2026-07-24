@@ -252,6 +252,54 @@ func TestRiskyVoiceToolsConfirmMultiplePendingActionsWithSingleYes(t *testing.T)
 	}
 }
 
+func TestBatchConfirmationCountsOnlySuccessfulActions(t *testing.T) {
+	board := newKanbanBoard()
+	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"Needs owner","notes":"Assignment pending","tags":["jira"],"status":"Backlog"}`)
+	if err != nil {
+		t.Fatalf("create_ticket returned error: %v", err)
+	}
+	card := result["card"].(kanbanCard)
+
+	for i := 0; i < 2; i++ {
+		result, changed, err := board.ApplyToolCallWithMeta(
+			"assign_ticket",
+			`{"card_id":"`+card.ID+`"}`,
+			toolCallMeta{Source: "nova-sonic"},
+		)
+		if err != nil {
+			t.Fatalf("assign_ticket %d returned error: %v", i, err)
+		}
+		if changed {
+			t.Fatalf("assign_ticket %d should wait for confirmation", i)
+		}
+		if requires, _ := result["requires_confirmation"].(bool); !requires {
+			t.Fatalf("assign_ticket %d result = %#v, want confirmation", i, result)
+		}
+	}
+
+	result, changed, err := board.ApplyToolCallWithMeta("confirm_action", `{}`, toolCallMeta{Source: "nova-sonic"})
+	if err != nil {
+		t.Fatalf("confirm_action returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("failed assignments should not mutate the board")
+	}
+	if ok, _ := result["ok"].(bool); ok {
+		t.Fatalf("batch result ok = true, want false: %#v", result)
+	}
+	if confirmed, _ := result["confirmed"].(bool); confirmed {
+		t.Fatalf("batch result confirmed = true, want false: %#v", result)
+	}
+	if got, _ := result["confirmed_count"].(int); got != 0 {
+		t.Fatalf("confirmed_count = %d, want 0; result = %#v", got, result)
+	}
+	for i, actionResult := range confirmedActionResults(result) {
+		if confirmed, _ := actionResult["confirmed"].(bool); confirmed {
+			t.Fatalf("confirmed action %d marked confirmed despite failure: %#v", i, actionResult)
+		}
+	}
+}
+
 func TestRiskyVoiceToolsConfirmMultiplePendingActionsWithGenericBothID(t *testing.T) {
 	board := newKanbanBoard()
 	result, _, err := board.ApplyToolCall("create_ticket", `{"title":"AWS rollout","notes":"Contact dev team","tags":["aws"],"status":"Backlog"}`)
@@ -302,7 +350,7 @@ func TestGenericYesDoesNotSweepMixedRiskPendingActions(t *testing.T) {
 	if _, _, err := board.ApplyToolCallWithMeta("set_eta", `{"card_id":"`+card.ID+`","eta":"2026-05-28"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
 		t.Fatalf("set_eta returned error: %v", err)
 	}
-	if _, _, err := board.ApplyToolCallWithMeta("set_sprint", `{"card_id":"`+card.ID+`","sprint":"Sprint 7"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
+	if _, _, err := board.ApplyToolCallWithMeta("set_sprint", `{"card_id":"`+card.ID+`","sprint_id":7,"sprint_name":"Sprint 7"}`, toolCallMeta{Source: "nova-sonic"}); err != nil {
 		t.Fatalf("set_sprint returned error: %v", err)
 	}
 	if pending := board.SnapshotState().PendingConfirmations; len(pending) != 2 {
