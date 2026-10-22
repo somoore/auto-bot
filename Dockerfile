@@ -1,4 +1,4 @@
-FROM golang:1.26@sha256:68cb6d68bed024785b69195b89af7ac7a444f27791435f98647edff595aa0479 AS build
+FROM golang:1.26@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus0=1.5.2-2 \
     libopus-dev=1.5.2-2 \
@@ -12,7 +12,7 @@ COPY internal/ internal/
 COPY web/ web/
 RUN go build -o /app ./cmd/server/
 
-FROM debian:bookworm-slim@sha256:67b30a61dc87758f0caf819646104f29ecbda97d920aaf5edc834128ac8493d3
+FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus0=1.3.1-3 \
     libssl3=3.0.20-1~deb12u1 \
