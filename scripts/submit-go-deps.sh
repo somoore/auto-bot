@@ -46,7 +46,9 @@ snapshot="$(jq -n -R \
   | from_entries as $resolved
   | { version: 0, sha: $sha, ref: $ref,
       job: { correlator: $corr, id: $run },
-      detector: { name: "go-list-deps", version: "2", url: "https://pkg.go.dev/cmd/go#hdr-List_packages_or_modules" },
+      # GitHub keys a snapshot on correlator + detector name. Keep the
+      # original name so this replaces the earlier go list -m all snapshot.
+      detector: { name: "go-list-m-all", version: "2", url: "https://pkg.go.dev/cmd/go#hdr-List_packages_or_modules" },
       scanned: $scanned,
       manifests: { ($manifest): { name: $manifest, file: { source_location: $manifest }, resolved: $resolved } } }')"
 echo "modules in snapshot: $(jq '.manifests[].resolved | length' <<<"$snapshot")" \
