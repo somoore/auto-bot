@@ -16,7 +16,8 @@ snapshot="$(go list -m -json all | jq -s \
   [ .[] | select(.Main != true) | select(.Version != null)
     | (if .Replace and .Replace.Version then .Replace else . end) as $m
     # purl-spec: golang namespace/name are lowercase
-    | ("pkg:golang/\($m.Path | ascii_downcase)@\($m.Version)") as $purl
+    # purl-spec: "+" in a version (e.g. +incompatible) must be percent-encoded
+    | ("pkg:golang/\($m.Path | ascii_downcase)@\($m.Version | gsub("\\+"; "%2B"))") as $purl
     | { key: $purl,
         value: { package_url: $purl,
                  relationship: (if .Indirect then "indirect" else "direct" end),
