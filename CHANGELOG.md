@@ -7,6 +7,20 @@ All notable changes to this project are documented here. The format is based on
 Per-release notes (with the contributing PRs) are also generated automatically on each
 GitHub Release: https://github.com/somoore/auto-bot/releases
 
+## [0.1.4] — 2026-10-23
+
+### Security
+- Go toolchain 1.26.10 (fixes GO-2026-6809 in `crypto/x509` plus earlier standard-library advisories).
+- `klauspost/compress` 1.18.7 (s2 integer overflow / out-of-bounds write, CVE-2026-63209).
+- gRPC updated past GHSA-hrxh-6v49-42gf.
+- Base images re-pinned by digest: `golang:1.26`, `debian:bookworm-slim`.
+
+### Fixes
+- Helm: `APP_BASE_URL` resolves independently of `ingress.enabled`.
+
+### Build & Release
+- The resolved Go module graph is submitted to GitHub's dependency graph on every push to main, so alerts for indirect modules close when they are fixed.
+
 ## [0.1.3] — 2026-06-10
 
 ### Continuous Integration

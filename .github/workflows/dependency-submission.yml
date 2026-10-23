@@ -1,0 +1,32 @@
+# Submits the resolved Go module build list (direct + indirect) to GitHub's
+# dependency graph on every push to main. Dependabot's built-in Go graph job
+# only refreshes direct requirements, which left indirect modules (e.g.
+# klauspost/compress) frozen at old versions and kept fixed alerts open.
+name: Dependency submission
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: go module graph
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required by the dependency submission API
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Submit go list -m all to the dependency graph
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/submit-go-deps.sh .
