@@ -15,8 +15,10 @@ snapshot="$(go list -m -json all | jq -s \
   --arg scanned "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
   [ .[] | select(.Main != true) | select(.Version != null)
     | (if .Replace and .Replace.Version then .Replace else . end) as $m
-    | { key: "pkg:golang/\($m.Path)@\($m.Version)",
-        value: { package_url: "pkg:golang/\($m.Path)@\($m.Version)",
+    # purl-spec: golang namespace/name are lowercase
+    | ("pkg:golang/\($m.Path | ascii_downcase)@\($m.Version)") as $purl
+    | { key: $purl,
+        value: { package_url: $purl,
                  relationship: (if .Indirect then "indirect" else "direct" end),
                  scope: "runtime" } } ] | from_entries as $resolved
   | { version: 0, sha: $sha, ref: $ref,
