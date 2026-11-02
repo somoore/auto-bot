@@ -253,6 +253,15 @@ func TestOverlappingChatTurnsDoNotShareHostAuthority(t *testing.T) {
 		t.Fatal("host chat turn must be authorized as host once the participant turn expired")
 	}
 
+	// A participant's spoken command still awaiting its tool call when the host
+	// starts a chat turn keeps the label mixed.
+	app4 := newNovaSonicApp(sharedBoard)
+	app4.rememberUserSpeaker("sarah")
+	app4.beginChatTurn("scott")
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("end_meeting", app4.toolAuthorizationSpeakerLabel(), "") {
+		t.Fatalf("host chat during an in-flight participant utterance (label %q) must not authorize a host-only tool", app4.toolAuthorizationSpeakerLabel())
+	}
+
 	// A failed send undoes only the entry it added.
 	app3 := newNovaSonicApp(sharedBoard)
 	app3.beginChatTurn("sarah")

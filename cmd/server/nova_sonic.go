@@ -730,9 +730,10 @@ func (app *novaSonicApp) liveChatTurnPrincipalsLocked() []string {
 
 // beginChatTurn records the authenticated author of a typed chat turn so the
 // model tool calls produced by that turn are authorized as that user. It adds
-// to, never replaces, principals whose turns may still be in flight. It reports
-// whether the principal was newly added, so a failed send can undo only its
-// own entry.
+// to, never replaces, principals whose turns may still be in flight, including
+// active speakers and anyone who spoke within chatTurnPrincipalTTL, whose
+// spoken command may still be awaiting its tool call. It reports whether the
+// principal was newly added, so a failed send can undo only its own entry.
 func (app *novaSonicApp) beginChatTurn(principal string) bool {
 	principal = strings.TrimSpace(principal)
 	if principal == "" {
@@ -743,9 +744,17 @@ func (app *novaSonicApp) beginChatTurn(principal string) bool {
 	if app.chatTurnPrincipals == nil {
 		app.chatTurnPrincipals = map[string]time.Time{}
 	}
+	now := time.Now()
 	_, existed := app.chatTurnPrincipals[principal]
-	app.chatTurnPrincipals[principal] = time.Now()
+	app.chatTurnPrincipals[principal] = now
 	app.chatTurnSeen = true
+	spoken := strings.Join(app.activeSpeakers, ",")
+	if app.lastUserSpeaker != "" && time.Since(app.lastUserSpeakerAt) <= chatTurnPrincipalTTL {
+		spoken += "," + app.lastUserSpeaker
+	}
+	for _, identity := range speakerIdentitiesFromLabel(spoken) {
+		app.chatTurnPrincipals[identity] = now
+	}
 	return !existed
 }
 
