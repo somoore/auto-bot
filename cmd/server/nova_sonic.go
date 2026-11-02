@@ -70,6 +70,9 @@ type novaSonicApp struct {
 	// one: while two different principals overlap, the tool-call label lists
 	// both and the host gate denies it, exactly like two active speakers.
 	chatTurnPrincipals map[string]time.Time
+	// chatTurnSeen records that a chat turn has ever been bound, so a tool call
+	// after its principal expired is treated as unattributable.
+	chatTurnSeen bool
 	// displayNames maps a participant's authorization identity (e.g.
 	// "somoore2025") to its cosmetic display name (e.g. "Scott", from the
 	// LiveKit token's ?name=). The speaker labels above stay as identities so
@@ -668,21 +671,46 @@ func (app *novaSonicApp) currentOrLastSpeakerLabel() string {
 //   - if ActiveSpeakersChanged has just cleared (it can fire empty around the ASR
 //     textOutput), the last ASR speaker is accepted for a short grace window only.
 //
-// A quiet room with a stale speaker yields "" rather than the last speaker, so
-// host-only tools are denied instead of leaking the host's authority.
+// A quiet room with a stale speaker yields an empty label marked Expired rather
+// than the last speaker, so host-only tools are denied instead of leaking the
+// host's authority.
 func (app *novaSonicApp) toolAuthorizationSpeakerLabel() string {
+	return app.toolAuthorizationPrincipal().Label
+}
+
+// voiceToolPrincipal is who a model tool call is authorized as. Expired means a
+// speaker or chat author existed but can no longer be attributed to this call;
+// it is distinct from an empty label in a room where nobody has spoken yet,
+// which keeps the legacy host-only-room fallback.
+type voiceToolPrincipal struct {
+	Label   string
+	Expired bool
+}
+
+func (app *novaSonicApp) toolAuthorizationPrincipal() voiceToolPrincipal {
 	app.speakerMu.Lock()
 	defer app.speakerMu.Unlock()
 	if principals := app.liveChatTurnPrincipalsLocked(); len(principals) > 0 {
-		return strings.Join(principals, ", ")
+		return voiceToolPrincipal{Label: strings.Join(principals, ", ")}
 	}
 	if len(app.activeSpeakers) > 0 {
-		return strings.Join(app.activeSpeakers, ", ")
+		return voiceToolPrincipal{Label: strings.Join(app.activeSpeakers, ", ")}
 	}
 	if app.lastUserSpeaker != "" && time.Since(app.lastUserSpeakerAt) <= voiceSpeakerFallbackGrace {
-		return app.lastUserSpeaker
+		return voiceToolPrincipal{Label: app.lastUserSpeaker}
 	}
-	return ""
+	return voiceToolPrincipal{Expired: app.lastUserSpeaker != "" || app.chatTurnSeen}
+}
+
+// hasHostAccess applies the voice host gate. An expired principal never has
+// host authority while a meeting gates tools: the empty-label fallback
+// (onlyHostSessionLocked) cannot see stateless SSO participants, so it would
+// otherwise grant a delayed participant command host access.
+func (p voiceToolPrincipal) hasHostAccess() bool {
+	if p.Expired {
+		return meetingAccess.unattributedVoiceToolHasHostAccess()
+	}
+	return meetingAccess.voiceSpeakerHasHostAccess(p.Label)
 }
 
 // liveChatTurnPrincipalsLocked prunes expired chat principals and returns the
@@ -717,6 +745,7 @@ func (app *novaSonicApp) beginChatTurn(principal string) bool {
 	}
 	_, existed := app.chatTurnPrincipals[principal]
 	app.chatTurnPrincipals[principal] = time.Now()
+	app.chatTurnSeen = true
 	return !existed
 }
 
@@ -1118,9 +1147,10 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	var result map[string]any
 	var changed bool
 	var err error
-	speakerLabel := app.toolAuthorizationSpeakerLabel()
-	requesterIsHost := meetingAccess != nil && meetingAccess.isActive() && meetingAccess.voiceSpeakerHasHostAccess(speakerLabel)
-	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, speakerLabel, voiceToolConfirmationID(tu.Content)) {
+	principal := app.toolAuthorizationPrincipal()
+	speakerLabel := principal.Label
+	requesterIsHost := meetingAccess != nil && meetingAccess.isActive() && principal.hasHostAccess()
+	if voiceToolRequiresHost(tu.ToolName, voiceToolConfirmationID(tu.Content), principal.hasHostAccess) {
 		result = hostOnlyToolResult(tu.ToolName)
 	} else {
 		// Mark non-host speakers so confirm_action / cancel_confirmation re-check
@@ -1128,7 +1158,7 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 		// gate above is advisory; this closes the TOCTOU window). The gate having
 		// allowed a non-host here means the pending set was all-deletable when it
 		// was inspected; the in-lock re-check guarantees it still is at resolution.
-		nonHostSpeaker := meetingAccess != nil && !meetingAccess.voiceSpeakerHasHostAccess(speakerLabel)
+		nonHostSpeaker := meetingAccess != nil && !principal.hasHostAccess()
 		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
 			Source:                           "nova-sonic",
 			Actor:                            speakerLabel,

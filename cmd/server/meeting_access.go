@@ -567,6 +567,21 @@ func (m *meetingAccessManager) voiceSpeakerHasHostAccess(speakerLabel string) bo
 	return ok
 }
 
+// unattributedVoiceToolHasHostAccess is the host gate for a voice tool call
+// whose speaker has expired. It is never host while a meeting gates tools.
+func (m *meetingAccessManager) unattributedVoiceToolHasHostAccess() bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if appAuthMode == "disabled" || !m.active {
+		return true
+	}
+	log.Errorf("voice host gate denied: speaker expired hostIdentity=%q sessions=%d", m.hostIdentity, len(m.sessions))
+	return false
+}
+
 // identityInUseLocked reports whether another session already holds this
 // identity (case-insensitive). Callers must hold m.mu.
 func (m *meetingAccessManager) identityInUseLocked(identity string, exceptSessionID string) bool {

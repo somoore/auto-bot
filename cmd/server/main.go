@@ -447,13 +447,22 @@ func activeMeetingRequiresAuthenticatedHostForTool(toolName string) bool {
 }
 
 func activeMeetingRequiresAuthenticatedHostForVoiceTool(toolName string, speakerLabel string, confirmationID string) bool {
+	return voiceToolRequiresHost(toolName, confirmationID, func() bool {
+		return meetingAccess.voiceSpeakerHasHostAccess(speakerLabel)
+	})
+}
+
+// voiceToolRequiresHost is the voice/chat tool gate with the requester's host
+// check supplied by the caller, so the model tool path can deny a principal it
+// can no longer attribute. hasHostAccess is only called for host-only tools.
+func voiceToolRequiresHost(toolName string, confirmationID string, hasHostAccess func() bool) bool {
 	if !activeMeetingRequiresAuthenticatedHostForTool(toolName) {
 		return false
 	}
 	if meetingAccess == nil {
 		return false
 	}
-	if meetingAccess.voiceSpeakerHasHostAccess(speakerLabel) {
+	if hasHostAccess() {
 		return false
 	}
 	// The speaker is not the host. Any participant may still confirm or cancel a

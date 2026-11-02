@@ -262,6 +262,66 @@ func TestOverlappingChatTurnsDoNotShareHostAuthority(t *testing.T) {
 	}
 }
 
+// TestExpiredSpeakerDoesNotUseHostOnlyRoomFallback covers an ALB OIDC meeting
+// where stateless participants are not in the session map, so the map holds
+// only the host. A participant's delayed tool call, after their speaker label
+// expired, must not fall through to the host-only-room fallback.
+func TestExpiredSpeakerDoesNotUseHostOnlyRoomFallback(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	prevALB := albAuthEnabled
+	albAuthEnabled = true
+	defer func() { albAuthEnabled = prevALB }()
+
+	appAuthMode = "token"
+	appEnvironment = "production"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	meetingAccess = newMeetingAccessManager()
+	sharedBoard = newKanbanBoard()
+
+	hostCtx := requestAuthContext{Identity: "scott", RoomID: appRoomID, BoardID: appBoardID}
+	if _, err := meetingAccess.setup(hostCtx, meetingTypeStandup); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	app := newNovaSonicApp(sharedBoard)
+	// Before anyone speaks, the legacy fallback still lets the sole host act.
+	if principal := app.toolAuthorizationPrincipal(); principal.Expired || !principal.hasHostAccess() {
+		t.Fatalf("no speaker yet: principal = %+v, want legacy host fallback", principal)
+	}
+
+	// alice (a stateless participant) spoke, and her tool call arrives after
+	// the grace window with no active speakers.
+	app.speakerMu.Lock()
+	app.lastUserSpeaker = "alice"
+	app.lastUserSpeakerAt = time.Now().Add(-time.Minute)
+	app.activeSpeakers = nil
+	app.speakerMu.Unlock()
+
+	principal := app.toolAuthorizationPrincipal()
+	if !principal.Expired || principal.Label != "" {
+		t.Fatalf("stale speaker principal = %+v, want expired with empty label", principal)
+	}
+	if principal.hasHostAccess() {
+		t.Fatal("an expired speaker must not get host access from the host-only-room fallback")
+	}
+	if !voiceToolRequiresHost("end_meeting", "", principal.hasHostAccess) {
+		t.Fatal("a delayed participant end_meeting must be denied")
+	}
+
+	// The same applies once a chat principal has expired.
+	chatApp := newNovaSonicApp(sharedBoard)
+	chatApp.beginChatTurn("alice")
+	chatApp.speakerMu.Lock()
+	chatApp.chatTurnPrincipals["alice"] = time.Now().Add(-2 * chatTurnPrincipalTTL)
+	chatApp.speakerMu.Unlock()
+	if principal := chatApp.toolAuthorizationPrincipal(); !principal.Expired || principal.hasHostAccess() {
+		t.Fatalf("expired chat principal = %+v, want denied", principal)
+	}
+}
+
 // TestConfirmationBoundToRequester locks in the pending-confirmation binding:
 // another participant cannot confirm or cancel someone else's staged action,
 // while the requester and a meeting host still can.
