@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,9 +59,20 @@ type novaSonicApp struct {
 	outputMu       sync.Mutex
 	outputContexts map[string]novaSonicOutputContext
 
-	speakerMu       sync.Mutex
-	activeSpeakers  []string
-	lastUserSpeaker string
+	speakerMu         sync.Mutex
+	activeSpeakers    []string
+	lastUserSpeaker   string
+	lastUserSpeakerAt time.Time
+	// chatTurnPrincipals holds the authenticated identities of every typed chat
+	// turn (and any spoken turn that overlapped one) whose model output may still
+	// be in flight, keyed to when each was last seen. SendTextMessage returns
+	// before the model answers, so a later turn must never replace an earlier
+	// one: while two different principals overlap, the tool-call label lists
+	// both and the host gate denies it, exactly like two active speakers.
+	chatTurnPrincipals map[string]time.Time
+	// chatTurnSeen records that a chat turn has ever been bound, so a tool call
+	// after its principal expired is treated as unattributable.
+	chatTurnSeen bool
 	// displayNames maps a participant's authorization identity (e.g.
 	// "somoore2025") to its cosmetic display name (e.g. "Scott", from the
 	// LiveKit token's ?name=). The speaker labels above stay as identities so
@@ -76,6 +88,14 @@ type novaSonicApp struct {
 const (
 	novaSonicSessionRenewalInterval = 7*time.Minute + 30*time.Second
 	liveKitAudioREDMimeType         = "audio/red"
+	// voiceSpeakerFallbackGrace is how long after an ASR result the last speaker
+	// may still authorize a spoken turn while ActiveSpeakersChanged is empty.
+	voiceSpeakerFallbackGrace = 3 * time.Second
+	// chatTurnPrincipalTTL is how long a typed-chat principal stays bound to
+	// the model's tool calls. The model answers a text turn within seconds, and
+	// there is no reliable per-turn end event, so principals expire on time
+	// rather than being cleared by the next turn.
+	chatTurnPrincipalTTL = 30 * time.Second
 )
 
 func newNovaSonicApp(board *kanbanBoard) *novaSonicApp {
@@ -626,9 +646,13 @@ func (app *novaSonicApp) rememberUserSpeaker(speaker string) {
 	}
 	app.speakerMu.Lock()
 	app.lastUserSpeaker = speaker
+	app.lastUserSpeakerAt = time.Now()
 	app.speakerMu.Unlock()
 }
 
+// currentOrLastSpeakerLabel is the transcript/presence label: it prefers the
+// live active speakers and falls back to the last ASR speaker. It must NOT be
+// used for tool authorization (see toolAuthorizationSpeakerLabel).
 func (app *novaSonicApp) currentOrLastSpeakerLabel() string {
 	app.speakerMu.Lock()
 	defer app.speakerMu.Unlock()
@@ -636,6 +660,129 @@ func (app *novaSonicApp) currentOrLastSpeakerLabel() string {
 		return strings.Join(app.activeSpeakers, ", ")
 	}
 	return app.lastUserSpeaker
+}
+
+// toolAuthorizationSpeakerLabel resolves the principal that a model tool call is
+// authorized against:
+//
+//   - a typed chat turn uses the authenticated identity of its author, which is
+//     set by beginChatTurn and never derived from ASR;
+//   - a spoken turn uses only the currently active speakers;
+//   - if ActiveSpeakersChanged has just cleared (it can fire empty around the ASR
+//     textOutput), the last ASR speaker is accepted for a short grace window only.
+//
+// A quiet room with a stale speaker yields an empty label marked Expired rather
+// than the last speaker, so host-only tools are denied instead of leaking the
+// host's authority.
+func (app *novaSonicApp) toolAuthorizationSpeakerLabel() string {
+	return app.toolAuthorizationPrincipal().Label
+}
+
+// voiceToolPrincipal is who a model tool call is authorized as. Expired means a
+// speaker or chat author existed but can no longer be attributed to this call;
+// it is distinct from an empty label in a room where nobody has spoken yet,
+// which keeps the legacy host-only-room fallback.
+type voiceToolPrincipal struct {
+	Label   string
+	Expired bool
+}
+
+func (app *novaSonicApp) toolAuthorizationPrincipal() voiceToolPrincipal {
+	app.speakerMu.Lock()
+	defer app.speakerMu.Unlock()
+	if principals := app.liveChatTurnPrincipalsLocked(); len(principals) > 0 {
+		return voiceToolPrincipal{Label: strings.Join(principals, ", ")}
+	}
+	if len(app.activeSpeakers) > 0 {
+		return voiceToolPrincipal{Label: strings.Join(app.activeSpeakers, ", ")}
+	}
+	if app.lastUserSpeaker != "" && time.Since(app.lastUserSpeakerAt) <= voiceSpeakerFallbackGrace {
+		return voiceToolPrincipal{Label: app.lastUserSpeaker}
+	}
+	return voiceToolPrincipal{Expired: app.lastUserSpeaker != "" || app.chatTurnSeen}
+}
+
+// hasHostAccess applies the voice host gate. An expired principal never has
+// host authority while a meeting gates tools: the empty-label fallback
+// (onlyHostSessionLocked) cannot see stateless SSO participants, so it would
+// otherwise grant a delayed participant command host access.
+func (p voiceToolPrincipal) hasHostAccess() bool {
+	if p.Expired {
+		return meetingAccess.unattributedVoiceToolHasHostAccess()
+	}
+	return meetingAccess.voiceSpeakerHasHostAccess(p.Label)
+}
+
+// liveChatTurnPrincipalsLocked prunes expired chat principals and returns the
+// remaining ones in a stable order. Callers must hold speakerMu.
+func (app *novaSonicApp) liveChatTurnPrincipalsLocked() []string {
+	principals := make([]string, 0, len(app.chatTurnPrincipals))
+	for principal, seenAt := range app.chatTurnPrincipals {
+		if time.Since(seenAt) > chatTurnPrincipalTTL {
+			delete(app.chatTurnPrincipals, principal)
+			continue
+		}
+		principals = append(principals, principal)
+	}
+	sort.Strings(principals)
+	return principals
+}
+
+// beginChatTurn records the authenticated author of a typed chat turn so the
+// model tool calls produced by that turn are authorized as that user. It adds
+// to, never replaces, principals whose turns may still be in flight, including
+// active speakers and anyone who spoke within chatTurnPrincipalTTL, whose
+// spoken command may still be awaiting its tool call. It reports whether the
+// principal was newly added, so a failed send can undo only its own entry.
+func (app *novaSonicApp) beginChatTurn(principal string) bool {
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		return false
+	}
+	app.speakerMu.Lock()
+	defer app.speakerMu.Unlock()
+	if app.chatTurnPrincipals == nil {
+		app.chatTurnPrincipals = map[string]time.Time{}
+	}
+	now := time.Now()
+	_, existed := app.chatTurnPrincipals[principal]
+	app.chatTurnPrincipals[principal] = now
+	app.chatTurnSeen = true
+	spoken := strings.Join(app.activeSpeakers, ",")
+	if app.lastUserSpeaker != "" && time.Since(app.lastUserSpeakerAt) <= chatTurnPrincipalTTL {
+		spoken += "," + app.lastUserSpeaker
+	}
+	for _, identity := range speakerIdentitiesFromLabel(spoken) {
+		app.chatTurnPrincipals[identity] = now
+	}
+	return !existed
+}
+
+// abortChatTurn removes a principal that beginChatTurn just added when its
+// text never reached the model.
+func (app *novaSonicApp) abortChatTurn(principal string, added bool) {
+	if !added {
+		return
+	}
+	app.speakerMu.Lock()
+	delete(app.chatTurnPrincipals, strings.TrimSpace(principal))
+	app.speakerMu.Unlock()
+}
+
+// noteSpokenTurnDuringChat adds a spoken turn's speakers to any chat turn still
+// in flight, so a tool call that could belong to either is authorized against
+// both (and denied host access if they differ) rather than to whichever spoke
+// last.
+func (app *novaSonicApp) noteSpokenTurnDuringChat(speakerLabel string) {
+	app.speakerMu.Lock()
+	defer app.speakerMu.Unlock()
+	if len(app.liveChatTurnPrincipalsLocked()) == 0 {
+		return
+	}
+	now := time.Now()
+	for _, identity := range speakerIdentitiesFromLabel(speakerLabel) {
+		app.chatTurnPrincipals[identity] = now
+	}
 }
 
 func (app *novaSonicApp) sendInitSequence() error {
@@ -930,6 +1077,7 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 		// no ActiveSpeakersChanged event coincides with the ASR result.
 		identity := app.currentOrLastSpeakerLabel()
 		app.rememberUserSpeaker(identity)
+		app.noteSpokenTurnDuringChat(identity)
 		displaySpeaker := app.displayLabelForSpeaker(identity)
 		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
 		normalized := normalizeTranscriptForRoom(context.Background(), app.board, "user", displaySpeaker, out.Content, "audio", "auto", chatTranslationModelClient())
@@ -1008,8 +1156,10 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	var result map[string]any
 	var changed bool
 	var err error
-	speakerLabel := app.currentOrLastSpeakerLabel()
-	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, speakerLabel, voiceToolConfirmationID(tu.Content)) {
+	principal := app.toolAuthorizationPrincipal()
+	speakerLabel := principal.Label
+	requesterIsHost := meetingAccess != nil && meetingAccess.isActive() && principal.hasHostAccess()
+	if voiceToolRequiresHost(tu.ToolName, voiceToolConfirmationID(tu.Content), principal.hasHostAccess) {
 		result = hostOnlyToolResult(tu.ToolName)
 	} else {
 		// Mark non-host speakers so confirm_action / cancel_confirmation re-check
@@ -1017,9 +1167,12 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 		// gate above is advisory; this closes the TOCTOU window). The gate having
 		// allowed a non-host here means the pending set was all-deletable when it
 		// was inspected; the in-lock re-check guarantees it still is at resolution.
-		nonHostSpeaker := meetingAccess != nil && !meetingAccess.voiceSpeakerHasHostAccess(speakerLabel)
+		nonHostSpeaker := meetingAccess != nil && !principal.hasHostAccess()
 		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
 			Source:                           "nova-sonic",
+			Actor:                            speakerLabel,
+			Requester:                        speakerLabel,
+			RequesterIsHost:                  requesterIsHost,
 			CallID:                           tu.ToolUseID,
 			RestrictToParticipantConfirmable: nonHostSpeaker,
 		})

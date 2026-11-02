@@ -40,16 +40,21 @@ var (
 )
 
 type requestAuthContext struct {
-	SessionID   string `json:"-"`
-	Identity    string `json:"participant_identity"`
-	DisplayName string `json:"display_name,omitempty"`
-	Email       string `json:"email,omitempty"`
-	RoomID      string `json:"room_id"`
-	BoardID     string `json:"board_id"`
-	AuthMode    string `json:"auth_mode,omitempty"`
-	Role        string `json:"role,omitempty"`
-	MeetingID   string `json:"meeting_id,omitempty"`
-	MeetingType string `json:"meeting_type,omitempty"`
+	SessionID string `json:"-"`
+	// SessionlessSSO marks a context resolved from a signature-verified SSO
+	// assertion (Cloudflare Access / ALB OIDC) instead of a session cookie or
+	// the injected admin bearer. Such a caller is NOT automatically the meeting
+	// host: host is derived from identity == the meeting's recorded creator.
+	SessionlessSSO bool   `json:"-"`
+	Identity       string `json:"participant_identity"`
+	DisplayName    string `json:"display_name,omitempty"`
+	Email          string `json:"email,omitempty"`
+	RoomID         string `json:"room_id"`
+	BoardID        string `json:"board_id"`
+	AuthMode       string `json:"auth_mode,omitempty"`
+	Role           string `json:"role,omitempty"`
+	MeetingID      string `json:"meeting_id,omitempty"`
+	MeetingType    string `json:"meeting_type,omitempty"`
 }
 
 type webSession struct {
@@ -358,9 +363,10 @@ func (store *webAuthStore) create(identity string) (webSession, error) {
 	}
 
 	store.mu.Lock()
-	defer store.mu.Unlock()
-	store.pruneExpiredLocked(time.Now().UTC())
+	expired := store.pruneExpiredLocked(time.Now().UTC())
 	store.sessions[id] = session
+	store.mu.Unlock()
+	meetingAccess.releaseSessions(expired)
 	return session, nil
 }
 
@@ -371,29 +377,36 @@ func (store *webAuthStore) lookup(id string) (webSession, bool) {
 	}
 
 	store.mu.Lock()
-	defer store.mu.Unlock()
 	now := time.Now().UTC()
-	store.pruneExpiredLocked(now)
+	expired := store.pruneExpiredLocked(now)
 	session, ok := store.sessions[id]
+	store.mu.Unlock()
+	meetingAccess.releaseSessions(expired)
 	if !ok || !session.ExpiresAt.After(now) {
-		delete(store.sessions, id)
 		return webSession{}, false
 	}
 	return session, true
 }
 
 func (store *webAuthStore) delete(id string) {
+	id = strings.TrimSpace(id)
 	store.mu.Lock()
-	delete(store.sessions, strings.TrimSpace(id))
+	delete(store.sessions, id)
 	store.mu.Unlock()
+	meetingAccess.releaseSessions([]string{id})
 }
 
-func (store *webAuthStore) pruneExpiredLocked(now time.Time) {
+// pruneExpiredLocked deletes expired sessions and returns their IDs so the
+// caller can release their meeting memberships once store.mu is released.
+func (store *webAuthStore) pruneExpiredLocked(now time.Time) []string {
+	var expired []string
 	for id, session := range store.sessions {
 		if !session.ExpiresAt.After(now) {
 			delete(store.sessions, id)
+			expired = append(expired, id)
 		}
 	}
+	return expired
 }
 
 func randomHex(bytesLen int) (string, error) {

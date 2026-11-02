@@ -32,6 +32,11 @@ var (
 	errMeetingNotActive = errors.New("meeting is not active")
 	errInvalidJoinCode  = errors.New("invalid meeting join code")
 	errHostRequired     = errors.New("meeting host access is required")
+	// errIdentityInUse is returned when a join would mint a session whose
+	// client-chosen identity collides (case-insensitively) with the meeting host
+	// or another connected participant. Identity is the LiveKit/speaker label the
+	// voice host gate compares, so it must be unique and must never be the host's.
+	errIdentityInUse = errors.New("participant identity is already in use")
 
 	meetingAccess = newMeetingAccessManager()
 )
@@ -461,6 +466,16 @@ func (m *meetingAccessManager) joinSessionLocked(session webSession, role string
 	if requiredCode == "" && role == meetingRoleParticipant {
 		return meetingAccessSnapshot{}, errInvalidJoinCode
 	}
+	// A participant's identity is client-chosen in token mode, but it is also the
+	// LiveKit identity and the ASR speaker label the voice host gate trusts.
+	// Refuse the host's identity and any identity already in use (case-insensitive
+	// so a case variant cannot slip past identityEqual downstream). Checked under
+	// m.mu so two concurrent joins cannot both claim the same name.
+	if role == meetingRoleParticipant {
+		if identityEqual(session.Identity, m.hostIdentity) || m.identityInUseLocked(session.Identity, session.ID) {
+			return meetingAccessSnapshot{}, errIdentityInUse
+		}
+	}
 	m.sessions[session.ID] = meetingAccessSession{
 		SessionID: session.ID,
 		Identity:  session.Identity,
@@ -480,11 +495,13 @@ func (m *meetingAccessManager) authorize(ctx requestAuthContext) (requestAuthCon
 	ctx.MeetingID = m.meetingID
 	ctx.MeetingType = m.meetingType
 
-	// Under ALB OIDC auth the request is sessionless: role is NOT carried on the
+	// Stateless SSO (ALB OIDC / Cloudflare Access): role is NOT carried on the
 	// context, so derive it from whether this identity is the meeting's recorded
-	// host (the creator). Everyone else is a participant. Identity is server-
-	// minted (post-C1), so this is safe.
-	if albAuthEnabled && ctx.SessionID == "" {
+	// host (the creator). Everyone else is a participant. This must key off the
+	// credential kind (SessionlessSSO) or the ALB flag, never "SessionID == \"\""
+	// alone, because that would also promote every CF user (and any other
+	// sessionless caller) to host.
+	if ctx.SessionID == "" && (albAuthEnabled || ctx.SessionlessSSO) {
 		if identityEqual(ctx.Identity, m.hostIdentity) {
 			ctx.Role = meetingRoleHost
 		} else {
@@ -507,9 +524,10 @@ func (m *meetingAccessManager) authorize(ctx requestAuthContext) (requestAuthCon
 }
 
 func (m *meetingAccessManager) isHost(ctx requestAuthContext) bool {
-	// Under ALB OIDC auth the request is sessionless; host is the identity that
+	// Stateless SSO (ALB OIDC / Cloudflare Access): host is the identity that
 	// created the meeting (recorded as m.hostIdentity), not a pre-assigned role.
-	if albAuthEnabled && ctx.SessionID == "" {
+	// Key off the credential kind, never "SessionID == \"\"" alone.
+	if ctx.SessionID == "" && (albAuthEnabled || ctx.SessionlessSSO) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return m.active && identityEqual(ctx.Identity, m.hostIdentity)
@@ -549,16 +567,65 @@ func (m *meetingAccessManager) voiceSpeakerHasHostAccess(speakerLabel string) bo
 	return ok
 }
 
+// unattributedVoiceToolHasHostAccess is the host gate for a voice tool call
+// whose speaker has expired. It is never host while a meeting gates tools.
+func (m *meetingAccessManager) unattributedVoiceToolHasHostAccess() bool {
+	if m == nil {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if appAuthMode == "disabled" || !m.active {
+		return true
+	}
+	log.Errorf("voice host gate denied: speaker expired hostIdentity=%q sessions=%d", m.hostIdentity, len(m.sessions))
+	return false
+}
+
+// releaseSessions drops participant memberships whose authentication session
+// has expired or been deleted, so the identity they reserved can join again.
+// The host identity stays excluded through m.hostIdentity.
+func (m *meetingAccessManager) releaseSessions(sessionIDs []string) {
+	if m == nil || len(sessionIDs) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range sessionIDs {
+		if session, ok := m.sessions[id]; ok && session.Role == meetingRoleParticipant {
+			delete(m.sessions, id)
+			m.updatedAt = time.Now().UTC()
+		}
+	}
+}
+
+// identityInUseLocked reports whether another session already holds this
+// identity (case-insensitive). Callers must hold m.mu.
+func (m *meetingAccessManager) identityInUseLocked(identity string, exceptSessionID string) bool {
+	for id, session := range m.sessions {
+		if id == exceptSessionID {
+			continue
+		}
+		if identityEqual(session.Identity, identity) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *meetingAccessManager) identityIsHostLocked(identity string) bool {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		return false
 	}
-	if identityEqual(identity, m.hostIdentity) {
+	// Exact (case-sensitive) match: the speaker label is minted from the
+	// server-held session identity, so a case variant ("SCOTT" for "scott") is a
+	// different LiveKit participant and must not inherit host authority.
+	if identity == strings.TrimSpace(m.hostIdentity) {
 		return true
 	}
 	for _, session := range m.sessions {
-		if session.Role == meetingRoleHost && identityEqual(identity, session.Identity) {
+		if session.Role == meetingRoleHost && identity == strings.TrimSpace(session.Identity) {
 			return true
 		}
 	}

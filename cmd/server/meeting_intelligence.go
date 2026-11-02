@@ -21,6 +21,14 @@ type toolCallMeta struct {
 	Actor      string
 	CallID     string
 	Transcript string
+	// Requester is the authenticated identity of the principal that initiated
+	// this tool call (server-derived, never client-asserted). It is stored on any
+	// pending confirmation so only that requester — or a meeting host — can later
+	// confirm/cancel it.
+	Requester string
+	// RequesterIsHost records that Requester was authorized as the meeting host
+	// at call time, so the host can confirm/cancel any pending action.
+	RequesterIsHost bool
 	// RestrictToParticipantConfirmable, when true, marks this tool call as coming
 	// from a NON-HOST meeting participant. confirm_action / cancel_confirmation
 	// then enforce the participant-confirmable allowlist (task deletion only)
@@ -41,6 +49,7 @@ type pendingConfirmation struct {
 	Prompt         string         `json:"prompt"`
 	Source         string         `json:"source,omitempty"`
 	Actor          string         `json:"actor,omitempty"`
+	Requester      string         `json:"requester,omitempty"`
 	CallID         string         `json:"callId,omitempty"`
 	CreatedAt      string         `json:"createdAt"`
 	ExpiresAt      string         `json:"expiresAt"`
@@ -203,6 +212,7 @@ func normalizeToolCallMeta(meta toolCallMeta) toolCallMeta {
 	}
 	meta.Source = truncateString(meta.Source, 80)
 	meta.Actor = truncateString(meta.Actor, 120)
+	meta.Requester = truncateString(meta.Requester, 120)
 	meta.CallID = truncateString(meta.CallID, 160)
 	meta.Transcript = truncateString(meta.Transcript, 2000)
 	return meta
@@ -235,6 +245,7 @@ func (board *kanbanBoard) createPendingConfirmation(toolName string, args map[st
 		Prompt:         confirmationPrompt(toolName, args),
 		Source:         meta.Source,
 		Actor:          meta.Actor,
+		Requester:      meta.Requester,
 		CallID:         meta.CallID,
 		CreatedAt:      now.Format(time.RFC3339Nano),
 		ExpiresAt:      now.Add(2 * time.Minute).Format(time.RFC3339Nano),
@@ -316,6 +327,14 @@ func (board *kanbanBoard) confirmPendingAction(args map[string]any, meta toolCal
 	if meta.RestrictToParticipantConfirmable && !board.participantConfirmableSetLocked(confirmationID) {
 		board.mu.Unlock()
 		return participantConfirmDeniedResult("confirm_action"), false, nil
+	}
+	// Requester binding: a pending action staged by a specific authenticated
+	// participant may only be confirmed by that participant or a host. Checked
+	// in-lock with the same selection the take below uses, so a mismatch cannot
+	// consume the pending set.
+	if board.confirmationRequesterMismatchLocked(confirmationID, meta) {
+		board.mu.Unlock()
+		return confirmationRequesterDeniedResult("confirm_action"), false, nil
 	}
 	// Guard mixed-risk sweeps: a bare/generic affirmation ("yes", "ok") must not
 	// confirm every pending action when those actions span more than one risk
@@ -407,6 +426,10 @@ func (board *kanbanBoard) cancelPendingConfirmation(args map[string]any, meta to
 	if meta.RestrictToParticipantConfirmable && !board.participantConfirmableSetLocked(confirmationID) {
 		board.mu.Unlock()
 		return participantConfirmDeniedResult("cancel_confirmation"), false, nil
+	}
+	if board.confirmationRequesterMismatchLocked(confirmationID, meta) {
+		board.mu.Unlock()
+		return confirmationRequesterDeniedResult("cancel_confirmation"), false, nil
 	}
 	confirmations := board.takePendingConfirmationsLocked(confirmationID)
 	board.mu.Unlock()
@@ -526,6 +549,34 @@ func participantConfirmDeniedResult(toolName string) map[string]any {
 		"error":                 "meeting host access is required",
 		"requires_host_session": true,
 		"assistant_instruction": "Only the meeting host can confirm this action. Task deletion can be confirmed by any participant, but this pending set includes an action that requires the host.",
+	}
+}
+
+// confirmationRequesterMismatchLocked reports whether the confirmer is neither
+// the participant who staged the selected pending action(s) nor a host. An empty
+// recorded requester (internal/server-side staging) stays unrestricted. Callers
+// must hold board.mu.
+func (board *kanbanBoard) confirmationRequesterMismatchLocked(confirmationID string, meta toolCallMeta) bool {
+	if meta.RequesterIsHost {
+		return false
+	}
+	for _, confirmation := range board.selectPendingConfirmationsLocked(confirmationID) {
+		if confirmation.Requester != "" && !identityEqual(confirmation.Requester, meta.Requester) {
+			return true
+		}
+	}
+	return false
+}
+
+// confirmationRequesterDeniedResult mirrors the host-required denial shape for a
+// confirmation that belongs to a different participant.
+func confirmationRequesterDeniedResult(toolName string) map[string]any {
+	return map[string]any{
+		"ok":                    false,
+		"tool_name":             toolName,
+		"error":                 "confirmation belongs to another participant",
+		"requires_requester":    true,
+		"assistant_instruction": "Only the participant who requested this action, or the meeting host, can confirm or cancel it.",
 	}
 }
 

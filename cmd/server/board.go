@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -2560,27 +2561,34 @@ func firstNonEmptyString(args map[string]any, keys ...string) string {
 }
 
 func asFloat64(value any) (float64, bool) {
+	var parsed float64
+	ok := false
 	switch typed := value.(type) {
 	case float64:
-		return typed, true
+		parsed, ok = typed, true
 	case float32:
-		return float64(typed), true
+		parsed, ok = float64(typed), true
 	case int:
-		return float64(typed), true
+		parsed, ok = float64(typed), true
 	case int64:
-		return float64(typed), true
+		parsed, ok = float64(typed), true
 	case json.Number:
-		parsed, err := typed.Float64()
-		return parsed, err == nil
+		number, parseErr := typed.Float64()
+		parsed, ok = number, parseErr == nil
 	case string:
-		if typed = strings.TrimSpace(typed); typed != "" {
-			var parsed float64
-			if _, err := fmt.Sscanf(typed, "%f", &parsed); err == nil {
-				return parsed, true
+		if trimmed := strings.TrimSpace(typed); trimmed != "" {
+			if _, err := fmt.Sscanf(trimmed, "%f", &parsed); err == nil {
+				ok = true
 			}
 		}
 	}
-	return 0, false
+	// Reject non-finite values everywhere they enter the board. encoding/json
+	// cannot marshal NaN/±Inf, so accepting one would poison every subsequent
+	// snapshot and broadcast for the whole board.
+	if !ok || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return 0, false
+	}
+	return parsed, true
 }
 
 func asInt(value any) (int, bool) {
