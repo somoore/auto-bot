@@ -110,7 +110,7 @@ func handleClientChatMessage(c *threadSafeWriter, rawData string, authCtx reques
 	}
 	broadcastKanbanEvent("transcription", payload)
 
-	if err := forwardChatMessageToVoiceAgent(speaker, normalized); err != nil {
+	if err := forwardChatMessageToVoiceAgent(speaker, authCtx.Identity, normalized); err != nil {
 		_ = sendKanbanEvent(c, "command_result", map[string]any{
 			"ok":      false,
 			"error":   fmt.Sprintf("chat posted, but the meeting agent did not receive it: %v", err),
@@ -373,13 +373,20 @@ func translateMeetingTextToEnglish(ctx context.Context, model agentModelClient, 
 	return translated, nil
 }
 
-func forwardChatMessageToVoiceAgent(speaker string, normalized normalizedMeetingText) error {
+func forwardChatMessageToVoiceAgent(speaker string, principal string, normalized normalizedMeetingText) error {
 	switch activeVoiceProviderID() {
 	case voiceProviderNovaSonic:
 		if novaSonic == nil {
 			return fmt.Errorf("nova sonic agent is not initialized")
 		}
-		return novaSonic.SendTextMessage(speaker, normalized)
+		// Bind the model turn to the authenticated chat author. The cosmetic
+		// speaker label stays a display concern only.
+		novaSonic.beginChatTurn(principal)
+		if err := novaSonic.SendTextMessage(speaker, normalized); err != nil {
+			novaSonic.clearChatTurnPrincipal()
+			return err
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown voice provider %q", voiceProvider)
 	}

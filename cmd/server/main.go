@@ -387,7 +387,13 @@ func handleClientKanbanCommand(c *threadSafeWriter, rawData string, authCtx requ
 		return
 	}
 	rawArgs := mustMarshalJSON(request.Arguments)
-	result, changed, err := sharedBoard.ApplyToolCallWithMeta(request.Tool, rawArgs, toolCallMeta{Source: "ui"})
+	requesterIsHost := meetingAccess != nil && meetingAccess.isActive() && meetingAccess.isHost(authCtx)
+	result, changed, err := sharedBoard.ApplyToolCallWithMeta(request.Tool, rawArgs, toolCallMeta{
+		Source:          "ui",
+		Actor:           authCtx.Identity,
+		Requester:       authCtx.Identity,
+		RequesterIsHost: requesterIsHost,
+	})
 	if err != nil {
 		result = map[string]any{"ok": false, "error": err.Error()}
 	}
@@ -429,7 +435,7 @@ func kanbanCommandAllowed(authCtx requestAuthContext, toolName string) bool {
 func kanbanToolRequiresHost(toolName string) bool {
 	switch toolName {
 	case "confirm_action", "cancel_confirmation", "resolve_jira_conflict", "undo_last_mutation",
-		"switch_meeting_type", "start_meeting", "end_meeting":
+		"switch_meeting_type", "start_meeting", "end_meeting", "assign_ticket_to_agent":
 		return true
 	default:
 		return false

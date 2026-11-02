@@ -200,6 +200,7 @@ func albOIDCContext(r *http.Request) (requestAuthContext, bool) {
 	// recorded as such by the meeting-access layer. The email allowlist above is
 	// the access gate; role is a runtime choice.
 	ctx := defaultAuthContext(identity)
+	ctx.SessionlessSSO = true
 	ctx.Email = email
 	ctx.DisplayName = strings.TrimSpace(claims.Name)
 	if ctx.DisplayName == "" {

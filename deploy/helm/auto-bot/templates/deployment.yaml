@@ -25,6 +25,17 @@ spec:
         - name: auto-bot
           image: {{ include "auto-bot.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsUser: 10001
+            runAsGroup: 10001
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           workingDir: /srv      # the app reads web/ templates relative to cwd
           ports:
             - name: http

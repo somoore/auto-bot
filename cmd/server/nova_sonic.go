@@ -58,9 +58,17 @@ type novaSonicApp struct {
 	outputMu       sync.Mutex
 	outputContexts map[string]novaSonicOutputContext
 
-	speakerMu       sync.Mutex
-	activeSpeakers  []string
-	lastUserSpeaker string
+	speakerMu         sync.Mutex
+	activeSpeakers    []string
+	lastUserSpeaker   string
+	lastUserSpeakerAt time.Time
+	// chatTurnPrincipal is the authenticated identity of the participant whose
+	// typed chat turn is being processed by the model. Unlike lastUserSpeaker it
+	// is server-derived from the session (not ASR) and is consumed/cleared at the
+	// next turn boundary, so a chat turn can never inherit another participant's
+	// (or the host's) voice authorization.
+	chatTurnPrincipal string
+	chatTurnAt        time.Time
 	// displayNames maps a participant's authorization identity (e.g.
 	// "somoore2025") to its cosmetic display name (e.g. "Scott", from the
 	// LiveKit token's ?name=). The speaker labels above stay as identities so
@@ -76,6 +84,12 @@ type novaSonicApp struct {
 const (
 	novaSonicSessionRenewalInterval = 7*time.Minute + 30*time.Second
 	liveKitAudioREDMimeType         = "audio/red"
+	// voiceSpeakerFallbackGrace is how long after an ASR result the last speaker
+	// may still authorize a spoken turn while ActiveSpeakersChanged is empty.
+	voiceSpeakerFallbackGrace = 3 * time.Second
+	// chatTurnPrincipalTTL bounds how long an explicit typed-chat principal is
+	// honored if no turn boundary event arrives.
+	chatTurnPrincipalTTL = 2 * time.Minute
 )
 
 func newNovaSonicApp(board *kanbanBoard) *novaSonicApp {
@@ -626,9 +640,13 @@ func (app *novaSonicApp) rememberUserSpeaker(speaker string) {
 	}
 	app.speakerMu.Lock()
 	app.lastUserSpeaker = speaker
+	app.lastUserSpeakerAt = time.Now()
 	app.speakerMu.Unlock()
 }
 
+// currentOrLastSpeakerLabel is the transcript/presence label: it prefers the
+// live active speakers and falls back to the last ASR speaker. It must NOT be
+// used for tool authorization (see toolAuthorizationSpeakerLabel).
 func (app *novaSonicApp) currentOrLastSpeakerLabel() string {
 	app.speakerMu.Lock()
 	defer app.speakerMu.Unlock()
@@ -636,6 +654,53 @@ func (app *novaSonicApp) currentOrLastSpeakerLabel() string {
 		return strings.Join(app.activeSpeakers, ", ")
 	}
 	return app.lastUserSpeaker
+}
+
+// toolAuthorizationSpeakerLabel resolves the principal that a model tool call is
+// authorized against:
+//
+//   - a typed chat turn uses the authenticated identity of its author, which is
+//     set by beginChatTurn and never derived from ASR;
+//   - a spoken turn uses only the currently active speakers;
+//   - if ActiveSpeakersChanged has just cleared (it can fire empty around the ASR
+//     textOutput), the last ASR speaker is accepted for a short grace window only.
+//
+// A quiet room with a stale speaker yields "" rather than the last speaker, so
+// host-only tools are denied instead of leaking the host's authority.
+func (app *novaSonicApp) toolAuthorizationSpeakerLabel() string {
+	app.speakerMu.Lock()
+	defer app.speakerMu.Unlock()
+	if app.chatTurnPrincipal != "" && time.Since(app.chatTurnAt) <= chatTurnPrincipalTTL {
+		return app.chatTurnPrincipal
+	}
+	if len(app.activeSpeakers) > 0 {
+		return strings.Join(app.activeSpeakers, ", ")
+	}
+	if app.lastUserSpeaker != "" && time.Since(app.lastUserSpeakerAt) <= voiceSpeakerFallbackGrace {
+		return app.lastUserSpeaker
+	}
+	return ""
+}
+
+// beginChatTurn records the authenticated author of a typed chat turn so the
+// model tool calls produced by that turn are authorized as that user.
+func (app *novaSonicApp) beginChatTurn(principal string) {
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		return
+	}
+	app.speakerMu.Lock()
+	app.chatTurnPrincipal = principal
+	app.chatTurnAt = time.Now()
+	app.speakerMu.Unlock()
+}
+
+// clearChatTurnPrincipal ends the explicit chat principal at a turn boundary.
+func (app *novaSonicApp) clearChatTurnPrincipal() {
+	app.speakerMu.Lock()
+	app.chatTurnPrincipal = ""
+	app.chatTurnAt = time.Time{}
+	app.speakerMu.Unlock()
 }
 
 func (app *novaSonicApp) sendInitSequence() error {
@@ -925,6 +990,9 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 	switch role {
 	case "USER":
 		log.Infof("Nova Sonic ASR: user transcript received")
+		// A spoken turn begins: drop any explicit typed-chat principal so a chat
+		// turn and an audio turn can never share authorization.
+		app.clearChatTurnPrincipal()
 		// identity drives the host gate; displaySpeaker is the human-visible
 		// label. Fall back to the last known speaker so neither is empty when
 		// no ActiveSpeakersChanged event coincides with the ASR result.
@@ -947,6 +1015,9 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 		}
 	case "ASSISTANT":
 		log.Infof("Nova Sonic assistant: response text received")
+		// Assistant output ends the model turn that could have carried an
+		// explicit chat principal.
+		app.clearChatTurnPrincipal()
 		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
 		languageHint := "auto"
 		if policy := app.board.activeResponseLanguagePolicy(); policy != nil {
@@ -1008,7 +1079,8 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 	var result map[string]any
 	var changed bool
 	var err error
-	speakerLabel := app.currentOrLastSpeakerLabel()
+	speakerLabel := app.toolAuthorizationSpeakerLabel()
+	requesterIsHost := meetingAccess != nil && meetingAccess.isActive() && meetingAccess.voiceSpeakerHasHostAccess(speakerLabel)
 	if activeMeetingRequiresAuthenticatedHostForVoiceTool(tu.ToolName, speakerLabel, voiceToolConfirmationID(tu.Content)) {
 		result = hostOnlyToolResult(tu.ToolName)
 	} else {
@@ -1020,6 +1092,9 @@ func (app *novaSonicApp) handleToolUse(raw json.RawMessage) {
 		nonHostSpeaker := meetingAccess != nil && !meetingAccess.voiceSpeakerHasHostAccess(speakerLabel)
 		result, changed, err = app.board.ApplyToolCallWithMeta(tu.ToolName, tu.Content, toolCallMeta{
 			Source:                           "nova-sonic",
+			Actor:                            speakerLabel,
+			Requester:                        speakerLabel,
+			RequesterIsHost:                  requesterIsHost,
 			CallID:                           tu.ToolUseID,
 			RestrictToParticipantConfirmable: nonHostSpeaker,
 		})

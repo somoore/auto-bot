@@ -40,16 +40,21 @@ var (
 )
 
 type requestAuthContext struct {
-	SessionID   string `json:"-"`
-	Identity    string `json:"participant_identity"`
-	DisplayName string `json:"display_name,omitempty"`
-	Email       string `json:"email,omitempty"`
-	RoomID      string `json:"room_id"`
-	BoardID     string `json:"board_id"`
-	AuthMode    string `json:"auth_mode,omitempty"`
-	Role        string `json:"role,omitempty"`
-	MeetingID   string `json:"meeting_id,omitempty"`
-	MeetingType string `json:"meeting_type,omitempty"`
+	SessionID string `json:"-"`
+	// SessionlessSSO marks a context resolved from a signature-verified SSO
+	// assertion (Cloudflare Access / ALB OIDC) instead of a session cookie or
+	// the injected admin bearer. Such a caller is NOT automatically the meeting
+	// host: host is derived from identity == the meeting's recorded creator.
+	SessionlessSSO bool   `json:"-"`
+	Identity       string `json:"participant_identity"`
+	DisplayName    string `json:"display_name,omitempty"`
+	Email          string `json:"email,omitempty"`
+	RoomID         string `json:"room_id"`
+	BoardID        string `json:"board_id"`
+	AuthMode       string `json:"auth_mode,omitempty"`
+	Role           string `json:"role,omitempty"`
+	MeetingID      string `json:"meeting_id,omitempty"`
+	MeetingType    string `json:"meeting_type,omitempty"`
 }
 
 type webSession struct {

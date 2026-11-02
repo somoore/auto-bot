@@ -144,6 +144,11 @@ func cfAccessContext(r *http.Request) (requestAuthContext, bool) {
 	identity := identityFromEmail(email, albOIDCClaims{Subject: claims.Subject})
 
 	ctx := defaultAuthContext(identity)
+	// Cloudflare Access resolves a verified user per request but mints no app
+	// session. Mark the credential kind so the meeting layer does not treat
+	// "sessionless" as "admin": a CF user is host only when their server-derived
+	// identity is the meeting creator.
+	ctx.SessionlessSSO = true
 	ctx.Email = email
 	// Friendly default display label: the email local-part (e.g. "somoore2025"),
 	// not the full address. Cosmetic only and client-overridable at join time.

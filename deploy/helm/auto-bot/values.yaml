@@ -98,6 +98,9 @@ resources:
     cpu: 100m
     memory: 256Mi
   limits:
+    # Generous CPU headroom: the realtime Opus dec/encode + mixer path is
+    # latency-sensitive, so a tight limit can starve audio frames.
+    cpu: "2"
     memory: 1Gi
 
 # -- AWS Bedrock auth via IAM Roles Anywhere (recommended for production) -----
