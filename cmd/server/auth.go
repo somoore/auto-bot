@@ -366,7 +366,7 @@ func (store *webAuthStore) create(identity string) (webSession, error) {
 	expired := store.pruneExpiredLocked(time.Now().UTC())
 	store.sessions[id] = session
 	store.mu.Unlock()
-	meetingAccess.releaseExpiredSessions(expired)
+	meetingAccess.releaseSessions(expired)
 	return session, nil
 }
 
@@ -381,7 +381,7 @@ func (store *webAuthStore) lookup(id string) (webSession, bool) {
 	expired := store.pruneExpiredLocked(now)
 	session, ok := store.sessions[id]
 	store.mu.Unlock()
-	meetingAccess.releaseExpiredSessions(expired)
+	meetingAccess.releaseSessions(expired)
 	if !ok || !session.ExpiresAt.After(now) {
 		return webSession{}, false
 	}
@@ -389,9 +389,11 @@ func (store *webAuthStore) lookup(id string) (webSession, bool) {
 }
 
 func (store *webAuthStore) delete(id string) {
+	id = strings.TrimSpace(id)
 	store.mu.Lock()
-	delete(store.sessions, strings.TrimSpace(id))
+	delete(store.sessions, id)
 	store.mu.Unlock()
+	meetingAccess.releaseSessions([]string{id})
 }
 
 // pruneExpiredLocked deletes expired sessions and returns their IDs so the

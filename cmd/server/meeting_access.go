@@ -582,10 +582,10 @@ func (m *meetingAccessManager) unattributedVoiceToolHasHostAccess() bool {
 	return false
 }
 
-// releaseExpiredSessions drops participant memberships whose authentication
-// session has expired, so the identity they reserved can join again. The host
-// identity stays excluded through m.hostIdentity.
-func (m *meetingAccessManager) releaseExpiredSessions(sessionIDs []string) {
+// releaseSessions drops participant memberships whose authentication session
+// has expired or been deleted, so the identity they reserved can join again.
+// The host identity stays excluded through m.hostIdentity.
+func (m *meetingAccessManager) releaseSessions(sessionIDs []string) {
 	if m == nil || len(sessionIDs) == 0 {
 		return
 	}

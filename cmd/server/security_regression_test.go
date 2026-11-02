@@ -332,9 +332,9 @@ func TestExpiredSpeakerDoesNotUseHostOnlyRoomFallback(t *testing.T) {
 }
 
 // TestExpiredParticipantSessionReleasesIdentity covers a token-mode meeting
-// that outlives a participant's session: once the session expires, the
-// participant can rejoin with the same identity, and the host identity stays
-// reserved.
+// that outlives a participant's session: once the session expires or is
+// deleted, the participant can rejoin with the same identity, and the host
+// identity stays reserved.
 func TestExpiredParticipantSessionReleasesIdentity(t *testing.T) {
 	restore := snapshotAuthGlobals()
 	defer restore()
@@ -390,6 +390,16 @@ func TestExpiredParticipantSessionReleasesIdentity(t *testing.T) {
 	}
 	if _, err := meetingAccess.joinSessionWithCode(again, snapshot.JoinCode, meetingRoleParticipant); err != nil {
 		t.Fatalf("rejoin after session expiry: %v", err)
+	}
+
+	// Signing out (DELETE /auth/session) releases the identity as well.
+	authStore.delete(again.ID)
+	afterSignOut, err := authStore.create("sarah")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := meetingAccess.joinSessionWithCode(afterSignOut, snapshot.JoinCode, meetingRoleParticipant); err != nil {
+		t.Fatalf("rejoin after sign-out: %v", err)
 	}
 
 	// The host identity is still refused.
