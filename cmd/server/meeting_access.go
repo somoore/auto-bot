@@ -582,6 +582,23 @@ func (m *meetingAccessManager) unattributedVoiceToolHasHostAccess() bool {
 	return false
 }
 
+// releaseExpiredSessions drops participant memberships whose authentication
+// session has expired, so the identity they reserved can join again. The host
+// identity stays excluded through m.hostIdentity.
+func (m *meetingAccessManager) releaseExpiredSessions(sessionIDs []string) {
+	if m == nil || len(sessionIDs) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range sessionIDs {
+		if session, ok := m.sessions[id]; ok && session.Role == meetingRoleParticipant {
+			delete(m.sessions, id)
+			m.updatedAt = time.Now().UTC()
+		}
+	}
+}
+
 // identityInUseLocked reports whether another session already holds this
 // identity (case-insensitive). Callers must hold m.mu.
 func (m *meetingAccessManager) identityInUseLocked(identity string, exceptSessionID string) bool {

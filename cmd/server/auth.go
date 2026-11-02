@@ -363,9 +363,10 @@ func (store *webAuthStore) create(identity string) (webSession, error) {
 	}
 
 	store.mu.Lock()
-	defer store.mu.Unlock()
-	store.pruneExpiredLocked(time.Now().UTC())
+	expired := store.pruneExpiredLocked(time.Now().UTC())
 	store.sessions[id] = session
+	store.mu.Unlock()
+	meetingAccess.releaseExpiredSessions(expired)
 	return session, nil
 }
 
@@ -376,12 +377,12 @@ func (store *webAuthStore) lookup(id string) (webSession, bool) {
 	}
 
 	store.mu.Lock()
-	defer store.mu.Unlock()
 	now := time.Now().UTC()
-	store.pruneExpiredLocked(now)
+	expired := store.pruneExpiredLocked(now)
 	session, ok := store.sessions[id]
+	store.mu.Unlock()
+	meetingAccess.releaseExpiredSessions(expired)
 	if !ok || !session.ExpiresAt.After(now) {
-		delete(store.sessions, id)
 		return webSession{}, false
 	}
 	return session, true
@@ -393,12 +394,17 @@ func (store *webAuthStore) delete(id string) {
 	store.mu.Unlock()
 }
 
-func (store *webAuthStore) pruneExpiredLocked(now time.Time) {
+// pruneExpiredLocked deletes expired sessions and returns their IDs so the
+// caller can release their meeting memberships once store.mu is released.
+func (store *webAuthStore) pruneExpiredLocked(now time.Time) []string {
+	var expired []string
 	for id, session := range store.sessions {
 		if !session.ExpiresAt.After(now) {
 			delete(store.sessions, id)
+			expired = append(expired, id)
 		}
 	}
+	return expired
 }
 
 func randomHex(bytesLen int) (string, error) {

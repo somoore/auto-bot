@@ -322,6 +322,77 @@ func TestExpiredSpeakerDoesNotUseHostOnlyRoomFallback(t *testing.T) {
 	}
 }
 
+// TestExpiredParticipantSessionReleasesIdentity covers a token-mode meeting
+// that outlives a participant's session: once the session expires, the
+// participant can rejoin with the same identity, and the host identity stays
+// reserved.
+func TestExpiredParticipantSessionReleasesIdentity(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+	prevStore := authStore
+	defer func() { authStore = prevStore }()
+
+	appAuthMode = "token"
+	appEnvironment = "production"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	authStore = newWebAuthStore(defaultSessionTTL)
+	meetingAccess = newMeetingAccessManager()
+	sharedBoard = newKanbanBoard()
+
+	snapshot, err := meetingAccess.setup(requestAuthContext{
+		SessionID: "host-session",
+		Identity:  "scott",
+		RoomID:    appRoomID,
+		BoardID:   appBoardID,
+	}, meetingTypeStandup)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	first, err := authStore.create("sarah")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := meetingAccess.joinSessionWithCode(first, snapshot.JoinCode, meetingRoleParticipant); err != nil {
+		t.Fatalf("first join: %v", err)
+	}
+
+	// While the first session is live, the identity is reserved.
+	dup, err := authStore.create("sarah")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := meetingAccess.joinSessionWithCode(dup, snapshot.JoinCode, meetingRoleParticipant); err != errIdentityInUse {
+		t.Fatalf("duplicate live join err = %v, want errIdentityInUse", err)
+	}
+	authStore.delete(dup.ID)
+
+	// The first session expires.
+	authStore.mu.Lock()
+	expiring := authStore.sessions[first.ID]
+	expiring.ExpiresAt = time.Now().UTC().Add(-time.Second)
+	authStore.sessions[first.ID] = expiring
+	authStore.mu.Unlock()
+
+	again, err := authStore.create("sarah")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := meetingAccess.joinSessionWithCode(again, snapshot.JoinCode, meetingRoleParticipant); err != nil {
+		t.Fatalf("rejoin after session expiry: %v", err)
+	}
+
+	// The host identity is still refused.
+	impostor, err := authStore.create("scott")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := meetingAccess.joinSessionWithCode(impostor, snapshot.JoinCode, meetingRoleParticipant); err != errIdentityInUse {
+		t.Fatalf("host identity join err = %v, want errIdentityInUse", err)
+	}
+}
+
 // TestConfirmationBoundToRequester locks in the pending-confirmation binding:
 // another participant cannot confirm or cancel someone else's staged action,
 // while the requester and a meeting host still can.
