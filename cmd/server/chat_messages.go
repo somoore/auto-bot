@@ -381,9 +381,9 @@ func forwardChatMessageToVoiceAgent(speaker string, principal string, normalized
 		}
 		// Bind the model turn to the authenticated chat author. The cosmetic
 		// speaker label stays a display concern only.
-		novaSonic.beginChatTurn(principal)
+		added := novaSonic.beginChatTurn(principal)
 		if err := novaSonic.SendTextMessage(speaker, normalized); err != nil {
-			novaSonic.clearChatTurnPrincipal()
+			novaSonic.abortChatTurn(principal, added)
 			return err
 		}
 		return nil

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -62,13 +63,13 @@ type novaSonicApp struct {
 	activeSpeakers    []string
 	lastUserSpeaker   string
 	lastUserSpeakerAt time.Time
-	// chatTurnPrincipal is the authenticated identity of the participant whose
-	// typed chat turn is being processed by the model. Unlike lastUserSpeaker it
-	// is server-derived from the session (not ASR) and is consumed/cleared at the
-	// next turn boundary, so a chat turn can never inherit another participant's
-	// (or the host's) voice authorization.
-	chatTurnPrincipal string
-	chatTurnAt        time.Time
+	// chatTurnPrincipals holds the authenticated identities of every typed chat
+	// turn (and any spoken turn that overlapped one) whose model output may still
+	// be in flight, keyed to when each was last seen. SendTextMessage returns
+	// before the model answers, so a later turn must never replace an earlier
+	// one: while two different principals overlap, the tool-call label lists
+	// both and the host gate denies it, exactly like two active speakers.
+	chatTurnPrincipals map[string]time.Time
 	// displayNames maps a participant's authorization identity (e.g.
 	// "somoore2025") to its cosmetic display name (e.g. "Scott", from the
 	// LiveKit token's ?name=). The speaker labels above stay as identities so
@@ -87,9 +88,11 @@ const (
 	// voiceSpeakerFallbackGrace is how long after an ASR result the last speaker
 	// may still authorize a spoken turn while ActiveSpeakersChanged is empty.
 	voiceSpeakerFallbackGrace = 3 * time.Second
-	// chatTurnPrincipalTTL bounds how long an explicit typed-chat principal is
-	// honored if no turn boundary event arrives.
-	chatTurnPrincipalTTL = 2 * time.Minute
+	// chatTurnPrincipalTTL is how long a typed-chat principal stays bound to
+	// the model's tool calls. The model answers a text turn within seconds, and
+	// there is no reliable per-turn end event, so principals expire on time
+	// rather than being cleared by the next turn.
+	chatTurnPrincipalTTL = 30 * time.Second
 )
 
 func newNovaSonicApp(board *kanbanBoard) *novaSonicApp {
@@ -670,8 +673,8 @@ func (app *novaSonicApp) currentOrLastSpeakerLabel() string {
 func (app *novaSonicApp) toolAuthorizationSpeakerLabel() string {
 	app.speakerMu.Lock()
 	defer app.speakerMu.Unlock()
-	if app.chatTurnPrincipal != "" && time.Since(app.chatTurnAt) <= chatTurnPrincipalTTL {
-		return app.chatTurnPrincipal
+	if principals := app.liveChatTurnPrincipalsLocked(); len(principals) > 0 {
+		return strings.Join(principals, ", ")
 	}
 	if len(app.activeSpeakers) > 0 {
 		return strings.Join(app.activeSpeakers, ", ")
@@ -682,25 +685,66 @@ func (app *novaSonicApp) toolAuthorizationSpeakerLabel() string {
 	return ""
 }
 
+// liveChatTurnPrincipalsLocked prunes expired chat principals and returns the
+// remaining ones in a stable order. Callers must hold speakerMu.
+func (app *novaSonicApp) liveChatTurnPrincipalsLocked() []string {
+	principals := make([]string, 0, len(app.chatTurnPrincipals))
+	for principal, seenAt := range app.chatTurnPrincipals {
+		if time.Since(seenAt) > chatTurnPrincipalTTL {
+			delete(app.chatTurnPrincipals, principal)
+			continue
+		}
+		principals = append(principals, principal)
+	}
+	sort.Strings(principals)
+	return principals
+}
+
 // beginChatTurn records the authenticated author of a typed chat turn so the
-// model tool calls produced by that turn are authorized as that user.
-func (app *novaSonicApp) beginChatTurn(principal string) {
+// model tool calls produced by that turn are authorized as that user. It adds
+// to, never replaces, principals whose turns may still be in flight. It reports
+// whether the principal was newly added, so a failed send can undo only its
+// own entry.
+func (app *novaSonicApp) beginChatTurn(principal string) bool {
 	principal = strings.TrimSpace(principal)
 	if principal == "" {
+		return false
+	}
+	app.speakerMu.Lock()
+	defer app.speakerMu.Unlock()
+	if app.chatTurnPrincipals == nil {
+		app.chatTurnPrincipals = map[string]time.Time{}
+	}
+	_, existed := app.chatTurnPrincipals[principal]
+	app.chatTurnPrincipals[principal] = time.Now()
+	return !existed
+}
+
+// abortChatTurn removes a principal that beginChatTurn just added when its
+// text never reached the model.
+func (app *novaSonicApp) abortChatTurn(principal string, added bool) {
+	if !added {
 		return
 	}
 	app.speakerMu.Lock()
-	app.chatTurnPrincipal = principal
-	app.chatTurnAt = time.Now()
+	delete(app.chatTurnPrincipals, strings.TrimSpace(principal))
 	app.speakerMu.Unlock()
 }
 
-// clearChatTurnPrincipal ends the explicit chat principal at a turn boundary.
-func (app *novaSonicApp) clearChatTurnPrincipal() {
+// noteSpokenTurnDuringChat adds a spoken turn's speakers to any chat turn still
+// in flight, so a tool call that could belong to either is authorized against
+// both (and denied host access if they differ) rather than to whichever spoke
+// last.
+func (app *novaSonicApp) noteSpokenTurnDuringChat(speakerLabel string) {
 	app.speakerMu.Lock()
-	app.chatTurnPrincipal = ""
-	app.chatTurnAt = time.Time{}
-	app.speakerMu.Unlock()
+	defer app.speakerMu.Unlock()
+	if len(app.liveChatTurnPrincipalsLocked()) == 0 {
+		return
+	}
+	now := time.Now()
+	for _, identity := range speakerIdentitiesFromLabel(speakerLabel) {
+		app.chatTurnPrincipals[identity] = now
+	}
 }
 
 func (app *novaSonicApp) sendInitSequence() error {
@@ -990,14 +1034,12 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 	switch role {
 	case "USER":
 		log.Infof("Nova Sonic ASR: user transcript received")
-		// A spoken turn begins: drop any explicit typed-chat principal so a chat
-		// turn and an audio turn can never share authorization.
-		app.clearChatTurnPrincipal()
 		// identity drives the host gate; displaySpeaker is the human-visible
 		// label. Fall back to the last known speaker so neither is empty when
 		// no ActiveSpeakersChanged event coincides with the ASR result.
 		identity := app.currentOrLastSpeakerLabel()
 		app.rememberUserSpeaker(identity)
+		app.noteSpokenTurnDuringChat(identity)
 		displaySpeaker := app.displayLabelForSpeaker(identity)
 		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
 		normalized := normalizeTranscriptForRoom(context.Background(), app.board, "user", displaySpeaker, out.Content, "audio", "auto", chatTranslationModelClient())
@@ -1015,9 +1057,6 @@ func (app *novaSonicApp) handleTextOutput(raw json.RawMessage) {
 		}
 	case "ASSISTANT":
 		log.Infof("Nova Sonic assistant: response text received")
-		// Assistant output ends the model turn that could have carried an
-		// explicit chat principal.
-		app.clearChatTurnPrincipal()
 		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
 		languageHint := "auto"
 		if policy := app.board.activeResponseLanguagePolicy(); policy != nil {

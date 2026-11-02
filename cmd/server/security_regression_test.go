@@ -179,25 +179,86 @@ func TestChatTurnAuthorizesAgainstAuthenticatedPrincipal(t *testing.T) {
 	}
 
 	// A participant's chat turn is authorized as that participant.
-	app.beginChatTurn("sarah")
+	added := app.beginChatTurn("sarah")
 	if label := app.toolAuthorizationSpeakerLabel(); label != "sarah" {
 		t.Fatalf("chat principal = %q, want sarah", label)
 	}
 	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("end_meeting", app.toolAuthorizationSpeakerLabel(), "") {
 		t.Fatal("participant chat after a host utterance must not inherit host authority")
 	}
-	app.clearChatTurnPrincipal()
+	app.abortChatTurn("sarah", added)
 
 	// The host's own chat turn still works.
-	app.beginChatTurn("scott")
+	added = app.beginChatTurn("scott")
 	if activeMeetingRequiresAuthenticatedHostForVoiceTool("end_meeting", app.toolAuthorizationSpeakerLabel(), "") {
 		t.Fatal("host chat turn must be authorized as host")
 	}
-	app.clearChatTurnPrincipal()
+	app.abortChatTurn("scott", added)
 
 	// The transcript/presence label keeps its historical last-speaker fallback.
 	if got := app.currentOrLastSpeakerLabel(); got != "scott" {
 		t.Fatalf("currentOrLastSpeakerLabel = %q, want scott", got)
+	}
+}
+
+// TestOverlappingChatTurnsDoNotShareHostAuthority covers a participant's chat
+// command still in flight when the host sends another chat message: the
+// participant's tool call must not be authorized as the host.
+func TestOverlappingChatTurnsDoNotShareHostAuthority(t *testing.T) {
+	restore := snapshotAuthGlobals()
+	defer restore()
+
+	appAuthMode = "token"
+	appEnvironment = "production"
+	appRoomID = "team-room"
+	appBoardID = "team-board"
+	meetingAccess = newMeetingAccessManager()
+	sharedBoard = newKanbanBoard()
+
+	snapshot, err := meetingAccess.setup(requestAuthContext{
+		SessionID: "host-session",
+		Identity:  "scott",
+		RoomID:    appRoomID,
+		BoardID:   appBoardID,
+	}, meetingTypeStandup)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	participant := webSession{ID: "participant-session", Identity: "sarah", RoomID: appRoomID, BoardID: appBoardID}
+	if _, err := meetingAccess.joinSessionWithCode(participant, snapshot.JoinCode, meetingRoleParticipant); err != nil {
+		t.Fatalf("participant join: %v", err)
+	}
+
+	app := newNovaSonicApp(sharedBoard)
+	app.beginChatTurn("sarah")
+	app.beginChatTurn("scott")
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("end_meeting", app.toolAuthorizationSpeakerLabel(), "") {
+		t.Fatalf("overlapping chat turns (label %q) must not authorize a host-only tool", app.toolAuthorizationSpeakerLabel())
+	}
+
+	// A spoken turn by the host while the participant's chat turn is in flight
+	// is just as ambiguous.
+	app2 := newNovaSonicApp(sharedBoard)
+	app2.beginChatTurn("sarah")
+	app2.noteSpokenTurnDuringChat("scott")
+	if !activeMeetingRequiresAuthenticatedHostForVoiceTool("end_meeting", app2.toolAuthorizationSpeakerLabel(), "") {
+		t.Fatal("a host utterance during a participant chat turn must not authorize a host-only tool")
+	}
+
+	// Once the participant's turn has expired, the host's own chat is honored.
+	app.speakerMu.Lock()
+	app.chatTurnPrincipals["sarah"] = time.Now().Add(-2 * chatTurnPrincipalTTL)
+	app.speakerMu.Unlock()
+	if activeMeetingRequiresAuthenticatedHostForVoiceTool("end_meeting", app.toolAuthorizationSpeakerLabel(), "") {
+		t.Fatal("host chat turn must be authorized as host once the participant turn expired")
+	}
+
+	// A failed send undoes only the entry it added.
+	app3 := newNovaSonicApp(sharedBoard)
+	app3.beginChatTurn("sarah")
+	app3.abortChatTurn("sarah", app3.beginChatTurn("sarah"))
+	if got := app3.toolAuthorizationSpeakerLabel(); got != "sarah" {
+		t.Fatalf("label after aborted repeat send = %q, want sarah", got)
 	}
 }
 
